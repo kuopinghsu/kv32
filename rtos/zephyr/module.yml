@@ -1,0 +1,10 @@
+# Copyright (c) 2026 kcore Project
+# SPDX-License-Identifier: Apache-2.0
+
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    board_root: .
+    soc_root: .
+    dts_root: .

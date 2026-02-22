@@ -1,0 +1,41 @@
+# Copyright (c) 2026 kcore Project
+# SPDX-License-Identifier: Apache-2.0
+
+config SOC_RISCV_KCORE
+    bool "RISC-V kcore SoC"
+    select RISCV
+    select RISCV_PRIVILEGED
+    select RISCV_ISA_RV32I
+    select RISCV_ISA_EXT_M
+    select RISCV_ISA_EXT_ZICSR
+    select RISCV_ISA_EXT_ZIFENCEI
+    select RISCV_HAS_CPU_IDLE
+    help
+      Enable support for the custom RISC-V RV32IM kcore SoC.
+      This is a 5-stage pipelined processor with:
+      - RV32I base integer instruction set
+      - M extension (multiply/divide)
+      - 2MB RAM
+      - Custom UART peripheral
+      - CLINT timer/interrupt controller
+
+config SOC
+    default "kcore" if SOC_RISCV_KCORE
+
+config SYS_CLOCK_HW_CYCLES_PER_SEC
+    default 50000000 if SOC_RISCV_KCORE
+
+config RISCV_SOC_INTERRUPT_INIT
+    default y if SOC_RISCV_KCORE
+
+config NUM_IRQS
+    default 32 if SOC_RISCV_KCORE
+
+config RISCV_HAS_CPU_IDLE
+    bool
+    default y if SOC_RISCV_KCORE
+
+# Enable RISCV_MACHINE_TIMER for sys_clock
+config RISCV_MACHINE_TIMER
+    bool
+    default y if SOC_RISCV_KCORE

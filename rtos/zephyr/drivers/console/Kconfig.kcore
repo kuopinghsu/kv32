@@ -1,0 +1,20 @@
+# Copyright (c) 2026 kcore Project
+# SPDX-License-Identifier: Apache-2.0
+
+config CONSOLE_KCORE
+    bool "kcore magic address console driver"
+    help
+      Enable console driver that writes to magic address 0xFFFFFFF4.
+      This is useful for simulation/testbench where characters written
+      to this address appear in the console output.
+
+      This driver provides faster simulation performance compared to
+      the full UART driver, as it bypasses hardware FIFO and baud rate
+      timing simulation.
+
+if CONSOLE_KCORE
+
+config CONSOLE_INIT_PRIORITY
+    default 40
+
+endif # CONSOLE_KCORE

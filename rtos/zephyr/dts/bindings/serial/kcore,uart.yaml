@@ -1,0 +1,22 @@
+# Copyright (c) 2026 kcore Project
+# SPDX-License-Identifier: Apache-2.0
+
+description: kcore UART controller
+
+compatible: "kcore,uart"
+
+include: uart-controller.yaml
+
+properties:
+  reg:
+    required: true
+
+  clock-frequency:
+    type: int
+    required: true
+    description: UART controller clock frequency in Hz
+
+  current-speed:
+    type: int
+    required: true
+    description: Initial baud rate setting for UART

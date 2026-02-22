@@ -1,0 +1,24 @@
+# Copyright (c) 2026 kcore Project
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_KCORE_BOARD
+
+config BOARD
+    default "kcore_board"
+
+# Disable UART console by default - use magic address console instead
+config UART_CONSOLE
+    default n
+
+config SERIAL
+    default n
+# Timer configuration
+config RISCV_MACHINE_TIMER
+    default y if SYS_CLOCK_EXISTS
+
+config SYS_CLOCK_HW_CYCLES_PER_SEC
+    default 50000000
+
+config SYS_CLOCK_TICKS_PER_SEC
+    default 100
+endif # BOARD_KCORE_BOARD

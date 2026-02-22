@@ -1,0 +1,12 @@
+# Copyright (c) 2026 kcore Project
+# SPDX-License-Identifier: Apache-2.0
+
+# Source board and SOC Kconfig files
+osource "$(ZEPHYR_BASE)/../modules/*/boards/$(BOARD_DIR)/Kconfig"
+osource "boards/$(BOARD_DIR)/Kconfig"
+
+osource "$(ZEPHYR_BASE)/../modules/*/soc/$(SOC_FAMILY)/*/Kconfig"
+osource "soc/$(SOC_FAMILY)/*/Kconfig"
+
+# Source driver Kconfig files
+rsource "drivers/*/Kconfig*"

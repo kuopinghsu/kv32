@@ -1,0 +1,32 @@
+# Copyright (c) 2026 kcore Project
+# SPDX-License-Identifier: Apache-2.0
+
+if SOC_RISCV_KCORE
+
+config SOC
+    default "kcore"
+
+config SYS_CLOCK_HW_CYCLES_PER_SEC
+    default 50000000
+
+# Console
+config CONSOLE
+    default y
+
+config UART_CONSOLE
+    default y
+
+config SERIAL
+    default y
+
+# Minimal footprint
+config MAIN_STACK_SIZE
+    default 2048
+
+config IDLE_STACK_SIZE
+    default 512
+
+config ISR_STACK_SIZE
+    default 2048
+
+endif # SOC_RISCV_KCORE

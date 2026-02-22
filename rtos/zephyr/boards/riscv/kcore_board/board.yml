@@ -1,0 +1,5 @@
+board:
+  name: kcore_board
+  vendor: kcore
+  socs:
+    - name: kcore

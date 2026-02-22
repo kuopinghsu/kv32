@@ -1,0 +1,22 @@
+# Copyright (c) 2026 kcore Project
+# SPDX-License-Identifier: Apache-2.0
+
+config UART_KCORE
+    bool "kcore UART driver"
+    default y
+    depends on DT_HAS_KCORE_UART_ENABLED
+    select SERIAL_HAS_DRIVER
+    select SERIAL_SUPPORT_INTERRUPT
+    help
+      Enable driver for kcore custom UART peripheral.
+      This UART has TX capability with a 16-entry FIFO.
+
+if UART_KCORE
+
+config UART_KCORE_PORT_0
+    bool "Enable UART Port 0"
+    default y
+    help
+      Enable UART port 0 (the main console UART).
+
+endif # UART_KCORE

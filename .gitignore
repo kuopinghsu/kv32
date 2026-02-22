@@ -1,0 +1,50 @@
+# Build artifacts
+build/
+*.o
+*.d
+*.a
+*.so
+
+# Verilator generated files
+obj_dir/
+objdir/
+*.mk
+*.cpp.d
+*.h.d
+
+# Executables
+*.exe
+
+# Waveform dumps
+*.vcd
+*.fst
+*.fsdb
+*.shm
+
+# Trace files
+*_trace.txt
+*.log
+
+# ELF files and binaries
+*.elf
+*.bin
+*.hex
+*.dis
+*.readelf
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporary files
+*.tmp
+.*.swp

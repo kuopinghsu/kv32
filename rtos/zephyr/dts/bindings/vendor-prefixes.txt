@@ -1,0 +1,2 @@
+# Vendor prefixes for kcore project
+kcore   kcore RISC-V SoC Project

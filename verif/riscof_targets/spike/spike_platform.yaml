@@ -1,0 +1,6 @@
+mtime:
+  implemented: true
+  address: 0x2000000
+mtimecmp:
+  implemented: true
+  address: 0x2004000

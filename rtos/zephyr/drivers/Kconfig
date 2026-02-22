@@ -1,0 +1,5 @@
+# Copyright (c) 2026 kcore Project
+# SPDX-License-Identifier: Apache-2.0
+
+rsource "console/Kconfig*"
+rsource "serial/Kconfig*"
