@@ -33,6 +33,7 @@ module mem_axi #(
     output logic        mem_resp_valid,
     output logic [31:0] mem_resp_data,
     output logic        mem_resp_error,
+    output logic        mem_resp_is_write, // 1=B response (store complete), 0=R response (load data)
     input  logic        mem_resp_ready,
 
     // AXI4 interface (master) - 5 independent channels with ID support
@@ -134,6 +135,7 @@ module mem_axi #(
     typedef struct packed {
         logic [31:0] data;
         logic        error;
+        logic        is_write; // 1=B response (store), 0=R response (load)
     } resp_entry_t;
 
     resp_entry_t resp_fifo [0:OUTSTANDING_DEPTH-1];
@@ -236,9 +238,10 @@ module mem_axi #(
     // ========================================================================
     // mem_resp: Feed from response FIFO
     // ========================================================================
-    assign mem_resp_valid = (resp_count > 0);
-    assign mem_resp_data  = (resp_count > 0) ? resp_fifo[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data : '0;
-    assign mem_resp_error = (resp_count > 0) ? resp_fifo[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error : 1'b0;
+    assign mem_resp_valid    = (resp_count > 0);
+    assign mem_resp_data     = (resp_count > 0) ? resp_fifo[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data     : '0;
+    assign mem_resp_error    = (resp_count > 0) ? resp_fifo[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error    : 1'b0;
+    assign mem_resp_is_write = (resp_count > 0) ? resp_fifo[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].is_write : 1'b0;
 
     // FIFO management
     always_ff @(posedge clk or negedge rst_n) begin
@@ -249,15 +252,17 @@ module mem_axi #(
         end else begin
             // Push: AXI R channel response (read)
             if (resp_push_r) begin
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data  <= axi_rdata;
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error <= (axi_rresp != 2'b00);
+                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data     <= axi_rdata;
+                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error    <= (axi_rresp != 2'b00);
+                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].is_write <= 1'b0;
                 resp_wr_ptr <= resp_wr_ptr + 1'b1;
                 `DBG2(("%s: R response FIFO push data=0x%h resp=%0d count=%0d", BRIDGE_NAME, axi_rdata, axi_rresp, resp_count + 1));
             end
             // Push: AXI B channel response (write)
             else if (resp_push_b) begin
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data  <= 32'h0;  // Write has no data
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error <= (axi_bresp != 2'b00);
+                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data     <= 32'h0;  // Write has no data
+                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error    <= (axi_bresp != 2'b00);
+                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].is_write <= 1'b1;
                 resp_wr_ptr <= resp_wr_ptr + 1'b1;
                 `DBG2(("%s: B response FIFO push bresp=%0d count=%0d", BRIDGE_NAME, axi_bresp, resp_count + 1));
             end

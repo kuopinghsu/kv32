@@ -44,7 +44,8 @@
 module rv32_sb #(
     parameter int DEPTH = 2,      // Number of stores that can be buffered
     parameter int ADDR_WIDTH = 32,
-    parameter int DATA_WIDTH = 32
+    parameter int DATA_WIDTH = 32,
+    parameter int ADDR_TAG_WIDTH = 10  // Lower address bits used for hazard lookup
 ) (
     input  logic                  clk,
     input  logic                  rst_n,
@@ -70,6 +71,13 @@ module rv32_sb #(
 
     // Flush control
     input  logic                  flush,
+
+    // Address hazard lookup
+    // Caller provides the lower ADDR_TAG_WIDTH bits of the incoming address;
+    // lookup_hit is asserted if any valid buffer entry has a matching tag.
+    // Caller must stall until lookup_hit deasserts (all conflicting entries drained).
+    input  logic [ADDR_TAG_WIDTH-1:0] lookup_addr,
+    output logic                      lookup_hit,
 
     // Status
     output logic [$clog2(DEPTH+1)-1:0] buffered_count,
@@ -100,6 +108,7 @@ module rv32_sb #(
         logic [ADDR_WIDTH-1:0]     addr;
         logic [DATA_WIDTH-1:0]     data;
         logic [DATA_WIDTH/8-1:0]   strb;
+        logic [ADDR_TAG_WIDTH-1:0] addr_tag;  // Lower ADDR_TAG_WIDTH bits for fast lookup
         logic                      valid;     // Entry contains pending store
         logic                      inflight;  // Sent to memory, waiting for ack
     } store_entry_t;
@@ -144,6 +153,17 @@ module rv32_sb #(
 
     assign buffered_count = count;
     assign store_pending = (count > 0);
+
+    // lookup_hit: any valid entry whose lower ADDR_TAG_WIDTH address bits match lookup_addr
+    // Remains asserted until ALL conflicting entries have been drained from the buffer.
+    always_comb begin
+        lookup_hit = 1'b0;
+        for (int i = 0; i < DEPTH; i++) begin
+            if (buffer[i].valid && (buffer[i].addr_tag == lookup_addr)) begin
+                lookup_hit = 1'b1;
+            end
+        end
+    end
 
     // cpu_ready: Can accept new store from CPU
     // Conditions:
@@ -199,10 +219,11 @@ module rv32_sb #(
             //   - Buffer has space (cpu_ready)
             //   - Not flushing (flush would immediately invalidate)
             if (cpu_valid && cpu_ready && !flush) begin
-                buffer[wr_ptr].addr <= cpu_addr;
-                buffer[wr_ptr].data <= cpu_data;
-                buffer[wr_ptr].strb <= cpu_strb;
-                buffer[wr_ptr].valid <= 1'b1;
+                buffer[wr_ptr].addr    <= cpu_addr;
+                buffer[wr_ptr].data    <= cpu_data;
+                buffer[wr_ptr].strb    <= cpu_strb;
+                buffer[wr_ptr].addr_tag <= cpu_addr[ADDR_TAG_WIDTH-1:0];
+                buffer[wr_ptr].valid   <= 1'b1;
                 buffer[wr_ptr].inflight <= 1'b0;
                 if (PTR_WIDTH > 0) begin
                     wr_ptr <= wr_ptr + 1'b1;  // Advance tail pointer

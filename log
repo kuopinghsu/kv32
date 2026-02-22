@@ -1,0 +1,20 @@
+CPU Operations:
+  Simulation speed :           1.91965MHz
+  Simulation time :            43268992 ns
+  Total cycles :               21634486
+  Instructions :               4521480
+  Execution cycles :           21634478
+  Stall cycles :               17112998 (79.10%)
+  CPI :                        4.78
+
+Read Operations:
+  AR Requests (Master):        9917226
+  R Responses (Slave):         9917225
+  Max Outstanding Reads:       1
+
+Write Operations:
+  AW Requests (Master):        905745
+  W Data (Master):             905745
+  B Responses (Slave):         905745
+  Max Outstanding Writes:      1
+

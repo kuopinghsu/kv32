@@ -62,6 +62,7 @@ module rv32_core #(
     input  logic        dmem_resp_valid,
     input  logic [31:0] dmem_resp_data,
     input  logic        dmem_resp_error,
+    input  logic        dmem_resp_is_write, // 1=B response (store complete), 0=R response (load data)
     output logic        dmem_resp_ready,
 
     // Interrupts
@@ -785,7 +786,11 @@ module rv32_core #(
     //   - amo_stall: AMO operation in progress (data not valid until complete)
 
     logic load_stall, store_stall;
-    assign load_stall = mem_read_mem && !is_amo_mem && (!load_req_issued || !(dmem_resp_valid || dmem_resp_valid_buf));
+    // dmem_resp_valid qualified: B-responses (dmem_resp_is_write=1) are for the store buffer,
+    // not for loads. Only count R-responses as satisfying the load.
+    logic load_resp_valid;
+    assign load_resp_valid = dmem_resp_valid && !dmem_resp_is_write;
+    assign load_stall = mem_read_mem && !is_amo_mem && (!load_req_issued || !(load_resp_valid || dmem_resp_valid_buf));
     assign store_stall = mem_write_mem && !is_amo_mem && !sb_cpu_ready;
 
     // ============================================================================
@@ -1476,6 +1481,7 @@ module rv32_core #(
     logic        sb_mem_valid;           // Store buffer has memory request
     logic        sb_mem_ready;           // Memory accepts buffered store
     logic        sb_store_pending;       // Stores are pending in buffer
+    logic        sb_addr_hit;             // A buffered store's lower 10 bits match incoming load
     logic [1:0]  sb_buffered_count;      // Number of stores in buffer
 
     // Store Response Tracking
@@ -1490,8 +1496,8 @@ module rv32_core #(
             // Set when store buffer initiates memory transaction
             if (sb_mem_valid && dmem_req_ready) begin
                 sb_mem_inflight <= 1'b1;
-            // Clear when response arrives for store buffer transaction
-            end else if (dmem_resp_valid && sb_mem_inflight) begin
+            // Clear when B-response arrives (store buffer transaction complete)
+            end else if (dmem_resp_valid && dmem_resp_is_write) begin
                 sb_mem_inflight <= 1'b0;
             end
         end
@@ -1504,9 +1510,9 @@ module rv32_core #(
     // This allows stores to complete asynchronously without blocking the pipeline.
     //
     // RAW (Read-After-Write) Hazard Prevention:
-    //   Loads must wait if any stores are pending in the buffer.
-    //   This conservative approach prevents reading stale data.
-    //   A more aggressive implementation could forward from the store buffer.
+    //   Loads must wait only when a buffered store's lower 10 address bits match
+    //   the incoming load address, avoiding unnecessary stalls on non-conflicting
+    //   stores. The stall persists until ALL matching entries have drained (flush-out).
     logic        load_req_valid;
     logic        store_req_valid;
     logic        load_req_issued;   // Tracks if load request has been issued
@@ -1518,11 +1524,11 @@ module rv32_core #(
         end else if (mem_flush || !mem_valid) begin
             // Clear when instruction leaves MEM stage
             load_req_issued <= 1'b0;
-        end else if (load_req_valid && dmem_req_ready) begin
-            // Set when load request is accepted
+        end else if (load_req_valid && !sb_mem_valid && !amo_mem_req && dmem_req_ready) begin
+            // Set only when the load itself wins the bus (store buffer and AMO have priority)
             load_req_issued <= 1'b1;
-        end else if (dmem_resp_valid) begin
-            // Clear when response arrives (ready to issue next load)
+        end else if (dmem_resp_valid && !dmem_resp_is_write) begin
+            // Clear only on load R-response (B-responses belong to store buffer)
             load_req_issued <= 1'b0;
         end
     end
@@ -1530,8 +1536,11 @@ module rv32_core #(
     // Note: store_req_issued tracking removed - stores now stall in EX until buffer ready,
     // ensuring they're only sent to buffer once when they enter MEM stage
 
-    // Load request: only when no stores pending AND request not yet issued AND no AMO in progress
-    assign load_req_valid = mem_read_mem && mem_valid && !sb_store_pending && !load_req_issued && !is_amo_mem;
+    // Load request: stall only when a buffered store's lower 10 address bits match
+    // the load address (potential RAW hazard). Non-conflicting loads can issue while
+    // stores are draining; B-responses are filtered at the response consumers below.
+    // Wait until all address-matched entries have drained (lookup_hit=0).
+    assign load_req_valid = mem_read_mem && mem_valid && !sb_addr_hit && !load_req_issued && !is_amo_mem;
 
     // Store request: send to buffer when store is in MEM stage (not for AMO)
     assign store_req_valid = mem_write_mem && mem_valid && !is_amo_mem;
@@ -1546,8 +1555,8 @@ module rv32_core #(
                    pc_mem, store_req_valid, sb_cpu_ready, store_req_valid && sb_cpu_ready, sb_store_pending));
         end
         if (mem_read_mem && mem_valid) begin
-            `DBG2(("[SB_DEBUG] LOAD in MEM: pc=0x%h addr=0x%h pending=%b load_req_valid=%b load_req_issued=%b",
-                   pc_mem, alu_result_mem, sb_store_pending, load_req_valid, load_req_issued));
+            `DBG2(("[SB_DEBUG] LOAD in MEM: pc=0x%h addr=0x%h addr_hit=%b load_req_valid=%b load_req_issued=%b",
+                   pc_mem, alu_result_mem, sb_addr_hit, load_req_valid, load_req_issued));
         end
     end
 
@@ -1678,7 +1687,7 @@ module rv32_core #(
         .mem_data(sb_mem_data),
         .mem_strb(sb_mem_strb),
         .mem_ready(sb_mem_ready),
-        .resp_valid(dmem_resp_valid && sb_mem_inflight),
+        .resp_valid(dmem_resp_valid && dmem_resp_is_write),
         .resp_error(dmem_resp_error),
         /* verilator lint_off PINCONNECTEMPTY */
         .resp_ready(),  // Not used
@@ -1687,6 +1696,8 @@ module rv32_core #(
         // instructions (past EX stage). EX-stage exceptions and interrupts
         // must not cancel pre-committed writes (RISC-V precise-exception model).
         .flush(1'b0),
+        .lookup_addr(alu_result_mem[9:0]),
+        .lookup_hit(sb_addr_hit),
         .buffered_count(sb_buffered_count),
         .store_pending(sb_store_pending)
     );
@@ -1800,7 +1811,7 @@ module rv32_core #(
                     // Require amo_req_issued to avoid mistakenly capturing a
                     // lingering write B-channel response (data=0) from the
                     // store buffer draining before our actual read completes.
-                    if (dmem_resp_valid && !sb_mem_inflight && amo_req_issued) begin
+                    if (dmem_resp_valid && !dmem_resp_is_write && amo_req_issued) begin
                         amo_read_data <= dmem_resp_data;
                         `DBG2(("[AMO] READ complete addr=0x%h data=0x%h", amo_addr, dmem_resp_data));
                         `DBG2(("[AMO] Result will be: amo_result_comb=0x%h (from amo_read_data_next)", dmem_resp_data));
@@ -1816,7 +1827,7 @@ module rv32_core #(
 
                 AMO_WRITE: begin
                     // Waiting for write response
-                    if (dmem_resp_valid && !sb_mem_inflight) begin
+                    if (dmem_resp_valid && dmem_resp_is_write) begin
                         `DBG2(("[AMO] WRITE complete addr=0x%h, amo_read_data still=0x%h", amo_addr, amo_read_data));
                         `DBG2(("[AMO] Completing: amo_result=0x%h will be written to rd", amo_read_data));
                         amo_state <= AMO_IDLE;
@@ -1931,8 +1942,8 @@ module rv32_core #(
             amo_req_issued <= 1'b0;
         end else if (amo_mem_req && dmem_req_ready) begin
             amo_req_issued <= 1'b1;
-        end else if (dmem_resp_valid && !sb_mem_inflight) begin
-            // Clear when response arrives
+        end else if (dmem_resp_valid && !dmem_resp_is_write) begin
+            // Clear when R-response arrives (AMO read complete)
             amo_req_issued <= 1'b0;
         end
     end
@@ -1995,8 +2006,8 @@ module rv32_core #(
     //   3. Waiting for memory response
     //
     // For loads, stall until:
-    //   - Request issues: (!sb_store_pending), AND
-    //   - Response received: (dmem_resp_valid || dmem_resp_valid_buf)
+    //   - Request issues: (!sb_addr_hit; issues alongside draining stores), AND
+    //   - Response received: (load_resp_valid || dmem_resp_valid_buf)
     // For stores, wait until store buffer accepts (cpu_ready handshake)
     // For AMO, stall while AMO instruction is being processed
     //   Need combinational logic to catch the first cycle when AMO enters MEM
@@ -2065,13 +2076,13 @@ module rv32_core #(
             dmem_resp_data_buf <= 32'd0;
             dmem_resp_valid_buf <= 1'b0;
             dmem_resp_error_buf <= 1'b0;
-        end else if (load_req_valid && dmem_req_ready) begin
-            // Clear buffer when a new load request issues to prevent using stale data
+        end else if (load_req_valid && !sb_mem_valid && !amo_mem_req && dmem_req_ready) begin
+            // Clear buffer when the load itself wins the bus
             dmem_resp_data_buf <= 32'd0;
             dmem_resp_valid_buf <= 1'b0;
             dmem_resp_error_buf <= 1'b0;
-        end else if (dmem_resp_valid) begin
-            // Capture response as soon as it arrives
+        end else if (dmem_resp_valid && !dmem_resp_is_write) begin
+            // Capture load R-response only; ignore store B-responses
             dmem_resp_data_buf <= dmem_resp_data;
             dmem_resp_valid_buf <= 1'b1;
             dmem_resp_error_buf <= dmem_resp_error;
@@ -2120,7 +2131,8 @@ module rv32_core #(
     // This avoids race conditions where we try to use dmem_resp_data_buf before
     // it's been updated in the same clock cycle.
     logic [31:0] load_data_source;
-    assign load_data_source = dmem_resp_valid ? dmem_resp_data : dmem_resp_data_buf;
+    // Use fresh load R-response when available (guard against B-responses)
+    assign load_data_source = load_resp_valid ? dmem_resp_data : dmem_resp_data_buf;
 
     always_comb begin
         case (mem_op_mem)
@@ -2644,7 +2656,8 @@ module rv32_core #(
 
     property p_load_no_write_enable;
         @(posedge clk) disable iff (!rst_n)
-        (load_req_valid) |-> (dmem_req_we == 4'b0000);
+        // Only check when load is the active bus driver (AMO and store buffer have priority)
+        (load_req_valid && !sb_mem_valid && !amo_mem_req) |-> (dmem_req_we == 4'b0000);
     endproperty
     assert property (p_load_no_write_enable)
         else $error("[CORE] Load request has write enables set: we=0x%h", dmem_req_we);

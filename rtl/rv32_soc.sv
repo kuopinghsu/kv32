@@ -129,6 +129,7 @@ module rv32_soc #(
     logic        dmem_resp_valid;     // Response data available
     logic [31:0] dmem_resp_data;      // Read data (for loads)
     logic        dmem_resp_error;     // Access error
+    logic        dmem_resp_is_write;  // 1=B response (store done), 0=R response (load data)
     logic        dmem_resp_ready;     // Core ready to consume response
 
     // ========================================================================
@@ -360,6 +361,7 @@ module rv32_soc #(
         .dmem_resp_valid(dmem_resp_valid),
         .dmem_resp_data(dmem_resp_data),
         .dmem_resp_error(dmem_resp_error),
+        .dmem_resp_is_write(dmem_resp_is_write),
         .dmem_resp_ready(dmem_resp_ready),
 
         .timer_irq(timer_irq),
@@ -437,6 +439,7 @@ module rv32_soc #(
         .mem_resp_valid(dmem_resp_valid),
         .mem_resp_data(dmem_resp_data),
         .mem_resp_error(dmem_resp_error),
+        .mem_resp_is_write(dmem_resp_is_write),
         .mem_resp_ready(dmem_resp_ready),
 
         .axi_awaddr(dmem_axi_awaddr),

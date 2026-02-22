@@ -159,14 +159,12 @@ Debug messages show:
 - Memory operations
 - Instruction execution details
 
-See [DEBUG_USAGE.md](DEBUG_USAGE.md) for detailed debug level documentation.
-
 #### Assertion Control
 SystemVerilog assertions are enabled by default to verify design integrity. To disable assertions for faster simulation:
 
 ```bash
 # Disable assertions (not recommended for debugging)
-make VERILATOR_FLAGS_EXTRA="+define+NO_ASSERTION" rtl-simple
+make ASSERT=0 rtl-simple
 ```
 
 Assertions verify:
@@ -196,14 +194,31 @@ See [Testing](#testing) section for available tests and details.
 - Exits when program writes to EXIT_MAGIC_ADDR
 
 #### Run Software Simulator
+
 ```bash
-./build/rv32sim program.elf
-```
+Usage: ./rv32sim [options] <elf_file>
 Options:
-- `-t trace.log` - Enable instruction trace
-- `-s signature.txt` - Generate signature file
-- `-g 3333` - Enable GDB server on port 3333
-- `-l N` - Limit execution to N instructions
+  --isa=<name>         Specify ISA (default: rv32ima_zicsr)
+                       Supported: rv32ima, rv32ima_zicsr
+  --trace              Enable Spike-format trace logging (alias for --log-commits)
+  --log-commits        Enable Spike-format trace logging
+  --rtl-trace          Enable RTL-format trace logging
+  --log=<file>         Specify trace log output file (default: sim_trace.txt)
+  +signature=<file>    Write signature to file (RISCOF compatibility)
+  +signature-granularity=<n>  Signature granularity in bytes (1, 2, or 4, default: 4)
+  -m<base>:<size>      Specify memory range (e.g., -m0x80000000:0x200000)
+                       Default: -m0x80000000:0x200000 (2MB at 0x80000000)
+  --instructions=<n>   Limit execution to N instructions (0 = no limit)
+  --gdb                Enable GDB stub for remote debugging
+  --gdb-port=<port>    Specify GDB port (default: 3333)
+Examples:
+  ./rv32sim program.elf
+  ./rv32sim --log-commits --log=output.log program.elf
+  ./rv32sim --rtl-trace --log=rtl_trace.txt program.elf
+  ./rv32sim --log-commits -m0x80000000:0x200000 program.elf
+  ./rv32sim --gdb --gdb-port=3333 program.elf
+  ./rv32sim +signature=output.sig +signature-granularity=4 test.elf
+```
 
 #### View Waveforms
 ```bash
@@ -353,10 +368,10 @@ riscv32-unknown-elf-gcc -march=rv32ima_zicsr -mabi=ilp32 \
 
 ### Generated Files
 
-When building test programs with `make <test>` or `make rtl-<test>`, the following files are generated in `build/<test>/`:
-- **firmware.elf**: Executable ELF file
-- **firmware.dis**: Disassembly listing (objdump output)
-- **firmware.readelf**: ELF file information
+When building test programs with `make <test>` or `make rtl-<test>`, the following files are generated in `build/`:
+- **<test>.elf**: Executable ELF file
+- **<test>.dis**: Disassembly listing (objdump output)
+- **<test>.readelf**: ELF file information
 - **rv32soc.vcd**: Waveform file (RTL simulation only)
 
 ### Debugging with GDB (Software Simulator)
