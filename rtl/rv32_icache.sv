@@ -267,10 +267,18 @@ module rv32_icache #(
             end
 
             S_LOOKUP: begin
-                if (cache_enable && cache_hit)
-                    next_state = S_RESP;       // hit
-                else
+                if (cache_enable && cache_hit) begin
+                    if (imem_resp_ready) begin
+                        // Zero-stall hit: serve directly in S_LOOKUP, skip S_RESP.
+                        if (cmo_valid)           next_state = S_CMO;
+                        else if (imem_req_valid)  next_state = S_LOOKUP;
+                        else                     next_state = S_IDLE;
+                    end else begin
+                        next_state = S_RESP;   // core not ready – hold in S_RESP
+                    end
+                end else begin
                     next_state = S_MISS_AR;    // miss or bypass
+                end
             end
 
             S_MISS_AR: begin
@@ -581,8 +589,9 @@ module rv32_icache #(
     //        data – written for fill_way on every received fill beat.
     //
     // The 1RW SRAM has no read-write conflict because:
-    //   – Reads are launched only in S_IDLE, or from S_RESP when fill_active_r=0
-    //     (imem_req_ready is blocked during all fill states).
+    //   – Reads are launched in S_IDLE, from S_RESP (fill_active_r=0), or from
+    //     S_LOOKUP (zero-stall hit path: next request pipelined back-to-back).
+    //     In all cases fill_active_r=0, so no concurrent write is in progress.
     //   – Writes occur in S_MISS_R, S_RESP (fill_active_r=1), and S_FILL_REST.
     // =========================================================================
 
@@ -706,16 +715,25 @@ module rv32_icache #(
     // =========================================================================
     // Core handshake outputs
     // =========================================================================
-    // Accept new requests only in IDLE, or transitionally from RESP
-    // (simplified: always accept in IDLE; the core re-presents if rejected)
-    // Back-to-back from S_RESP is only safe when the fill is complete;
-    // block it when fill_active_r=1 (go via S_FILL_REST → S_IDLE instead).
+    // Accept new requests:
+    //   S_IDLE              – baseline
+    //   S_RESP (!fill)       – back-to-back after a miss response
+    //   S_LOOKUP (hit+ready) – zero-stall fast path: pipeline back-to-back hits
+    //                          (fill_active_r is always 0 in S_LOOKUP)
     assign imem_req_ready  = (state == S_IDLE) ||
                              (state == S_RESP && imem_resp_ready &&
-                              !cmo_valid && !fill_active_r);
-    assign imem_resp_valid = (state == S_RESP);
-    assign imem_resp_data  = resp_data_r;
-    assign imem_resp_error = resp_error_r;
+                              !cmo_valid && !fill_active_r) ||
+                             (state == S_LOOKUP && cache_enable && cache_hit &&
+                              imem_resp_ready && !cmo_valid);
+
+    // In the zero-stall hit path the response is valid directly in S_LOOKUP,
+    // driven combinatorially from the SRAM read-data (no S_RESP register needed).
+    assign imem_resp_valid = (state == S_RESP) ||
+                             (state == S_LOOKUP && cache_enable && cache_hit);
+    assign imem_resp_data  = (state == S_LOOKUP && cache_enable && cache_hit)
+                             ? hit_data : resp_data_r;
+    assign imem_resp_error = (state == S_LOOKUP && cache_enable && cache_hit)
+                             ? 1'b0 : resp_error_r;
 
     // CMO accepted in IDLE and (transitionally) from RESP
     assign cmo_ready = (state == S_IDLE) ||
