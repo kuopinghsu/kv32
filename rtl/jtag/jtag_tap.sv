@@ -221,7 +221,7 @@ module jtag_tap #(
     // =========================================================================
     // Debug Info (for simulation)
     // =========================================================================
-    `ifdef VERBOSE
+    `ifndef SYNTHESIS
     /* verilator lint_off UNUSED */
     string state_name;
     /* verilator lint_on UNUSED */
@@ -245,6 +245,6 @@ module jtag_tap #(
             UPDATE_IR:        state_name = "UPD_IR";
         endcase
     end
-    `endif
+    `endif // SYNTHESIS
 
 endmodule

@@ -720,6 +720,10 @@ int main(int argc, char** argv) {
 
         std::cout << std::endl;
         std::cout << "I-Cache Statistics :" << std::endl;
+        std::cout << "  Cache size :                 " << ICACHE_SIZE << " B  "
+                  << "(" << (ICACHE_SIZE / 1024) << " KB, "
+                  << ICACHE_WAYS << "-way, "
+                  << ICACHE_LINE_SIZE << "-byte lines)" << std::endl;
         std::cout << "  Fetch lookups :              " << req    << std::endl;
         std::cout << "  Cache hits :                 " << hits
                   << " (" << std::fixed << std::setprecision(2) << hit_rate << "%)" << std::endl;

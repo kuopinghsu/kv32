@@ -246,6 +246,50 @@ module rv32_icache #(
     logic                        fill_active_r; // AXI burst in-progress (rlast not yet seen)
 
     // =========================================================================
+    // Fill-pending: serve same-line requests directly from the AXI data bus
+    //   while an ICache line fill is still in progress, avoiding the full
+    //   S_FILL_REST drain stall.
+    //
+    //   When CWF restarts the CPU (beat 0 served from S_RESP), the next
+    //   sequential instruction (beat 1) arrives on the AXI bus during S_RESP.
+    //   By accepting the new fetch request in S_RESP+fill and capturing the
+    //   beat directly into fill_pend_data_r, we can serve it on the very first
+    //   cycle of S_FILL_REST — saving up to (WORDS_PER_LINE-2) stall cycles.
+    // =========================================================================
+    logic                        fill_pend_req_r;    // same-line req accepted, waiting for beat
+    logic [WORD_OFFSET_BITS-1:0] fill_pend_burst_r;  // burst beat index for pending req
+    logic                        fill_pend_resp_r;   // beat captured, response ready
+    logic [31:0]                 fill_pend_data_r;   // captured instruction word
+
+    // Burst beat index (relative to the WRAP start = req_word_off) for a new
+    // request targeting the same cache line.  Overflow wraps naturally.
+    logic [WORD_OFFSET_BITS-1:0] fill_pend_burst_comb;
+    assign fill_pend_burst_comb = WORD_OFFSET_BITS'(
+        imem_req_addr[BYTE_OFFSET_BITS-1:2] - req_word_off);
+
+    // Incoming address targets the same cache line currently being filled.
+    logic fill_same_line;
+    assign fill_same_line = cache_enable && fill_active_r &&
+        (imem_req_addr[31:BYTE_OFFSET_BITS] == req_addr_r[31:BYTE_OFFSET_BITS]);
+
+    // The AXI beat for the incoming (not-yet-accepted) request is on the bus now.
+    logic fill_pend_beat_now;
+    assign fill_pend_beat_now = axi_rvalid && (fill_word_cnt == fill_pend_burst_comb);
+
+    // The AXI beat for the already-latched pending request is arriving now.
+    logic fill_pend_beat_for_req;
+    assign fill_pend_beat_for_req = fill_pend_req_r && axi_rvalid && axi_rready &&
+        (fill_word_cnt == fill_pend_burst_r);
+
+    // Guard: can we accept a new fill-pending request?
+    //   – same cache line, no previous pending req/resp,
+    //   – required beat has not yet been consumed (burst_comb >= fill_word_cnt)
+    logic fill_pend_can_accept;
+    assign fill_pend_can_accept = fill_same_line &&
+        !fill_pend_req_r && !fill_pend_resp_r &&
+        (fill_pend_burst_comb >= fill_word_cnt);
+
+    // =========================================================================
     // Next-state logic (combinational)
     // =========================================================================
     always_comb begin
@@ -313,10 +357,33 @@ module rv32_icache #(
             end
 
             S_FILL_REST: begin
-                // Drain AXI beats remaining after the early-restart response.
-                // Must pass through S_IDLE on completion so req_addr_r and the
-                // SRAM read are set up properly for the next lookup.
-                if (axi_rvalid && axi_rready && axi_rlast)
+                // Leave S_FILL_REST when:
+                //   (a) AXI burst just completed this cycle AND either no
+                //       fill-pend response is pending or it is being consumed
+                //       simultaneously (imem_resp_ready).
+                //   (b) Burst already completed in a prior cycle
+                //       (fill_active_r=0) AND any pending response is consumed.
+                //
+                // IMPORTANT: Do NOT exit if fill_pend_beat_for_req is true
+                //   this cycle.  fill_pend_beat_for_req captures the tracked
+                //   beat and sets fill_pend_resp_r via an NBA assignment.
+                //   The NBA update is not visible to combinational next-state
+                //   logic in the same cycle, so fill_pend_resp_r still reads 0
+                //   even though it will be 1 next cycle.  Exiting to S_IDLE
+                //   on that cycle would trigger the safety-reset and lose the
+                //   pending response, creating a fetch deadlock.
+                //   Remaining in S_FILL_REST one additional cycle allows the
+                //   NBA fill_pend_resp_r=1 to propagate and be delivered before
+                //   the exit condition is re-evaluated.
+                //
+                // Similarly, block exit when fill_pend_beat_now is true and
+                //   fill_pend_can_accept is true (a new request accepted at
+                //   the exact rlast cycle captures data simultaneously).
+                if ((!fill_active_r || (axi_rvalid && axi_rready && axi_rlast)) &&
+                        (!fill_pend_resp_r || imem_resp_ready) &&
+                        !fill_pend_beat_for_req &&
+                        !(axi_rvalid && axi_rready && axi_rlast &&
+                          fill_pend_can_accept && fill_pend_beat_now))
                     next_state = S_IDLE;
             end
 
@@ -361,11 +428,15 @@ module rv32_icache #(
 
     // =========================================================================
     // Capture request address
+    //   Not updated while a burst fill is active: the fill state machine
+    //   relies on req_addr_r (req_word_off, req_index, req_tag) throughout
+    //   the entire burst.  Requests accepted via the fill-pending path are
+    //   latched separately and do NOT overwrite req_addr_r.
     // =========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             req_addr_r <= '0;
-        end else if (imem_req_valid && imem_req_ready) begin
+        end else if (imem_req_valid && imem_req_ready && !fill_active_r) begin
             req_addr_r <= imem_req_addr;
         end
     end
@@ -418,6 +489,64 @@ module rv32_icache #(
             fill_active_r <= 1'b1;
         else if (axi_rvalid && axi_rready && axi_rlast)
             fill_active_r <= 1'b0;
+    end
+
+    // =========================================================================
+    // Fill-pending state registers
+    //   Manages a single in-flight same-line hit request accepted while a burst
+    //   fill is active.  Data is captured directly from the AXI bus (no SRAM
+    //   read conflict) and served from S_FILL_REST on the first available cycle.
+    //
+    //   State transitions:
+    //     IDLE → REQ_WAIT : request accepted, beat not yet on bus
+    //     IDLE → RESP_RDY : request accepted and beat available same cycle
+    //     REQ_WAIT → RESP_RDY : tracked beat arrives on AXI bus
+    //     RESP_RDY → IDLE : CPU consumes fill_pend response (imem_resp_ready)
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            fill_pend_req_r   <= 1'b0;
+            fill_pend_burst_r <= '0;
+            fill_pend_resp_r  <= 1'b0;
+            fill_pend_data_r  <= '0;
+        end else begin
+            // ---- Accept a new same-line request while fill is active ----
+            // Fires in S_RESP+fill (beat arriving alongside CWF response) or
+            // S_FILL_REST (subsequent beats).  req_addr_r is NOT updated.
+            if (((state == S_RESP && fill_active_r) || state == S_FILL_REST) &&
+                    imem_req_valid && imem_req_ready && fill_pend_can_accept) begin
+                if (fill_pend_beat_now && axi_rready) begin
+                    // Needed beat is on the bus right now → capture immediately.
+                    fill_pend_resp_r  <= 1'b1;
+                    fill_pend_data_r  <= axi_rdata;
+                    // fill_pend_req_r stays 0: no future beat tracking needed.
+                end else begin
+                    // Beat not yet arrived → record burst index and wait.
+                    fill_pend_req_r   <= 1'b1;
+                    fill_pend_burst_r <= fill_pend_burst_comb;
+                end
+            end
+
+            // ---- Capture when the tracked beat arrives ----
+            if (fill_pend_beat_for_req) begin
+                fill_pend_req_r   <= 1'b0;
+                fill_pend_resp_r  <= 1'b1;
+                fill_pend_data_r  <= axi_rdata;
+            end
+
+            // ---- Clear when fill-pending response is consumed by CPU ----
+            if (fill_pend_resp_r && imem_resp_ready &&
+                    (state == S_FILL_REST ||
+                     (state == S_RESP && fill_active_r))) begin
+                fill_pend_resp_r  <= 1'b0;
+            end
+
+            // ---- Safety reset when both fill and pipeline are quiescent ----
+            if (state == S_IDLE) begin
+                fill_pend_req_r  <= 1'b0;
+                fill_pend_resp_r <= 1'b0;
+            end
+        end
     end
 
     // =========================================================================
@@ -718,20 +847,48 @@ module rv32_icache #(
     // Accept new requests:
     //   S_IDLE              – baseline
     //   S_RESP (!fill)       – back-to-back after a miss response
+    //   S_RESP (+fill)       – fill-pending path: same-line req during CWF S_RESP
+    //                          beat; requires imem_resp_ready (back-to-back) and
+    //                          the required AXI beat must not have passed
+    //   S_FILL_REST          – fill-pending path: same-line req; beat has not yet
+    //                          been consumed (fill_pend_can_accept)
     //   S_LOOKUP (hit+ready) – zero-stall fast path: pipeline back-to-back hits
     //                          (fill_active_r is always 0 in S_LOOKUP)
+    //
+    // Note: fill_pend_can_accept uses imem_req_addr (to check fill_same_line and
+    // fill_pend_burst_comb), and imem_req_addr in the core is driven by pc_if or
+    // pc_next = pc_if+4 depending on dedup_consuming = dedup_consumed &&
+    // imem_req_ready.  This creates a combinational loop that Verilator flags as
+    // UNOPTFLAT.  The loop is self-consistent: pc_if and pc_next+4 are always in
+    // the same 32-byte cache line during sequential fetches, so fill_same_line
+    // and fill_pend_burst_comb evaluate identically for both values.  Verilator
+    // converges in one iteration.  For synthesis this loop would need to be
+    // broken (e.g., by registering imem_req_addr or exporting pc_if directly).
+    /* verilator lint_off UNOPTFLAT */
     assign imem_req_ready  = (state == S_IDLE) ||
                              (state == S_RESP && imem_resp_ready &&
                               !cmo_valid && !fill_active_r) ||
+                             // Fill-pending: accept while CWF S_RESP is serving
+                             (state == S_RESP && fill_active_r &&
+                              imem_resp_ready && !cmo_valid &&
+                              fill_pend_can_accept) ||
+                             // Fill-pending: accept during remaining burst drain
+                             (state == S_FILL_REST && fill_pend_can_accept) ||
                              (state == S_LOOKUP && cache_enable && cache_hit &&
                               imem_resp_ready && !cmo_valid);
-
+    /* verilator lint_on UNOPTFLAT */
     // In the zero-stall hit path the response is valid directly in S_LOOKUP,
     // driven combinatorially from the SRAM read-data (no S_RESP register needed).
+    // In S_FILL_REST, a fill-pending response is served from fill_pend_data_r
+    // (captured directly from the AXI bus, no SRAM read).
     assign imem_resp_valid = (state == S_RESP) ||
-                             (state == S_LOOKUP && cache_enable && cache_hit);
+                             (state == S_LOOKUP && cache_enable && cache_hit) ||
+                             (state == S_FILL_REST && fill_pend_resp_r);
     assign imem_resp_data  = (state == S_LOOKUP && cache_enable && cache_hit)
-                             ? hit_data : resp_data_r;
+                             ? hit_data
+                             : (state == S_FILL_REST && fill_pend_resp_r)
+                               ? fill_pend_data_r
+                               : resp_data_r;
     assign imem_resp_error = (state == S_LOOKUP && cache_enable && cache_hit)
                              ? 1'b0 : resp_error_r;
 

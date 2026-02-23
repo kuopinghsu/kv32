@@ -14,7 +14,7 @@ module tb_rv32_soc #(
     parameter int FAST_DIV         = 1,     // Division mode: 1=combinatorial, 0=serial
     parameter int ICACHE_EN        = 1,     // I-cache: 1=enabled, 0=bypass
     parameter int ICACHE_SIZE      = 4096,  // I-cache total bytes
-    parameter int ICACHE_LINE_SIZE = 64,    // Cache line size in bytes
+    parameter int ICACHE_LINE_SIZE = 32,    // Cache line size in bytes
     parameter int ICACHE_WAYS      = 2      // Cache associativity
 ) (
     input wire clk,

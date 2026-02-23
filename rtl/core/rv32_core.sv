@@ -2492,21 +2492,27 @@ module rv32_core #(
 
     // Retirement and exception debug traces (simulation only)
     `ifndef SYNTHESIS
-    always_ff @(posedge clk) begin
-        if (retire_instr) begin
-            `DBG1(("RETIRE: PC=0x%h instr=0x%h cycle=%0d", pc_wb, instr_wb, cycle_counter));
-            if (reg_we_wb && (rd_addr_wb != 5'd0)) begin
-                `DBG2(("RETIRE:   Writing rd=x%0d with 0x%h", rd_addr_wb,
-                       wb_write_data));
+    logic [63:0] last_cycle_counter;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            last_cycle_counter <= 64'd0;
+        end else begin
+            if (retire_instr) begin
+                `DBG1(("RETIRE: PC=0x%h instr=0x%h cycle=%0d, gap=%0d", pc_wb, instr_wb, cycle_counter, cycle_counter - last_cycle_counter));
+                if (reg_we_wb && (rd_addr_wb != 5'd0)) begin
+                    `DBG2(("RETIRE:   Writing rd=x%0d with 0x%h", rd_addr_wb,
+                           wb_write_data));
+                end
+                last_cycle_counter <= cycle_counter;
+            end else if (wb_valid && wb_exception) begin
+                `DBG2(("WB_EXCEPTION: PC=0x%h cause=%0d cycle=%0d", pc_wb, wb_exception_cause, cycle_counter));
+            end else if (wb_valid && !retire_instr && reg_we_wb && (rd_addr_wb != 5'd0)) begin
+                // WB stage valid but not retiring (duplicate)
+                `DBG2(("[RETIRE_SKIP] PC=0x%h instr=0x%h rd=x%0d: Not retiring (duplicate detection)",
+                       pc_wb, instr_wb, rd_addr_wb));
+                `DBG2(("[RETIRE_SKIP]   retire_base=%b last_pc=0x%h last_instr=0x%h",
+                       retire_instr_base, last_retired_pc, last_retired_instr));
             end
-        end else if (wb_valid && wb_exception) begin
-            `DBG2(("WB_EXCEPTION: PC=0x%h cause=%0d cycle=%0d", pc_wb, wb_exception_cause, cycle_counter));
-        end else if (wb_valid && !retire_instr && reg_we_wb && (rd_addr_wb != 5'd0)) begin
-            // WB stage valid but not retiring (duplicate)
-            `DBG2(("[RETIRE_SKIP] PC=0x%h instr=0x%h rd=x%0d: Not retiring (duplicate detection)",
-                   pc_wb, instr_wb, rd_addr_wb));
-            `DBG2(("[RETIRE_SKIP]   retire_base=%b last_pc=0x%h last_instr=0x%h",
-                   retire_instr_base, last_retired_pc, last_retired_instr));
         end
     end
     `endif

@@ -49,7 +49,7 @@ module rv32_soc #(
     parameter FAST_DIV          = 1,                // Division mode: 1=combinatorial, 0=serial
     parameter ICACHE_EN         = 1,                // Instruction cache: 1=enabled, 0=bypass (uses mem_axi_ro)
     parameter ICACHE_SIZE       = 4096,             // I-cache total bytes
-    parameter ICACHE_LINE_SIZE  = 64,               // Cache line size in bytes
+    parameter ICACHE_LINE_SIZE  = 32,               // Cache line size in bytes (32 = 8 words/line)
     parameter ICACHE_WAYS       = 2                 // Cache associativity (number of ways)
 )(
     input  logic clk,
@@ -130,7 +130,13 @@ module rv32_soc #(
     // Simple request/response protocol used by the processor core
     logic        imem_req_valid;      // Core has instruction fetch request
     logic [31:0] imem_req_addr;       // Instruction address to fetch
+    // imem_req_ready has a benign combinational loop through the icache's
+    // fill-pending optimisation (fill_pend_can_accept → imem_req_ready →
+    // dedup_consuming → imem_req_addr → fill_pend_burst_comb → fill_pend_can_accept).
+    // The loop is self-consistent: both branches converge to the same value.
+    /* verilator lint_off UNOPTFLAT */
     logic        imem_req_ready;      // Memory system ready for new request
+    /* verilator lint_on UNOPTFLAT */
     logic        imem_resp_valid;     // Instruction data available
     logic [31:0] imem_resp_data;      // Fetched instruction word
     logic        imem_resp_error;     // Access error (e.g., unmapped address)
