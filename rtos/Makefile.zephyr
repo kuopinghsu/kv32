@@ -10,14 +10,14 @@ ZEPHYR_INCLUDE = $(ZEPHYR_DIR)/include
 
 # Zephyr source files
 ZEPHYR_SOURCES = \
-    $(ZEPHYR_DIR)/tasks.c \
-    $(ZEPHYR_DIR)/queue.c \
-    $(ZEPHYR_DIR)/list.c \
-    $(ZEPHYR_DIR)/timers.c \
-    $(ZEPHYR_DIR)/event_groups.c \
-    $(ZEPHYR_DIR)/stream_buffer.c \
-    $(ZEPHYR_PORT)/port.c \
-    $(ZEPHYR_PORT)/portASM.S
+	$(ZEPHYR_DIR)/tasks.c \
+	$(ZEPHYR_DIR)/queue.c \
+	$(ZEPHYR_DIR)/list.c \
+	$(ZEPHYR_DIR)/timers.c \
+	$(ZEPHYR_DIR)/event_groups.c \
+	$(ZEPHYR_DIR)/stream_buffer.c \
+	$(ZEPHYR_PORT)/port.c \
+	$(ZEPHYR_PORT)/portASM.S
 
 # Zephyr heap implementation (heap_3 uses malloc/free)
 ZEPHYR_HEAP = $(ZEPHYR_DIR)/portable/MemMang/heap_3.c
@@ -46,36 +46,36 @@ ZEPHYR_LDFLAGS += -lc -lgcc
 .PHONY: zephyr zephyr-help
 
 zephyr-help:
-    @echo ""
-    @echo "=========================================="
-    @echo "Zephyr Integration"
-    @echo "=========================================="
-    @echo ""
-    @echo "Zephyr is a real-time operating system kernel for embedded systems."
-    @echo "This project includes Zephyr with RISC-V port and sample applications."
-    @echo ""
-    @echo "Available Zephyr Commands:"
-    @echo "  make zephyr-<test>         - Build Zephyr test sample"
-    @echo "  make zephyr-rtl-<test>     - Run Zephyr test in RTL simulation"
-    @echo "  make zephyr-sim-<test>     - Run Zephyr test in ISS simulator"
-    @echo "  make zephyr-compare-<test> - Compare Zephyr RTL vs Spike traces"
-    @echo ""
-    @echo "Examples:"
-    @echo "  make zephyr-rtl-simple TRACE=1 MAX_CYCLES=0"
-    @echo "  make zephyr-sim-simple"
-    @echo "  make zephyr-compare-simple"
-    @echo ""
-    @echo "Available Zephyr Samples:"
-    @ls -1 $(ZEPHYR_SAMPLES)/*.c 2>/dev/null | xargs -n1 basename | sed 's/\.c$$//' | sed 's/^/  /' || echo "  (none found)"
-    @echo ""
-    @echo "Zephyr Directory Structure:"
-    @echo "  Source:   $(ZEPHYR_DIR)"
-    @echo "  Samples:  $(ZEPHYR_SAMPLES)"
-    @echo "  Port:     $(ZEPHYR_PORT)"
-    @echo "  System:   $(ZEPHYR_SYS)"
-    @echo ""
-    @echo "For more information, see: $(ZEPHYR_DIR)/README.md"
-    @echo ""
+	@echo ""
+	@echo "=========================================="
+	@echo "Zephyr Integration"
+	@echo "=========================================="
+	@echo ""
+	@echo "Zephyr is a real-time operating system kernel for embedded systems."
+	@echo "This project includes Zephyr with RISC-V port and sample applications."
+	@echo ""
+	@echo "Available Zephyr Commands:"
+	@echo "  make zephyr-<test>         - Build Zephyr test sample"
+	@echo "  make zephyr-rtl-<test>     - Run Zephyr test in RTL simulation"
+	@echo "  make zephyr-sim-<test>     - Run Zephyr test in ISS simulator"
+	@echo "  make zephyr-compare-<test> - Compare Zephyr RTL vs Spike traces"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make zephyr-rtl-simple TRACE=1 MAX_CYCLES=0"
+	@echo "  make zephyr-sim-simple"
+	@echo "  make zephyr-compare-simple"
+	@echo ""
+	@echo "Available Zephyr Samples:"
+	@ls -1 $(ZEPHYR_SAMPLES)/*.c 2>/dev/null | xargs -n1 basename | sed 's/\.c$$//' | sed 's/^/  /' || echo "  (none found)"
+	@echo ""
+	@echo "Zephyr Directory Structure:"
+	@echo "  Source:   $(ZEPHYR_DIR)"
+	@echo "  Samples:  $(ZEPHYR_SAMPLES)"
+	@echo "  Port:     $(ZEPHYR_PORT)"
+	@echo "  System:   $(ZEPHYR_SYS)"
+	@echo ""
+	@echo "For more information, see: $(ZEPHYR_DIR)/README.md"
+	@echo ""
 
 # ============================================================================
 # RTL Simulation
@@ -83,42 +83,42 @@ zephyr-help:
 
 .PHONY: zephyr-rtl-%
 zephyr-rtl-%:
-    @if [ ! -d $(ZEPHYR_SAMPLES)/$* ]; then \
-        echo "Error: Zephyr sample '$*' not found"; \
-        echo "Expected directory: $(ZEPHYR_SAMPLES)/$*"; \
-        echo "Available samples:"; \
-        ls -1d $(ZEPHYR_SAMPLES)/* 2>/dev/null | grep -v include | xargs -n1 basename | sed 's/^/  /' || echo "  (none found)"; \
-        exit 1; \
-    fi
+	@if [ ! -d $(ZEPHYR_SAMPLES)/$* ]; then \
+		echo "Error: Zephyr sample '$*' not found"; \
+		echo "Expected directory: $(ZEPHYR_SAMPLES)/$*"; \
+		echo "Available samples:"; \
+		ls -1d $(ZEPHYR_SAMPLES)/* 2>/dev/null | grep -v include | xargs -n1 basename | sed 's/^/  /' || echo "  (none found)"; \
+		exit 1; \
+	fi
 ifdef DEBUG
-    @echo "=========================================="
-    @echo "DEBUG=$(DEBUG) specified - rebuilding RTL"
-    @echo "=========================================="
-    @$(MAKE) clean
-    @$(MAKE) build-rtl DEBUG=$(DEBUG)
+	@echo "=========================================="
+	@echo "DEBUG=$(DEBUG) specified - rebuilding RTL"
+	@echo "=========================================="
+	@$(MAKE) clean
+	@$(MAKE) build-rtl DEBUG=$(DEBUG)
 else
-    @$(MAKE) build-rtl
+	@$(MAKE) build-rtl
 endif
-    @$(MAKE) zephyr-$*
-    @cd $(BUILD_DIR) && ./rv32soc \
-        $(if $(TRACE),--trace) \
-        $(if $(filter 1 fst,$(WAVE)),--wave=fst) \
-        $(if $(filter vcd,$(WAVE)),--wave=vcd) \
-        $(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
-        zephyr-$*.elf
-    @echo ""
-    @if [ "$(TRACE)" = "1" ]; then \
-        echo "Trace saved to: $(BUILD_DIR)/rtl_trace.txt"; \
-    fi
-    @if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
-        echo "Waveform saved to: $(BUILD_DIR)/rv32soc.fst"; \
-    elif [ "$(WAVE)" = "vcd" ]; then \
-        echo "Waveform saved to: $(BUILD_DIR)/rv32soc.vcd"; \
-    fi
-    @if [ "$(TRACE)" != "1" ] && [ "$(WAVE)" = "" ]; then \
-        echo "Use TRACE=1 for instruction trace, WAVE=fst or WAVE=vcd for waveform dump"; \
-    fi
-    @echo "=== Zephyr test complete ==="
+	@$(MAKE) zephyr-$*
+	@cd $(BUILD_DIR) && ./rv32soc \
+		$(if $(TRACE),--trace) \
+		$(if $(filter 1 fst,$(WAVE)),--wave=fst) \
+		$(if $(filter vcd,$(WAVE)),--wave=vcd) \
+		$(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
+		zephyr-$*.elf
+	@echo ""
+	@if [ "$(TRACE)" = "1" ]; then \
+		echo "Trace saved to: $(BUILD_DIR)/rtl_trace.txt"; \
+	fi
+	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
+		echo "Waveform saved to: $(BUILD_DIR)/rv32soc.fst"; \
+	elif [ "$(WAVE)" = "vcd" ]; then \
+		echo "Waveform saved to: $(BUILD_DIR)/rv32soc.vcd"; \
+	fi
+	@if [ "$(TRACE)" != "1" ] && [ "$(WAVE)" = "" ]; then \
+		echo "Use TRACE=1 for instruction trace, WAVE=fst or WAVE=vcd for waveform dump"; \
+	fi
+	@echo "=== Zephyr test complete ==="
 
 # ============================================================================
 # Software Simulation (ISS)
@@ -126,33 +126,33 @@ endif
 
 .PHONY: zephyr-sim-%
 zephyr-sim-%:
-    @if [ ! -d $(ZEPHYR_SAMPLES)/$* ]; then \
-        echo "Error: Zephyr sample '$*' not found"; \
-        echo "Expected directory: $(ZEPHYR_SAMPLES)/$*"; \
-        echo "Available samples:"; \
-        ls -1d $(ZEPHYR_SAMPLES)/* 2>/dev/null | grep -v include | xargs -n1 basename | sed 's/^/  /' || echo "  (none found)"; \
-        exit 1; \
-    fi
-    @$(MAKE) -C $(PROJECT_ROOT) build-sim
-    @$(MAKE) zephyr-$*
-    @if [ "$(SIM)" = "spike" ]; then \
-        cd $(BUILD_DIR) && spike \
-            --isa=rv32ima -m0x80000000:0x200000 \
-            $(if $(TRACE),--log-commits --log=sim_trace.txt) \
-            $(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
-            zephyr-$*.elf; \
-    else \
-        cd $(BUILD_DIR) && ./$(SIM) \
-            --isa=rv32ima -m0x80000000:0x200000 \
-            $(if $(TRACE),--rtl-trace --log=sim_trace.txt) \
-            $(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
-            zephyr-$*.elf; \
-    fi
-    @if [ "$(TRACE)" = "1" ]; then \
-        echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"; \
-    else \
-        echo "Use TRACE=1 to enable instruction trace"; \
-    fi
+	@if [ ! -d $(ZEPHYR_SAMPLES)/$* ]; then \
+		echo "Error: Zephyr sample '$*' not found"; \
+		echo "Expected directory: $(ZEPHYR_SAMPLES)/$*"; \
+		echo "Available samples:"; \
+		ls -1d $(ZEPHYR_SAMPLES)/* 2>/dev/null | grep -v include | xargs -n1 basename | sed 's/^/  /' || echo "  (none found)"; \
+		exit 1; \
+	fi
+	@$(MAKE) -C $(PROJECT_ROOT) build-sim
+	@$(MAKE) zephyr-$*
+	@if [ "$(SIM)" = "spike" ]; then \
+		cd $(BUILD_DIR) && spike \
+			--isa=rv32ima -m0x80000000:0x200000 \
+			$(if $(TRACE),--log-commits --log=sim_trace.txt) \
+			$(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
+			zephyr-$*.elf; \
+	else \
+		cd $(BUILD_DIR) && ./$(SIM) \
+			--isa=rv32ima -m0x80000000:0x200000 \
+			$(if $(TRACE),--rtl-trace --log=sim_trace.txt) \
+			$(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
+			zephyr-$*.elf; \
+	fi
+	@if [ "$(TRACE)" = "1" ]; then \
+		echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"; \
+	else \
+		echo "Use TRACE=1 to enable instruction trace"; \
+	fi
 
 # ============================================================================
 # Compare (RTL vs ISS trace)
@@ -160,33 +160,33 @@ zephyr-sim-%:
 
 .PHONY: zephyr-compare-%
 zephyr-compare-%:
-    @if [ ! -d $(ZEPHYR_SAMPLES)/$* ]; then \
-        echo "Error: Zephyr sample '$*' not found"; \
-        echo "Expected directory: $(ZEPHYR_SAMPLES)/$*"; \
-        echo "Available samples:"; \
-        ls -1d $(ZEPHYR_SAMPLES)/* 2>/dev/null | grep -v include | xargs -n1 basename | sed 's/^/  /' || echo "  (none found)"; \
-        exit 1; \
-    fi
-    @$(MAKE) -C $(PROJECT_ROOT) build-sim
-    @$(MAKE) zephyr-$*
-    @echo "Step 1: Running RTL simulator with trace..."
-    @-$(MAKE) zephyr-rtl-$* TRACE=1
-    @echo "Step 2: Running software simulator with trace..."
-    @-$(MAKE) zephyr-sim-$* TRACE=1
-    @echo "Step 3: Comparing traces..."
-    @if [ ! -f $(TRACE_COMPARE) ]; then \
-        echo "Error: $(TRACE_COMPARE) not found"; \
-        exit 1; \
-    fi
-    @if [ ! -f $(BUILD_DIR)/rtl_trace.txt ]; then \
-        echo "Error: $(BUILD_DIR)/rtl_trace.txt not found"; \
-        exit 1; \
-    fi
-    @if [ ! -f $(BUILD_DIR)/sim_trace.txt ]; then \
-        echo "Error: $(BUILD_DIR)/sim_trace.txt not found"; \
-        exit 1; \
-    fi
-    @python3 $(TRACE_COMPARE) $(BUILD_DIR)/rtl_trace.txt $(BUILD_DIR)/sim_trace.txt
+	@if [ ! -d $(ZEPHYR_SAMPLES)/$* ]; then \
+		echo "Error: Zephyr sample '$*' not found"; \
+		echo "Expected directory: $(ZEPHYR_SAMPLES)/$*"; \
+		echo "Available samples:"; \
+		ls -1d $(ZEPHYR_SAMPLES)/* 2>/dev/null | grep -v include | xargs -n1 basename | sed 's/^/  /' || echo "  (none found)"; \
+		exit 1; \
+	fi
+	@$(MAKE) -C $(PROJECT_ROOT) build-sim
+	@$(MAKE) zephyr-$*
+	@echo "Step 1: Running RTL simulator with trace..."
+	@-$(MAKE) zephyr-rtl-$* TRACE=1
+	@echo "Step 2: Running software simulator with trace..."
+	@-$(MAKE) zephyr-sim-$* TRACE=1
+	@echo "Step 3: Comparing traces..."
+	@if [ ! -f $(TRACE_COMPARE) ]; then \
+		echo "Error: $(TRACE_COMPARE) not found"; \
+		exit 1; \
+	fi
+	@if [ ! -f $(BUILD_DIR)/rtl_trace.txt ]; then \
+		echo "Error: $(BUILD_DIR)/rtl_trace.txt not found"; \
+		exit 1; \
+	fi
+	@if [ ! -f $(BUILD_DIR)/sim_trace.txt ]; then \
+		echo "Error: $(BUILD_DIR)/sim_trace.txt not found"; \
+		exit 1; \
+	fi
+	@python3 $(TRACE_COMPARE) $(BUILD_DIR)/rtl_trace.txt $(BUILD_DIR)/sim_trace.txt
 
 .PHONY: zephyr-clean
 zephyr-clean:
@@ -197,25 +197,25 @@ zephyr-clean:
 
 .PHONY: zephyr-%
 zephyr-%:
-    @if [ ! -d $(ZEPHYR_SAMPLES)/$* ]; then \
-        echo "Error: Zephyr sample '$*' not found"; \
-        echo "Expected directory: $(ZEPHYR_SAMPLES)/$*"; \
-        echo "Available samples:"; \
-        ls -1d $(ZEPHYR_SAMPLES)/* 2>/dev/null | grep -v include | xargs -n1 basename | sed 's/^/  /' || echo "  (none found)"; \
-        exit 1; \
-    fi
-    @mkdir -p $(BUILD_DIR)
-    $(CC) $(ZEPHYR_CFLAGS) $(ZEPHYR_LDFLAGS) \
-        -Wl,-Map=$(BUILD_DIR)/zephyr-$*.map \
-        $(ZEPHYR_SYS)/zephyr_start.S \
-        $(ZEPHYR_SYS)/zephyr_syscall.c \
-        $(ZEPHYR_SAMPLES)/$*/*.c \
-        $(ZEPHYR_SOURCES) \
-        -o $(BUILD_DIR)/zephyr-$*.elf
-    @echo "Generating disassembly..."
-    $(OBJDUMP) -D $(BUILD_DIR)/zephyr-$*.elf > $(BUILD_DIR)/zephyr-$*.dis
-    @echo "Generating readelf info..."
-    $(READELF) -a $(BUILD_DIR)/zephyr-$*.elf > $(BUILD_DIR)/zephyr-$*.readelf
-    @echo "=== Zephyr test built successfully ==="
-    @echo ""
+	@if [ ! -d $(ZEPHYR_SAMPLES)/$* ]; then \
+		echo "Error: Zephyr sample '$*' not found"; \
+		echo "Expected directory: $(ZEPHYR_SAMPLES)/$*"; \
+		echo "Available samples:"; \
+		ls -1d $(ZEPHYR_SAMPLES)/* 2>/dev/null | grep -v include | xargs -n1 basename | sed 's/^/  /' || echo "  (none found)"; \
+		exit 1; \
+	fi
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(ZEPHYR_CFLAGS) $(ZEPHYR_LDFLAGS) \
+		-Wl,-Map=$(BUILD_DIR)/zephyr-$*.map \
+		$(ZEPHYR_SYS)/zephyr_start.S \
+		$(ZEPHYR_SYS)/zephyr_syscall.c \
+		$(ZEPHYR_SAMPLES)/$*/*.c \
+		$(ZEPHYR_SOURCES) \
+		-o $(BUILD_DIR)/zephyr-$*.elf
+	@echo "Generating disassembly..."
+	$(OBJDUMP) -D $(BUILD_DIR)/zephyr-$*.elf > $(BUILD_DIR)/zephyr-$*.dis
+	@echo "Generating readelf info..."
+	$(READELF) -a $(BUILD_DIR)/zephyr-$*.elf > $(BUILD_DIR)/zephyr-$*.readelf
+	@echo "=== Zephyr test built successfully ==="
+	@echo ""
 

@@ -97,14 +97,18 @@ module rv32_csr (
     //
     // RTL correction formula (universally correct with or without WB bubble):
     //   minstret (registered, old)
-    //   + retire_instr && !exception  -- WB instruction retiring this edge but not
-    //                                    yet in minstret (0 if WB is a bubble)
-    //   + 1                           -- the csrrs instruction itself (in MEM now)
+    //   + retire_instr  -- WB instruction retiring this edge but not yet in
+    //                      minstret (0 if WB is a bubble or wb_exception)
+    //   + 1             -- the csrrs instruction itself (in MEM now)
     //   = N  (matches software simulator)
+    //
+    // Note: retire_instr = wb_valid && !wb_exception, so WB exceptions are
+    // already excluded.  EX-stage exception is NOT used here to avoid a
+    // circular combinational path: exception→csr_rdata→fwd→ALU→exception.
 `ifndef SYNTHESIS
     logic [63:0] cycle_csr_src;
     assign cycle_csr_src = trace_mode
-        ? (minstret + {63'd0, (retire_instr & ~exception)} + 64'd1)
+        ? (minstret + {63'd0, retire_instr} + 64'd1)
         : mcycle;
     // instret_csr_src: same pipeline correction as cycle_csr_src but for
     // instret/minstret reads.  In normal operation returns minstret as-is
@@ -113,7 +117,7 @@ module rv32_csr (
     // matching the software simulator (which returns N for every csrrs instret).
     logic [63:0] instret_csr_src;
     assign instret_csr_src = trace_mode
-        ? (minstret + {63'd0, (retire_instr & ~exception)} + 64'd1)
+        ? (minstret + {63'd0, retire_instr} + 64'd1)
         : minstret;
 `else
     logic [63:0] cycle_csr_src;

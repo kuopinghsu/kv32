@@ -170,14 +170,44 @@ module tb_rv32_soc (
     // Drive testbench output port from SoC internal signal
     assign uart_tx = uart_tx_internal;
 
-    // SPI Slave Memory - 256-byte memory for SPI testing
-    spi_slave_memory spi_target (
+    // SPI Slave Memories - 256-byte memories for SPI testing (one per CS line)
+    logic [3:0] spi_miso_slaves;    // MISO from each slave
+
+    spi_slave_memory spi_target0 (
         .rst_n(rst_n),
-        .sclk(spi_sclk_internal),     // SoC drives SCLK
-        .cs_n(spi_cs_n_internal[0]),  // SoC drives CS
-        .mosi(spi_mosi_internal),     // SoC drives MOSI
-        .miso(spi_miso_internal)      // Slave drives MISO
+        .sclk(spi_sclk_internal),
+        .cs_n(spi_cs_n_internal[0]),
+        .mosi(spi_mosi_internal),
+        .miso(spi_miso_slaves[0])
     );
+
+    spi_slave_memory spi_target1 (
+        .rst_n(rst_n),
+        .sclk(spi_sclk_internal),
+        .cs_n(spi_cs_n_internal[1]),
+        .mosi(spi_mosi_internal),
+        .miso(spi_miso_slaves[1])
+    );
+
+    spi_slave_memory spi_target2 (
+        .rst_n(rst_n),
+        .sclk(spi_sclk_internal),
+        .cs_n(spi_cs_n_internal[2]),
+        .mosi(spi_mosi_internal),
+        .miso(spi_miso_slaves[2])
+    );
+
+    spi_slave_memory spi_target3 (
+        .rst_n(rst_n),
+        .sclk(spi_sclk_internal),
+        .cs_n(spi_cs_n_internal[3]),
+        .mosi(spi_mosi_internal),
+        .miso(spi_miso_slaves[3])
+    );
+
+    // Wire-OR MISO from all slaves (only one active at a time)
+    assign spi_miso_internal = spi_miso_slaves[0] | spi_miso_slaves[1] |
+                               spi_miso_slaves[2] | spi_miso_slaves[3];
 
     // Drive testbench output ports from internal signals
     assign spi_sclk = spi_sclk_internal;

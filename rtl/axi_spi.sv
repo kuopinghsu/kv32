@@ -198,7 +198,9 @@ module axi_spi #(
                         rx_valid  <= 1'b0;  // Clear on read
                     end
                     STAT_OFFSET: begin
-                        axi_rdata <= {29'h0, rx_valid, tx_ready, busy};
+                        axi_rdata <= {29'h0, rx_valid,
+                                      tx_ready & ~(tx_valid | tx_being_written),
+                                      busy | tx_valid | tx_being_written};
                     end
                     default: begin
                         axi_rdata <= 32'h0;
@@ -253,10 +255,11 @@ module axi_spi #(
         end else begin
             case (state)
                 IDLE: begin
-                    tx_ready    <= 1'b1;
-                    busy        <= 1'b0;
-                    sclk_int    <= cpol;  // Idle state
-                    bit_counter <= 4'h0;
+                    tx_ready     <= 1'b1;
+                    busy         <= 1'b0;
+                    sclk_int     <= cpol;  // Idle state
+                    bit_counter  <= 4'h0;
+                    shift_reg_rx <= 8'h0;  // Clear RX shift reg between transfers
 
                     if (tx_valid && spi_enable) begin
                         shift_reg_tx <= tx_data;
@@ -286,6 +289,9 @@ module axi_spi #(
                                 // Trailing edge - shift MOSI
                                 shift_reg_tx <= {shift_reg_tx[6:0], 1'b0};
                                 bit_counter  <= bit_counter + 1;
+                                if (bit_counter >= 4'd7) begin
+                                    state <= FINISH;
+                                end
                             end
                         end else begin
                             // Mode 1,3: Shift on leading edge, sample on trailing
@@ -296,11 +302,10 @@ module axi_spi #(
                                 // Trailing edge - sample MISO
                                 shift_reg_rx <= {shift_reg_rx[6:0], spi_miso};
                                 bit_counter  <= bit_counter + 1;
+                                if (bit_counter >= 4'd7) begin
+                                    state <= FINISH;
+                                end
                             end
-                        end
-
-                        if (bit_counter >= 4'd8) begin
-                            state <= FINISH;
                         end
                     end
                 end
@@ -318,6 +323,14 @@ module axi_spi #(
             endcase
         end
     end
+
+    // ========================================================================
+    // Combinatorial TX-write detection (used to close same-cycle AW+AR race)
+    // ========================================================================
+    logic tx_being_written;
+    assign tx_being_written = axi_awvalid && axi_wvalid &&
+                              (axi_awaddr[15:0] == TX_OFFSET) &&
+                              !busy && spi_enable;
 
     // ========================================================================
     // SPI Output Signals

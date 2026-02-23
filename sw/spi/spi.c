@@ -80,7 +80,14 @@ void spi_cs_deselect(void) {
 uint8_t spi_transfer(uint8_t data) {
     spi_wait_ready();
     SPI_TX = data;
-    spi_wait_ready();
+    // Wait until the controller has accepted the TX data and gone busy,
+    // then wait until the transfer is complete (BUSY clears).
+    while (!(SPI_STATUS & SPI_STATUS_BUSY)) {
+        busy_waits++;
+    }
+    while (SPI_STATUS & SPI_STATUS_BUSY) {
+        busy_waits++;
+    }
     transfers++;
 
     // Read received data

@@ -50,74 +50,64 @@ module spi_slave_memory (
     end
 
     // SPI slave logic (samples on rising edge of SCLK for Mode 0)
-    always_ff @(posedge sclk or negedge rst_n) begin
+    // State is reset asynchronously on cs_n to ensure clean start per transaction.
+    always_ff @(posedge sclk or posedge cs_n or negedge rst_n) begin
         if (!rst_n) begin
-            shift_reg <= 8'h0;
-            bit_count <= 3'h0;
-            command <= 8'h0;
-            address <= 8'h0;
+            shift_reg  <= 8'h0;
+            bit_count  <= 3'h0;
+            command    <= 8'h0;
+            address    <= 8'h0;
             byte_count <= 2'h0;
-            state <= IDLE;
+            state      <= IDLE;
+        end else if (cs_n) begin
+            // Chip deselected - reset for next transaction
+            shift_reg  <= 8'h0;
+            bit_count  <= 3'h0;
+            byte_count <= 2'h0;
+            state      <= IDLE;
         end else begin
-            if (cs_n) begin
-                // Chip not selected
+            // Shift in MOSI bit
+            shift_reg <= {shift_reg[6:0], mosi};
+            bit_count <= bit_count + 1;
+
+            if (bit_count == 7) begin
+                // Full byte received
                 bit_count <= 3'h0;
-                byte_count <= 2'h0;
-                state <= IDLE;
-            end else begin
-                // Shift in MOSI bit
-                shift_reg <= {shift_reg[6:0], mosi};
-                bit_count <= bit_count + 1;
 
-                if (bit_count == 7) begin
-                    // Full byte received
-                    bit_count <= 3'h0;
+                case (state)
+                    IDLE, CMD: begin
+                        command <= {shift_reg[6:0], mosi};
+                        state <= ADDR;
+                    end
 
-                    case (state)
-                        IDLE, CMD: begin
-                            command <= {shift_reg[6:0], mosi};
-                            state <= ADDR;
+                    ADDR: begin
+                        address <= {shift_reg[6:0], mosi};
+                        state <= DATA;
+                        // Prepare data for read command
+                        if (command == 8'h03) begin
+                            shift_reg <= memory[{shift_reg[6:0], mosi}];
                         end
+                    end
 
-                        ADDR: begin
-                            address <= {shift_reg[6:0], mosi};
-                            state <= DATA;
-                            // Prepare data for read command
-                            if (command == 8'h03) begin
-                                shift_reg <= memory[{shift_reg[6:0], mosi}];
-                            end
+                    DATA: begin
+                        if (command == 8'h02) begin
+                            // Write command
+                            memory[address] <= {shift_reg[6:0], mosi};
+                            address <= address + 1;
+                        end else if (command == 8'h03) begin
+                            // Read command - prepare next byte
+                            address <= address + 1;
+                            shift_reg <= memory[address + 1];
                         end
+                    end
 
-                        DATA: begin
-                            if (command == 8'h02) begin
-                                // Write command
-                                memory[address] <= {shift_reg[6:0], mosi};
-                                address <= address + 1;
-                            end else if (command == 8'h03) begin
-                                // Read command - prepare next byte
-                                address <= address + 1;
-                                shift_reg <= memory[address + 1];
-                            end
-                        end
-
-                        default: state <= IDLE;
-                    endcase
-                end
+                    default: state <= IDLE;
+                endcase
             end
         end
     end
 
-    // MISO output (shift out on falling edge, but we drive continuously)
-    always_ff @(negedge sclk or negedge rst_n) begin
-        if (!rst_n) begin
-            miso <= 1'b0;
-        end else begin
-            if (cs_n) begin
-                miso <= 1'b0;
-            end else begin
-                miso <= shift_reg[7];
-            end
-        end
-    end
+    // MISO output: combinatorial from shift_reg MSB (no negedge delay needed)
+    assign miso = cs_n ? 1'b0 : shift_reg[7];
 
 endmodule
