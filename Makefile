@@ -105,6 +105,11 @@ ifeq ($(COVERAGE),1)
   VERILATOR_FLAGS += --coverage --coverage-line --coverage-toggle
 endif
 
+# Multiply mode: FAST_MUL=0 selects serial multiplier, default=1 (combinatorial)
+ifdef FAST_MUL
+  VERILATOR_FLAGS += -pvalue+FAST_MUL=$(FAST_MUL)
+endif
+
 # Division mode: FAST_DIV=0 selects serial divider (33 cycles), default=1 (combinatorial)
 ifdef FAST_DIV
   VERILATOR_FLAGS += -pvalue+FAST_DIV=$(FAST_DIV)
@@ -114,10 +119,11 @@ endif
 # Each variable that is passed to Verilator at elaboration time must be listed here.
 # When any value differs from the previous build the stamp file is updated, which
 # makes rv32soc appear out-of-date and triggers a fresh Verilator elaboration.
+FAST_MUL     ?= 1
 FAST_DIV     ?= 1
 COVERAGE     ?= 0
 DEBUG        ?=
-RTL_BUILD_PARAMS = FAST_DIV=$(FAST_DIV) ASSERT=$(ASSERT) DEBUG=$(DEBUG) COVERAGE=$(COVERAGE)
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ASSERT=$(ASSERT) DEBUG=$(DEBUG) COVERAGE=$(COVERAGE)
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
 
 # RTL source files

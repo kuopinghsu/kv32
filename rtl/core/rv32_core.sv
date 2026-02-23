@@ -29,6 +29,9 @@
 // Parameters:
 //   - IB_DEPTH: Instruction buffer depth (default=2), higher allows more outstanding fetches
 //   - SB_DEPTH: Store buffer depth (default=4), higher allows more buffered stores
+//   - FAST_MUL: Multiply mode (default=1)
+//     - 1: Combinatorial multiply (single cycle, larger area)
+//     - 0: Serial multiplier (up to 32 cycles, smaller area)
 //   - FAST_DIV: Division mode (default=1)
 //     - 1: Combinatorial divide (single cycle, larger area)
 //     - 0: Serial divider (33 cycles, smaller area)
@@ -37,6 +40,7 @@
 module rv32_core #(
     parameter int IB_DEPTH = 4,  // Instruction buffer depth (outstanding fetches); must be power-of-2 and >= effective_latency+1
     parameter int SB_DEPTH = 4,  // Store buffer depth (buffered stores)
+    parameter int FAST_MUL = 1,  // Multiply mode: 1=combinatorial, 0=serial
     parameter int FAST_DIV = 1   // Division mode: 1=combinatorial, 0=serial
 )(
     input  logic        clk,
@@ -1141,7 +1145,7 @@ module rv32_core #(
 
     // ALU Instance
     // Handles arithmetic, logical, shift, and comparison operations
-    // Multi-cycle operations (divide with FAST_DIV=0) report ready=0 while executing
+    // Multi-cycle operations (FAST_MUL=0 or FAST_DIV=0) report ready=0 while executing
 
     always_ff @(posedge clk) begin
         if (rst_n && ex_valid && (rd_addr_ex != 5'd0)) begin
@@ -1151,6 +1155,7 @@ module rv32_core #(
     end
 
     rv32_alu #(
+        .FAST_MUL(FAST_MUL),
         .FAST_DIV(FAST_DIV)
     ) alu (
         .clk(clk),
@@ -1260,7 +1265,7 @@ module rv32_core #(
                               (jal_ex || jalr_ex) ? (pc_ex + 32'd4) :
                               alu_result_ex;
 
-    // Stall EX stage if ALU is busy (e.g., serial divider when FAST_DIV=0)
+    // Stall EX stage if ALU is busy (FAST_MUL=0 or FAST_DIV=0)
     assign id_ex_stall = !alu_ready && ex_valid;
 
     // ============================================================================

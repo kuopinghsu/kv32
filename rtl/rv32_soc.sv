@@ -36,6 +36,7 @@
 //   - UART Baud Rate: 25 Mbaud (maximum for CLKS_PER_BIT=4)
 //   - Instruction Buffer Depth: 2 (up to 2 outstanding fetches)
 //   - Store Buffer Depth: 2 (up to 2 buffered stores)
+//   - Multiply Mode: FAST_MUL=1 (combinatorial, single cycle)
 //   - Division Mode: FAST_DIV=1 (combinatorial, single cycle)
 // ============================================================================
 
@@ -44,6 +45,7 @@ module rv32_soc #(
     parameter BAUD_RATE = 25_000_000,    // UART baud rate (max = CLK_FREQ/4)
     parameter IB_DEPTH = 4,              // Instruction buffer depth (outstanding fetches); must be power-of-2 >= effective_latency+1
     parameter SB_DEPTH = 2,              // Store buffer depth (buffered stores)
+    parameter FAST_MUL = 1,              // Multiply mode: 1=combinatorial, 0=serial
     parameter FAST_DIV = 1               // Division mode: 1=combinatorial, 0=serial
 )(
     input  logic clk,
@@ -340,6 +342,7 @@ module rv32_soc #(
     rv32_core #(
         .IB_DEPTH(IB_DEPTH),
         .SB_DEPTH(SB_DEPTH),
+        .FAST_MUL(FAST_MUL),
         .FAST_DIV(FAST_DIV)
     ) core (
         .clk(clk),

@@ -10,6 +10,7 @@
 
 /* verilator lint_off SYNCASYNCNET */
 module tb_rv32_soc #(
+    parameter int FAST_MUL = 1,  // Multiply mode: 1=combinatorial, 0=serial
     parameter int FAST_DIV = 1   // Division mode: 1=combinatorial, 0=serial
 ) (
     input wire clk,
@@ -72,6 +73,7 @@ module tb_rv32_soc #(
 
     // Instantiate RISC-V SoC
     rv32_soc #(
+        .FAST_MUL(FAST_MUL),
         .FAST_DIV(FAST_DIV)
     ) dut (
         .clk(clk),

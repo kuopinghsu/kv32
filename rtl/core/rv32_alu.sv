@@ -13,7 +13,9 @@
 //   - Comparison: SLT, SLTU
 //
 // Features:
-//   - Multiply: fully combinatorial (single cycle)
+//   - Multiply: configurable via FAST_MUL parameter
+//     - FAST_MUL=1: combinatorial (single cycle, larger area)
+//     - FAST_MUL=0: serial shift-and-add, (32 - CLZ(|multiplier|)) cycles
 //   - Divide: configurable via FAST_DIV parameter
 //     - FAST_DIV=1: combinatorial (single cycle, larger area)
 //     - FAST_DIV=0: serial left-shift restoring divider, variable latency:
@@ -23,6 +25,7 @@
 // ============================================================================
 
 module rv32_alu #(
+    parameter FAST_MUL = 1, // 1=combinatorial multiply, 0=serial multiplier
     parameter FAST_DIV = 1  // 1=combinatorial divide, 0=serial divider
 )(
     input  logic        clk,
@@ -36,17 +39,175 @@ module rv32_alu #(
 
     import rv32_pkg::*;
 
-    // Multiply results (combinatorial)
-    logic [63:0] result_mul;
-    logic [63:0] result_mulu;
-    logic [63:0] result_mulsu;
+    // ========================================================================
+    // Multiplication Logic (configurable)
+    // ========================================================================
+    logic [31:0] result_mul_lo;     // MUL  (lower 32 bits of product)
+    logic [31:0] result_mulh_hi;    // MULH (upper 32 bits, signed x signed)
+    logic [31:0] result_mulhsu_hi;  // MULHSU (upper 32, signed x unsigned)
+    logic [31:0] result_mulhu_hi;   // MULHU (upper 32, unsigned x unsigned)
+    logic        mul_ready;
 
-    assign result_mul   = $signed  ({{32{operand_a[31]}}, operand_a}) *
-                          $signed  ({{32{operand_b[31]}}, operand_b});
-    assign result_mulu  = $unsigned({{32{1'b0}},          operand_a}) *
-                          $unsigned({{32{1'b0}},          operand_b});
-    assign result_mulsu = $signed  ({{32{operand_a[31]}}, operand_a}) *
-                          $unsigned({{32{1'b0}},          operand_b});
+    generate
+        if (FAST_MUL == 1) begin : gen_fast_mul
+            // Combinatorial multiply (single cycle, larger area)
+            logic [63:0] result_mul;
+            logic [63:0] result_mulu;
+            logic [63:0] result_mulsu;
+
+            assign result_mul   = $signed  ({{32{operand_a[31]}}, operand_a}) *
+                                  $signed  ({{32{operand_b[31]}}, operand_b});
+            assign result_mulu  = $unsigned({{32{1'b0}},          operand_a}) *
+                                  $unsigned({{32{1'b0}},          operand_b});
+            assign result_mulsu = $signed  ({{32{operand_a[31]}}, operand_a}) *
+                                  $unsigned({{32{1'b0}},          operand_b});
+
+            assign result_mul_lo    = result_mul[31:0];
+            assign result_mulh_hi   = result_mul[63:32];
+            assign result_mulhsu_hi = result_mulsu[63:32];
+            assign result_mulhu_hi  = result_mulu[63:32];
+            assign mul_ready = 1'b1;
+
+        end else begin : gen_serial_mul
+            // Serial shift-and-add multiplier with CLZ-based early termination.
+            //
+            // Key properties:
+            //   - Works with the MAGNITUDE of both operands; sign fix-up is
+            //     applied at the last iteration (MULH/MULHSU only).
+            //   - MUL (lower 32 bits) is identical for signed/unsigned so A and
+            //     B are always treated as unsigned for MUL.
+            //   - Uses CLZ(|B|) to skip leading zero bits of |B|.
+            //   - Latency: (32 - CLZ(|B|)) cycles.
+            //       B = 0          -> 0 iterations (instant-complete)
+            //       B = 1          -> 1 iteration
+            //       B = 0xFFFFFFFF -> 32 iterations
+
+            // ---- state registers ----------------------------------------
+            logic [5:0]  mul_count;    // current iteration index (0-based)
+            logic [5:0]  mul_total;    // total iterations = 32 - CLZ(|B|)
+            logic [63:0] mul_a_shift;  // |A| left-shifted each cycle
+            logic [31:0] mul_b_reg;    // |B| right-shifted each cycle
+            logic [63:0] mul_acc;      // running partial-product sum
+            logic        mul_valid;    // pulses for one cycle when done
+            logic        mul_active;   // high during iterative computation
+            logic        mul_neg;      // final product needs negation
+            logic [63:0] mul_result;   // latched 64-bit product (sign-corrected)
+
+            // ---- combinatorial helpers ----------------------------------
+            logic        is_mul_op;
+            logic        is_signed_a_mul, is_signed_b_mul;
+            // MUL:    lower 32 bits identical for signed/unsigned -> unsigned
+            // MULH:   signed(A) x signed(B)
+            // MULHSU: signed(A) x unsigned(B)
+            // MULHU:  unsigned(A) x unsigned(B)
+            assign is_mul_op       = (alu_op == ALU_MUL   || alu_op == ALU_MULH  ||
+                                      alu_op == ALU_MULHSU || alu_op == ALU_MULHU);
+            assign is_signed_a_mul = (alu_op == ALU_MULH || alu_op == ALU_MULHSU);
+            assign is_signed_b_mul = (alu_op == ALU_MULH);
+
+            logic [31:0] abs_a_mul, abs_b_mul;
+            assign abs_a_mul = (is_signed_a_mul && operand_a[31]) ? (~operand_a + 1) : operand_a;
+            assign abs_b_mul = (is_signed_b_mul && operand_b[31]) ? (~operand_b + 1) : operand_b;
+
+            // CLZ of |B| -- returns 32 when |B| == 0.
+            // Iterate LOW->HIGH so the highest set bit wins (last assignment).
+            logic [5:0] clz_b_mul;
+            always_comb begin
+                clz_b_mul = 6'd32;
+                for (int i = 0; i <= 31; i++)
+                    if (abs_b_mul[i]) clz_b_mul = 6'(31 - i);
+            end
+
+            // One combinatorial iteration step (reads current FF values)
+            logic [63:0] mul_next_acc;
+            logic [63:0] mul_next_a_shift;
+            logic [31:0] mul_next_b_reg;
+            assign mul_next_acc     = mul_b_reg[0] ? (mul_acc + mul_a_shift) : mul_acc;
+            assign mul_next_a_shift = mul_a_shift << 1;
+            assign mul_next_b_reg   = mul_b_reg >> 1;
+
+            // ---- sequential state machine --------------------------------
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    mul_count   <= 6'd0;
+                    mul_total   <= 6'd0;
+                    mul_a_shift <= 64'd0;
+                    mul_b_reg   <= 32'd0;
+                    mul_acc     <= 64'd0;
+                    mul_valid   <= 1'b0;
+                    mul_active  <= 1'b0;
+                    mul_neg     <= 1'b0;
+                    mul_result  <= 64'd0;
+                end else begin
+                    mul_valid <= 1'b0;  // default: pulse for one cycle only
+
+                    if (is_mul_op && !mul_active && !mul_valid && clz_b_mul != 6'd32) begin
+                        // ---- START cycle (B != 0) --------------------------------
+                        // B==0: instant-complete; result=0 from combinatorial mux;
+                        //       no SM invocation needed.
+                        mul_total   <= 6'd32 - clz_b_mul;
+                        mul_count   <= 6'd0;
+                        mul_a_shift <= {32'd0, abs_a_mul};
+                        mul_b_reg   <= abs_b_mul;
+                        mul_acc     <= 64'd0;
+                        mul_neg     <= (is_signed_a_mul && operand_a[31]) ^
+                                       (is_signed_b_mul && operand_b[31]);
+                        mul_active  <= 1'b1;
+                    end else if (mul_active) begin
+                        // ---- ITERATION step -----------------------------
+                        if (mul_count + 1 >= mul_total) begin
+                            // Last iteration -- apply sign fixup and latch.
+                            mul_result <= mul_neg ? (~mul_next_acc + 1) : mul_next_acc;
+                            mul_valid  <= 1'b1;
+                            mul_active <= 1'b0;
+                        end else begin
+                            mul_acc     <= mul_next_acc;
+                            mul_a_shift <= mul_next_a_shift;
+                            mul_b_reg   <= mul_next_b_reg;
+                            mul_count   <= mul_count + 1;
+                        end
+                    end
+                end
+            end
+
+            `ifdef DEBUG
+            always_ff @(posedge clk) begin
+                if (rst_n) begin
+                    if (is_mul_op && !mul_active && !mul_valid && clz_b_mul != 6'd32) begin
+                        `DBG2(("[MUL_START] alu_op=%0d a=%h b=%h abs_a=%h abs_b=%h clz_b=%0d total=%0d neg=%b",
+                                 alu_op, operand_a, operand_b,
+                                 abs_a_mul, abs_b_mul, clz_b_mul, 6'd32 - clz_b_mul,
+                                 (is_signed_a_mul && operand_a[31]) ^ (is_signed_b_mul && operand_b[31])));
+                    end
+                    if (mul_valid) begin
+                        `DBG2(("[MUL_DONE] mul_result=%h alu_op=%0d",
+                                 mul_result, alu_op));
+                    end
+                end
+            end
+            `endif // DEBUG
+
+            // ---- result signals -----------------------------------------
+            // Use the latched SM result only while the SM is active or has
+            // just completed (mul_valid).  When B==0 (no SM invoked), return
+            // 0 combinatorially -- mirroring how the divider handles div-by-
+            // zero results without going through the iterative engine.
+            logic use_mul_result;
+            assign use_mul_result   = mul_active || mul_valid;
+            assign result_mul_lo    = use_mul_result ? mul_result[31:0]  : 32'd0;
+            assign result_mulh_hi   = use_mul_result ? mul_result[63:32] : 32'd0;
+            assign result_mulhsu_hi = use_mul_result ? mul_result[63:32] : 32'd0;
+            assign result_mulhu_hi  = use_mul_result ? mul_result[63:32] : 32'd0;
+
+            // ---- ready signal -------------------------------------------
+            // While mul_active is set, live clz_b_mul can change (forwarding
+            // expiry makes operand_b drift to 0) and would falsely signal
+            // B==0 releasing the stall.  Guard with !mul_active.
+            assign mul_ready = !is_mul_op ||
+                               (!mul_active && (clz_b_mul == 6'd32 || mul_valid));
+
+        end
+    endgenerate
 
     // ========================================================================
     // Division and Remainder Logic (configurable)
@@ -244,7 +405,7 @@ module rv32_alu #(
                     end
                 end
             end
-            `endif
+            `endif // DEBUG
 
             // ---- result mux (with sign fixup and spec-defined edge cases) --
             // Sign fixup is applied combinatorially so that the corrected
@@ -304,10 +465,10 @@ module rv32_alu #(
             ALU_SRA:    result = $signed(operand_a) >>> operand_b[4:0];
             ALU_OR:     result = operand_a | operand_b;
             ALU_AND:    result = operand_a & operand_b;
-            ALU_MUL:    result = result_mul[31:0];
-            ALU_MULH:   result = result_mul[63:32];
-            ALU_MULHSU: result = result_mulsu[63:32];
-            ALU_MULHU:  result = result_mulu[63:32];
+            ALU_MUL:    result = result_mul_lo;
+            ALU_MULH:   result = result_mulh_hi;
+            ALU_MULHSU: result = result_mulhsu_hi;
+            ALU_MULHU:  result = result_mulhu_hi;
             ALU_DIV:    result = result_div;
             ALU_DIVU:   result = result_divu;
             ALU_REM:    result = result_rem;
@@ -316,7 +477,7 @@ module rv32_alu #(
         endcase
     end
 
-    // Ready signal: always ready except when serial divider is active
-    assign ready = div_ready;
+    // Ready signal: all multi-cycle units must complete before advancing
+    assign ready = div_ready && mul_ready;
 
 endmodule
