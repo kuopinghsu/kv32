@@ -231,7 +231,6 @@ arch-test-all: arch-test-rv32i arch-test-rv32m arch-test-rv32a arch-test-rv32zic
 	@echo "View report: $(RISCOF_WORK)/report.html"
 	@echo "Use 'make arch-test-report' to open in browser"
 	@echo "=========================================="
-	$(TRACE_SUMMARY)
 
 # ============================================================================
 # rv32sim Validation Tests (DUT=rv32sim, REF=spike)
