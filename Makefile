@@ -117,6 +117,12 @@ ifdef FAST_DIV
   VERILATOR_FLAGS += -pvalue+FAST_DIV=$(FAST_DIV)
 endif
 
+# I-cache defaults (set before ifdef blocks so ?= assignments take effect)
+ICACHE_EN    ?= 1
+ICACHE_SIZE  ?= 4096
+ICACHE_LINE_SIZE ?= 32
+ICACHE_WAYS  ?= 2
+
 # I-cache: ICACHE_EN=0 disables the cache (uses mem_axi_ro bypass), default=1
 ifdef ICACHE_EN
   VERILATOR_FLAGS += -pvalue+ICACHE_EN=$(ICACHE_EN)
@@ -137,10 +143,6 @@ endif
 # makes rv32soc appear out-of-date and triggers a fresh Verilator elaboration.
 FAST_MUL     ?= 1
 FAST_DIV     ?= 1
-ICACHE_EN    ?= 1
-ICACHE_SIZE  ?= 4096
-ICACHE_LINE_SIZE ?= 64
-ICACHE_WAYS  ?= 2
 COVERAGE     ?= 0
 DEBUG        ?=
 # Pass ICACHE_EN value to C++ testbench so it can gate icache stats printing
