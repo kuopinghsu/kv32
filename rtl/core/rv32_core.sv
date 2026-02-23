@@ -223,6 +223,7 @@ module rv32_core #(
     logic        is_mret_id, is_ecall_id, is_ebreak_id;
     logic        is_amo_id;
     amo_op_e     amo_op_id;
+    logic        is_fence_id;
     logic        id_ex_stall;
     logic        id_flush;
 
@@ -250,6 +251,7 @@ module rv32_core #(
     logic        is_mret_ex, is_ecall_ex, is_ebreak_ex;
     logic        is_amo_ex;
     amo_op_e     amo_op_ex;
+    logic        is_fence_ex;
     logic [31:0] alu_result_ex;
     logic        alu_ready;
     logic        branch_taken;
@@ -277,6 +279,7 @@ module rv32_core #(
     logic [11:0] csr_addr_mem;
     logic        is_amo_mem;
     amo_op_e     amo_op_mem;
+    logic        is_fence_mem;
     logic        mem_valid;
     logic        mem_wb_stall;
     logic        mem_flush;
@@ -687,7 +690,8 @@ module rv32_core #(
         .is_ecall(is_ecall_id),
         .is_ebreak(is_ebreak_id),
         .is_amo(is_amo_id),
-        .amo_op(amo_op_id)
+        .amo_op(amo_op_id),
+        .is_fence(is_fence_id)
     );
 
     // Register File (32 x 32-bit registers)
@@ -785,7 +789,7 @@ module rv32_core #(
     //   - store_stall: Store waiting for store buffer space (data valid, YES forwarding)
     //   - amo_stall: AMO operation in progress (data not valid until complete)
 
-    logic load_stall, store_stall;
+    logic load_stall, store_stall, fence_stall;
     // dmem_resp_valid qualified: B-responses (dmem_resp_is_write=1) are for the store buffer,
     // not for loads. Only count R-responses as satisfying the load.
     logic load_resp_valid;
@@ -932,6 +936,7 @@ module rv32_core #(
             is_ebreak_ex  <= 1'b0;
             is_amo_ex     <= 1'b0;
             amo_op_ex     <= AMO_ADD;
+            is_fence_ex   <= 1'b0;
             ex_valid      <= 1'b0;
         end else if (ex_flush) begin
             // Branch misprediction or exception: flush pipeline stage
@@ -992,6 +997,7 @@ module rv32_core #(
             is_ebreak_ex  <= 1'b0;
             is_amo_ex     <= 1'b0;
             amo_op_ex     <= AMO_ADD;
+            is_fence_ex   <= 1'b0;
             ex_valid      <= 1'b0;
         end else if (!id_ex_stall) begin
             pc_ex         <= pc_id;
@@ -1024,6 +1030,7 @@ module rv32_core #(
             is_ebreak_ex  <= is_ebreak_id;
             is_amo_ex     <= is_amo_id;
             amo_op_ex     <= amo_op_id;
+            is_fence_ex   <= is_fence_id;
             ex_valid      <= id_valid;
             if (id_valid) begin
                 `DBG2(("Cycle %0t: ID->EX pc=0x%h instr=0x%h rd=%0d mem_w=%b mem_r=%b id_valid=%b ex_valid_next=%b",
@@ -1412,6 +1419,7 @@ module rv32_core #(
             csr_addr_mem  <= 12'd0;
             is_amo_mem    <= 1'b0;
             amo_op_mem    <= AMO_ADD;
+            is_fence_mem  <= 1'b0;
             mem_valid     <= 1'b0;
             data_access_fault_mem <= 1'b0;
         end else if (mem_flush) begin
@@ -1421,6 +1429,7 @@ module rv32_core #(
             mem_write_mem <= 1'b0;
             system_mem    <= 1'b0;
             mem_valid     <= 1'b0;
+            is_fence_mem  <= 1'b0;
             data_access_fault_mem <= 1'b0;
         end else if (!ex_mem_stall) begin
             pc_mem        <= pc_ex;
@@ -1444,6 +1453,7 @@ module rv32_core #(
             csr_addr_mem  <= csr_addr_ex;
             is_amo_mem    <= is_amo_ex;
             amo_op_mem    <= amo_op_ex;
+            is_fence_mem  <= is_fence_ex;
             mem_valid     <= ex_valid && !exception && !irq_pending && !wb_exception;
             if (ex_valid) begin
                 `DBG2(("Cycle %0t: EX->MEM pc=0x%h instr=0x%h ex_valid=%b mem_valid_next=%b",
@@ -2017,7 +2027,9 @@ module rv32_core #(
 
     assign ex_mem_stall = mem_wb_stall || (load_req_valid && !dmem_req_ready) || (amo_mem_req && !dmem_req_ready);
     // Combine all MEM->WB stall conditions (load_stall and store_stall defined above for forwarding)
-    assign mem_wb_stall = load_stall || store_stall || (is_amo_mem && amo_in_progress);
+    // fence_stall: stall until store buffer drains (fence ordering guarantee)
+    assign fence_stall  = is_fence_mem && mem_valid && sb_store_pending;
+    assign mem_wb_stall = load_stall || store_stall || (is_amo_mem && amo_in_progress) || fence_stall;
 
     // Debug mem/wb stall reasons
     always @(posedge clk) begin

@@ -45,6 +45,16 @@ module axi_magic (
     input  logic        axi_rready
 );
 
+`ifdef SYNTHESIS
+    assign axi_awready      = 1'b1;
+    assign axi_wready       = 1'b1;
+    assign axi_bresp[1:0]   = RESP_OKAY;
+    assign axi_bvalid       = 1'b1;
+    assign axi_arready      = 1'b1;
+    assign axi_rdata[31:0]  = 32'b0;
+    assign axi_rresp[1:0]   = RESP_OKAY;
+    assign axi_rvalid       = 1'b1;
+`else // SYNTHESIS
     // Magic addresses
     localparam EXIT_MAGIC_ADDR    = 32'hFFFFFFF0;
     localparam CONSOLE_MAGIC_ADDR = 32'hFFFFFFF4;
@@ -369,5 +379,6 @@ module axi_magic (
         else $error("[AXI_MAGIC] Invalid RRESP value: %b", axi_rresp);
 
 `endif // ASSERTION
+`endif // SYNTHESIS
 
 endmodule

@@ -5,6 +5,10 @@
 #include <stdint.h>
 #include <stdio.h>
 
+// Ensure a peripheral register write is visible before reading STATUS.
+// FENCE drains the store buffer in RTL; in the SW simulator it is a no-op.
+#define I2C_FENCE() __asm__ volatile ("fence" ::: "memory")
+
 // I2C peripheral registers
 #define I2C_BASE     0x02030000
 #define I2C_CTRL     (*((volatile uint32_t*)(I2C_BASE + 0x00)))
@@ -54,19 +58,22 @@ void i2c_start(void) {
     i2c_wait_ready();
     printf("  [I2C] Sending START\n");
     I2C_CTRL = I2C_CTRL_ENABLE | I2C_CTRL_START;
-    i2c_wait_ready();  // Wait for START to complete
+    I2C_FENCE();
+    i2c_wait_ready();
     printf("  [I2C] START complete, status=0x%02lX\n", (unsigned long)I2C_STATUS);
 }
 
 void i2c_stop(void) {
     i2c_wait_ready();
     I2C_CTRL = I2C_CTRL_ENABLE | I2C_CTRL_STOP;
-    i2c_wait_ready();  // Wait for STOP to complete
+    I2C_FENCE();
+    i2c_wait_ready();
 }
 
 int i2c_write_byte(uint8_t data) {
     i2c_wait_ready();
     I2C_TX = data;
+    I2C_FENCE();
     i2c_wait_ready();
     writes++;
 
@@ -88,6 +95,7 @@ uint8_t i2c_read_byte(int send_ack) {
         I2C_CTRL = I2C_CTRL_ENABLE | I2C_CTRL_READ | I2C_CTRL_ACK;  // NACK
     }
 
+    I2C_FENCE();
     i2c_wait_ready();
     reads++;
 

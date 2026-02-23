@@ -248,10 +248,16 @@ void I2CDevice::write(uint32_t offset, uint32_t value, int size) {
                 state = State::START;
                 busy = true;
                 tx_ready = false;
-                eeprom_addr_set = false;
+                // NOTE: do NOT reset eeprom_addr_set here — a repeated START
+                // (read phase) must keep the address set by the prior write phase.
             } else if (stop_cmd && i2c_enable) {
                 state = State::STOP;
                 busy = true;
+            } else if (read_cmd && i2c_enable && state == State::IDLE) {
+                // Explicit READ command via CTRL: start a read transaction.
+                state = State::READ;
+                busy = true;
+                tx_ready = false;
             }
             break;
 
@@ -341,7 +347,10 @@ void I2CDevice::process_i2c_transaction() {
             break;
 
         case State::STOP:
-            // STOP condition executed
+            // STOP condition executed — end of full I2C transaction.
+            // Reset address tracking so the next transaction's write-phase
+            // will correctly re-set the EEPROM memory pointer.
+            eeprom_addr_set = false;
             state = State::IDLE;
             busy = false;
             break;
@@ -353,34 +362,31 @@ void I2CDevice::process_i2c_transaction() {
 }
 
 void I2CDevice::handle_eeprom_write(uint8_t data) {
-    if (!eeprom_addr_set) {
-        // First byte is the EEPROM address
-        if ((tx_data & 0xFE) == 0xA0) {
-            // This is device address (0x50 << 1) - ignore R/W bit
-            return;
+    if ((data & 0xFE) == 0xA0) {
+        // Device address byte:
+        //   0xA0 (write direction) — a memory address byte follows next.
+        //   0xA1 (read  direction) — address was already set in the write
+        //                            phase; keep eeprom_addr_set as-is.
+        if (!(data & 0x01)) {
+            eeprom_addr_set = false;  // Prepare to receive memory address
         }
+        return;
+    }
+    if (!eeprom_addr_set) {
+        // Memory address byte
         eeprom_addr = data;
         eeprom_addr_set = true;
     } else {
-        // Subsequent bytes are data
+        // Data byte — write to EEPROM
         eeprom_memory[eeprom_addr] = data;
         eeprom_addr = (eeprom_addr + 1) & 0xFF;
     }
 }
 
 uint8_t I2CDevice::handle_eeprom_read() {
-    if ((tx_data & 0xFE) == 0xA0) {
-        // This is device address with read bit
-        return 0;
-    }
-
-    if (!eeprom_addr_set) {
-        // First byte should be address
-        eeprom_addr = tx_data;
-        eeprom_addr_set = true;
-        return 0;
-    }
-
+    // By the time a READ state is processed, the EEPROM memory pointer
+    // (eeprom_addr) has already been set by the preceding write phase.
+    // Just return the byte at the current pointer and advance it.
     uint8_t data = eeprom_memory[eeprom_addr];
     eeprom_addr = (eeprom_addr + 1) & 0xFF;
     return data;

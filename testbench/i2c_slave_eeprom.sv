@@ -11,11 +11,17 @@
 //   Write: START + ADDR(W) + ACK + MEM_ADDR + ACK + DATA + ACK + ... + STOP
 //   Read:  START + ADDR(W) + ACK + MEM_ADDR + ACK +
 //          START + ADDR(R) + ACK + DATA + ACK/NACK + ... + STOP
+//
+// NOTE: Uses system clock (clk) for proper I2C START/STOP detection.
+//       START (SDA falls while SCL high) and STOP (SDA rises while SCL high)
+//       conditions occur between SCL edges and cannot be detected reliably on
+//       posedge SCL alone, so the system clock is used for all sampling.
 // ============================================================================
 
 module i2c_slave_eeprom #(
     parameter DEVICE_ADDR = 7'h50  // 7-bit I2C address
 )(
+    input  logic clk,      // System clock for proper edge detection
     input  logic rst_n,
     input  logic scl,
     input  logic sda_in,
@@ -29,41 +35,46 @@ module i2c_slave_eeprom #(
     // I2C state machine
     typedef enum logic [3:0] {
         IDLE,
-        START,
-        ADDR,
-        ACK_ADDR,
-        REG_ADDR,
-        ACK_REG,
-        WRITE_DATA,
-        ACK_WRITE,
-        READ_DATA,
-        ACK_READ,
-        STOP
+        RECV_ADDR,   // Receiving 8 bits: 7-bit address + R/W bit
+        ACK_ADDR,    // Sending ACK/NACK for address
+        RECV_REG,    // Receiving 8-bit memory address
+        ACK_REG,     // Sending ACK for register address
+        WRITE_DATA,  // Receiving data byte(s)
+        ACK_WRITE,   // Sending ACK for written data
+        READ_DATA,   // Sending data byte(s) to master
+        ACK_READ     // Waiting for master's ACK/NACK after a read byte
     } state_t;
 
-    state_t state, next_state;
+    state_t state;
 
-    // Registers
+    // Shift register and counters
     logic [7:0] shift_reg;
     logic [2:0] bit_count;
     logic [7:0] mem_addr;
-    logic       rw_bit;  // 0=write, 1=read
+    logic       rw_bit;
     logic       addr_match;
+    logic       rd_addr_acked;  // Set after scl_rising in ACK_ADDR for reads
 
-    // Edge detection
+    // Previous SCL/SDA values sampled on every system clock for edge detection
     logic scl_prev, sda_prev;
-    logic scl_rising, scl_falling;
-    logic sda_rising, sda_falling;
+
+    // Edge / condition detection (combinational)
+    wire scl_rising  =  scl    && !scl_prev;
+    wire scl_falling = !scl    &&  scl_prev;
+    // START: SDA falls while SCL has been (and still is) high
+    wire start_cond  = !sda_in &&  sda_prev &&  scl && scl_prev;
+    // STOP:  SDA rises while SCL has been (and still is) high
+    wire stop_cond   =  sda_in && !sda_prev &&  scl && scl_prev;
 
     // Initialize memory with test pattern
     initial begin
         for (int i = 0; i < 256; i++) begin
-            memory[i] = 8'hA0 + i[7:0];  // Different pattern from SPI
+            memory[i] = 8'hA0 + i[7:0];
         end
     end
 
-    // Edge detection
-    always_ff @(posedge scl or negedge rst_n) begin
+    // Sample SCL/SDA on every system clock for edge detection
+    always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             scl_prev <= 1'b1;
             sda_prev <= 1'b1;
@@ -73,143 +84,232 @@ module i2c_slave_eeprom #(
         end
     end
 
-    assign scl_rising = scl && !scl_prev;
-    assign scl_falling = !scl && scl_prev;
-    assign sda_rising = sda_in && !sda_prev;
-    assign sda_falling = !sda_in && sda_prev;
-
-    // Detect START and STOP conditions
-    logic start_cond, stop_cond;
-    assign start_cond = scl && sda_falling;
-    assign stop_cond = scl && sda_rising;
-
-    // State machine
-    always_ff @(posedge scl or negedge rst_n) begin
+    // Main I2C slave state machine (system-clock driven)
+    always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= IDLE;
-            shift_reg <= 8'h0;
-            bit_count <= 3'h0;
-            mem_addr <= 8'h0;
-            rw_bit <= 1'b0;
-            addr_match <= 1'b0;
-            sda_out <= 1'b0;
-            sda_oe <= 1'b0;
+            state         <= IDLE;
+            shift_reg     <= 8'h0;
+            bit_count     <= 3'h0;
+            mem_addr      <= 8'h0;
+            rw_bit        <= 1'b0;
+            addr_match    <= 1'b0;
+            rd_addr_acked <= 1'b0;
+            sda_out       <= 1'b0;
+            sda_oe        <= 1'b0;
         end else begin
+            // START / STOP conditions take priority over data reception
             if (start_cond) begin
-                // START condition detected
-                state <= ADDR;
-                bit_count <= 3'h0;
-                sda_oe <= 1'b0;
-`ifdef DEBUG
-                $display("[I2C_SLAVE] START condition detected");
-`endif
+                state         <= RECV_ADDR;
+                bit_count     <= 3'h0;
+                rd_addr_acked <= 1'b0;
+                sda_oe        <= 1'b0;
+                `DBG2(("[I2C_SLAVE] START condition detected"));
             end else if (stop_cond) begin
-                // STOP condition detected
-                state <= IDLE;
-                sda_oe <= 1'b0;
-`ifdef DEBUG
-                $display("[I2C_SLAVE] STOP condition detected");
-`endif
+                state         <= IDLE;
+                rd_addr_acked <= 1'b0;
+                sda_oe        <= 1'b0;
+                `DBG2(("[I2C_SLAVE] STOP condition detected"));
             end else begin
                 case (state)
+
+                    // ---------------------------------------------------------
                     IDLE: begin
                         sda_oe <= 1'b0;
-                        bit_count <= 3'h0;
                     end
 
-                    ADDR: begin
-                        // Receiving address + R/W bit
-                        shift_reg <= {shift_reg[6:0], sda_in};
-                        bit_count <= bit_count + 1;
-                        if (bit_count == 7) begin
-                            // Check if address matches
-                            addr_match <= (shift_reg[7:1] == DEVICE_ADDR);
-                            rw_bit <= sda_in;
-                            state <= ACK_ADDR;
-                            bit_count <= 3'h0;
-`ifdef DEBUG
-                            $display("[I2C_SLAVE] Address received: 0x%02h, match=%b (expected=0x%02h)",
-                                     {shift_reg[6:0], sda_in}, (shift_reg[7:1] == DEVICE_ADDR), DEVICE_ADDR);
-`endif
-                        end
-                    end
-
-                    ACK_ADDR: begin
-                        if (addr_match) begin
-                            sda_out <= 1'b0;  // ACK
-                            sda_oe <= 1'b1;
-                            if (rw_bit == 1'b0) begin
-                                state <= REG_ADDR;  // Write: get register address
+                    // ---------------------------------------------------------
+                    // Receive 8 bits MSB-first: 7-bit address then R/W bit.
+                    // After 7 SCL rises: shift_reg[6:0] = address[6:0].
+                    // On the 8th SCL rise (bit_count==7): sda_in = R/W bit.
+                    RECV_ADDR: begin
+                        if (scl_rising) begin
+                            shift_reg <= {shift_reg[6:0], sda_in};
+                            if (bit_count < 3'd7) begin
+                                bit_count <= bit_count + 1;
                             end else begin
-                                state <= READ_DATA;  // Read: send data
-                                shift_reg <= memory[mem_addr];
+                                addr_match <= (shift_reg[6:0] == DEVICE_ADDR);
+                                rw_bit     <= sda_in;
+                                state      <= ACK_ADDR;
+                                bit_count  <= 3'h0;
+                                `DBG2(("[I2C_SLAVE] Address received: 0x%02h, match=%b (expected=0x%02h)",
+                                         {shift_reg[6:0], sda_in}, (shift_reg[6:0] == DEVICE_ADDR), DEVICE_ADDR));
                             end
-                        end else begin
-                            sda_oe <= 1'b0;  // NACK
-                            state <= IDLE;
                         end
                     end
 
-                    REG_ADDR: begin
-                        sda_oe <= 1'b0;
-                        shift_reg <= {shift_reg[6:0], sda_in};
-                        bit_count <= bit_count + 1;
-                        if (bit_count == 7) begin
-                            mem_addr <= {shift_reg[6:0], sda_in};
-                            state <= ACK_REG;
-                            bit_count <= 3'h0;
+                    // ---------------------------------------------------------
+                    // ACK_ADDR: drive ACK for the address byte.
+                    // For write (rw_bit=0): first scl_falling drives ACK,
+                    //   scl_rising transitions to RECV_REG.
+                    // For read (rw_bit=1):  first scl_falling drives ACK,
+                    //   scl_rising loads shift_reg and sets rd_addr_acked,
+                    //   second scl_falling drives MSB and enters READ_DATA.
+                    //   This ensures the data MSB is stable before the master
+                    //   raises SCL for the first data bit.
+                    ACK_ADDR: begin
+                        if (scl_falling) begin
+                            if (addr_match) begin
+                                if (!rd_addr_acked) begin
+                                    // First scl_falling: drive ACK (SDA low)
+                                    sda_out <= 1'b0;
+                                    sda_oe  <= 1'b1;
+                                    `DBG2(("[I2C_SLAVE] ACK_ADDR: driving ACK, rw=%b, mem_addr=0x%02h", rw_bit, mem_addr));
+                                end else begin
+                                    // Second scl_falling (read only): drive MSB, enter READ_DATA
+                                    sda_out       <= shift_reg[7];
+                                    sda_oe        <= 1'b1;
+                                    rd_addr_acked <= 1'b0;
+                                    state         <= READ_DATA;
+                                    bit_count     <= 3'h0;
+                                    `DBG2(("[I2C_SLAVE] ACK_ADDR: first data bit=%b, entering READ_DATA (mem_addr=0x%02h, data=0x%02h)", shift_reg[7], mem_addr, shift_reg));
+                                end
+                            end else begin
+                                sda_oe <= 1'b0;   // Release = NACK
+                                state  <= IDLE;
+                                `DBG2(("[I2C_SLAVE] ACK_ADDR: NACK (no addr match), addr_match=%b", addr_match));
+                            end
+                        end else if (scl_rising) begin
+                            // ACK bit sampled by master
+                            if (addr_match) begin
+                                if (rw_bit == 1'b0) begin
+                                    // Write: transition to RECV_REG
+                                    state     <= RECV_REG;
+                                    bit_count <= 3'h0;
+                                end else begin
+                                    // Read: load shift_reg, set flag, wait for next scl_falling
+                                    shift_reg     <= memory[mem_addr];
+                                    rd_addr_acked <= 1'b1;
+                                    `DBG2(("[I2C_SLAVE] ACK_ADDR rising (read): mem_addr=0x%02h, data=0x%02h, waiting for scl_falling", mem_addr, memory[mem_addr]));
+                                end
+                            end
                         end
                     end
 
+                    // ---------------------------------------------------------
+                    // Receive 8-bit memory address from master (MSB first)
+                    RECV_REG: begin
+                        if (scl_falling) begin
+                            sda_oe <= 1'b0;  // Release SDA for master to drive
+                        end else if (scl_rising) begin
+                            shift_reg <= {shift_reg[6:0], sda_in};
+                            if (bit_count < 3'd7) begin
+                                bit_count <= bit_count + 1;
+                            end else begin
+                                mem_addr  <= {shift_reg[6:0], sda_in};
+                                bit_count <= 3'h0;
+                                state     <= ACK_REG;
+                            end
+                        end
+                    end
+
+                    // ---------------------------------------------------------
+                    // ACK the register address byte
                     ACK_REG: begin
-                        sda_out <= 1'b0;  // ACK
-                        sda_oe <= 1'b1;
-                        state <= WRITE_DATA;
+                        if (scl_falling) begin
+                            sda_out <= 1'b0;
+                            sda_oe  <= 1'b1;  // ACK
+                        end else if (scl_rising) begin
+                            state     <= WRITE_DATA;
+                            bit_count <= 3'h0;
+                        end
                     end
 
+                    // ---------------------------------------------------------
+                    // Receive data bytes from master and write to memory
                     WRITE_DATA: begin
-                        sda_oe <= 1'b0;
-                        shift_reg <= {shift_reg[6:0], sda_in};
-                        bit_count <= bit_count + 1;
-                        if (bit_count == 7) begin
-                            memory[mem_addr] <= {shift_reg[6:0], sda_in};
-                            mem_addr <= mem_addr + 1;
-                            state <= ACK_WRITE;
-                            bit_count <= 3'h0;
+                        if (scl_falling) begin
+                            sda_oe <= 1'b0;  // Release SDA for master to drive
+                        end else if (scl_rising) begin
+                            shift_reg <= {shift_reg[6:0], sda_in};
+                            if (bit_count < 3'd7) begin
+                                bit_count <= bit_count + 1;
+                            end else begin
+                                memory[mem_addr] <= {shift_reg[6:0], sda_in};
+                                mem_addr  <= mem_addr + 1;
+                                bit_count <= 3'h0;
+                                state     <= ACK_WRITE;
+                                `DBG2(("[I2C_SLAVE] Wrote 0x%02h to addr 0x%02h",
+                                        {shift_reg[6:0], sda_in}, mem_addr));
+                            end
                         end
                     end
 
+                    // ---------------------------------------------------------
+                    // ACK the written data byte; loop back for burst writes
                     ACK_WRITE: begin
-                        sda_out <= 1'b0;  // ACK
-                        sda_oe <= 1'b1;
-                        state <= WRITE_DATA;  // Continue receiving data
-                    end
-
-                    READ_DATA: begin
-                        sda_out <= shift_reg[7];
-                        sda_oe <= 1'b1;
-                        shift_reg <= {shift_reg[6:0], 1'b0};
-                        bit_count <= bit_count + 1;
-                        if (bit_count == 7) begin
-                            state <= ACK_READ;
+                        if (scl_falling) begin
+                            sda_out <= 1'b0;
+                            sda_oe  <= 1'b1;  // ACK
+                        end else if (scl_rising) begin
+                            state     <= WRITE_DATA;
                             bit_count <= 3'h0;
                         end
                     end
 
-                    ACK_READ: begin
-                        sda_oe <= 1'b0;  // Release SDA for master ACK/NACK
-                        if (sda_in == 1'b0) begin
-                            // Master sent ACK, continue reading
-                            mem_addr <= mem_addr + 1;
-                            shift_reg <= memory[mem_addr + 1];
-                            state <= READ_DATA;
-                        end else begin
-                            // Master sent NACK, stop reading
-                            state <= IDLE;
+                    // ---------------------------------------------------------
+                    // Send a data byte MSB-first to the master.
+                    // The MSB (bit 0) is pre-driven in ACK_ADDR or ACK_READ on
+                    // scl_rising (before the first SCL clock of the read cycle).
+                    // On each subsequent scl_falling, drive the NEXT bit by
+                    // outputting shift_reg[6] (which becomes [7] after the shift).
+                    // After 7 scl_fallings (bit_count 0-6), all 8 bits have been
+                    // sent; the 8th scl_falling transitions to ACK_READ.
+                    READ_DATA: begin
+                        if (scl_falling) begin
+                            if (bit_count < 3'd7) begin
+                                // Drive next bit: shift_reg[6] = bit N+1 before shift
+                                `DBG2(("[I2C_SLAVE] READ_DATA: bit_count=%0d, next_sda=%b (shift_reg=0x%02h)", bit_count, shift_reg[6], shift_reg));
+                                sda_out   <= shift_reg[6];
+                                sda_oe    <= 1'b1;
+                                shift_reg <= {shift_reg[6:0], 1'b0};
+                                bit_count <= bit_count + 1;
+                            end else begin
+                                // bit_count == 7: all 8 bits sent, transition to ACK_READ
+                                `DBG2(("[I2C_SLAVE] READ_DATA: bit_count=7 done (shift_reg=0x%02h)", shift_reg));
+                                bit_count <= 3'h0;
+                                state     <= ACK_READ;
+                                // ACK_READ will release sda_oe
+                            end
                         end
                     end
 
+                    // ---------------------------------------------------------
+                    // Release SDA unconditionally so master can drive ACK/NACK.
+                    // On scl_rising (master ACK): load next byte into shift_reg
+                    //   and set rd_addr_acked; stay in ACK_READ.
+                    // On next scl_falling: drive next byte's MSB and enter READ_DATA.
+                    ACK_READ: begin
+                        if (!rd_addr_acked) begin
+                            sda_oe <= 1'b0;  // Release SDA for master to drive ACK/NACK
+                        end
+                        if (scl_falling) begin
+                            if (rd_addr_acked) begin
+                                // Drive MSB of next byte and enter READ_DATA
+                                sda_out       <= shift_reg[7];
+                                sda_oe        <= 1'b1;
+                                rd_addr_acked <= 1'b0;
+                                state         <= READ_DATA;
+                                bit_count     <= 3'h0;
+                                `DBG2(("[I2C_SLAVE] ACK_READ: driving next MSB=%b, entering READ_DATA", shift_reg[7]));
+                            end
+                        end else if (scl_rising) begin
+                            if (sda_in == 1'b0) begin
+                                // Master ACK: load next byte, set flag
+                                mem_addr      <= mem_addr + 1;
+                                shift_reg     <= memory[mem_addr + 1];
+                                rd_addr_acked <= 1'b1;
+                                `DBG2(("[I2C_SLAVE] ACK_READ: master ACK, loading next byte mem_addr+1=0x%02h", mem_addr + 1));
+                            end else begin
+                                // Master NACK: stop sending
+                                state <= IDLE;
+                                `DBG2(("[I2C_SLAVE] ACK_READ: master NACK, going IDLE"));
+                            end
+                        end
+                    end
+
+                    // ---------------------------------------------------------
                     default: state <= IDLE;
+
                 endcase
             end
         end

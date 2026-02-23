@@ -194,6 +194,7 @@ module tb_rv32_soc (
     i2c_slave_eeprom #(
         .DEVICE_ADDR(7'h50)
     ) i2c_target (
+        .clk(clk),
         .rst_n(rst_n),
         .scl(i2c_scl_wire),
         .sda_in(i2c_sda_wire),

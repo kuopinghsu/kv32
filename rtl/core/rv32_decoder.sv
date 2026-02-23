@@ -45,7 +45,8 @@ module rv32_decoder (
     output logic        is_ecall,
     output logic        is_ebreak,
     output logic        is_amo,
-    output amo_op_e     amo_op
+    output amo_op_e     amo_op,
+    output logic        is_fence
 );
 
     import rv32_pkg::*;
@@ -106,6 +107,7 @@ module rv32_decoder (
         is_ebreak  = 1'b0;
         is_amo     = 1'b0;
         amo_op     = AMO_ADD;  // Default AMO operation
+        is_fence   = 1'b0;
 
         if (valid) begin
             case (opcode)
@@ -232,9 +234,11 @@ module rv32_decoder (
                 end
 
                 OPCODE_MISC_MEM: begin
-                    // FENCE instructions - treat as NOP for now
-                    if (funct3 != 3'b000 && funct3 != 3'b001)
+                    if (funct3 == 3'b000 || funct3 == 3'b001) begin
+                        is_fence = 1'b1;  // FENCE or FENCE.I
+                    end else begin
                         illegal = 1'b1;
+                    end
                 end
 
                 default: begin

@@ -135,10 +135,9 @@ module axi_i2c #(
             clk_div     <= 16'd249;  // Default: 100kHz at 100MHz system clock
             tx_valid    <= 1'b0;
         end else begin
-            // Auto-clear command bits
+            // Auto-clear command bits (tx_valid is cleared by state machine)
             start_cmd <= 1'b0;
             stop_cmd  <= 1'b0;
-            tx_valid  <= 1'b0;
 
             if (axi_awvalid && axi_wvalid) begin
                 case (axi_awaddr[15:0])
@@ -148,6 +147,12 @@ module axi_i2c #(
                         stop_cmd   <= axi_wdata[2];
                         read_cmd   <= axi_wdata[3];
                         ack_cmd    <= axi_wdata[4];
+                        // Writing CTRL with READ=1 triggers a read transaction
+                        // (tx_valid + read_cmd both registered in the same cycle,
+                        //  so the state machine sees them together next cycle)
+                        if (axi_wdata[3] && !busy && i2c_enable) begin
+                            tx_valid <= 1'b1;
+                        end
                         `DBG2(("[I2C] CTRL write: data=0x%02h, enable=%b, start=%b, stop=%b",
                                axi_wdata[7:0], axi_wdata[0], axi_wdata[1], axi_wdata[2]));
                     end
@@ -220,7 +225,11 @@ module axi_i2c #(
                         rx_valid  <= 1'b0;  // Clear on read
                     end
                     STAT_OFFSET: begin
-                        axi_rdata <= {28'h0, ack_received, rx_valid, tx_ready, busy};
+                        // Include tx_valid in busy to cover the 1-cycle gap
+                        // between the TX/CTRL write and the state machine setting
+                        // busy.  Also mask tx_ready while a transfer is pending.
+                        axi_rdata <= {28'h0, ack_received, rx_valid,
+                                      tx_ready & ~tx_valid, busy | tx_valid};
                     end
                     default: begin
                         axi_rdata <= 32'h0;
@@ -281,8 +290,12 @@ module axi_i2c #(
                 IDLE: begin
                     tx_ready    <= 1'b1;
                     busy        <= 1'b0;
-                    i2c_scl_t   <= 1'b1;  // Release SCL
-                    i2c_sda_t   <= 1'b1;  // Release SDA
+                    // Do NOT unconditionally release SCL/SDA here.
+                    // Releasing SCL in IDLE after START would cause a spurious
+                    // rising SCL edge that the slave treats as an extra data bit.
+                    // Each state (START, STOP, ACK_CHECK, etc.) is responsible
+                    // for leaving SCL/SDA in the correct state before returning
+                    // to IDLE.  The reset block initialises both lines high.
                     scl_phase   <= 2'b00;
                     bit_counter <= 4'h0;
 
@@ -296,6 +309,7 @@ module axi_i2c #(
                         state     <= read_cmd ? READ : WRITE;
                         busy      <= 1'b1;
                         tx_ready  <= 1'b0;
+                        tx_valid  <= 1'b0;  // Clear when consumed
                         `DBG2(("[I2C] TX byte 0x%02h, mode=%s", tx_data, read_cmd ? "READ" : "WRITE"));
                     end else if (stop_cmd && i2c_enable) begin
                         state    <= STOP;
@@ -307,24 +321,24 @@ module axi_i2c #(
                 START: begin
                     if (scl_tick) begin
                         case (scl_phase)
-                            2'b00: begin  // SDA high, SCL high
-                                i2c_sda_t <= 1'b1;
-                                i2c_scl_t <= 1'b1;
+                            2'b00: begin  // Step 1: Ensure SDA is high (release)
+                                i2c_sda_t <= 1'b1;  // Release SDA
                                 scl_phase <= 2'b01;
                             end
-                            2'b01: begin  // SDA low (START condition)
-                                i2c_sda_o <= 1'b0;
-                                i2c_sda_t <= 1'b0;
+                            2'b01: begin  // Step 2: Release SCL high
+                                i2c_scl_t <= 1'b1;  // Release SCL (high)
                                 scl_phase <= 2'b10;
                             end
-                            2'b10: begin  // SCL low
+                            2'b10: begin  // Step 3: Pull SDA low (START condition)
+                                i2c_sda_o <= 1'b0;
+                                i2c_sda_t <= 1'b0;
+                                scl_phase <= 2'b11;
+                            end
+                            2'b11: begin  // Step 4: Pull SCL low
                                 i2c_scl_o <= 1'b0;
                                 i2c_scl_t <= 1'b0;
                                 scl_phase <= 2'b00;
                                 state     <= IDLE;
-                            end
-                            default: begin
-                                scl_phase <= 2'b00;
                             end
                         endcase
                     end
@@ -382,8 +396,9 @@ module axi_i2c #(
                                 scl_phase   <= 2'b00;
                                 if (bit_counter >= 4'd7) begin
                                     bit_counter <= 4'h0;
-                                    rx_data     <= {shift_reg[6:0], i2c_sda_i};
+                                    rx_data     <= shift_reg;  // shift_reg has all 8 bits from phase 2'b10
                                     state       <= ACK_SEND;
+                                    `DBG2(("[I2C] READ byte captured: 0x%02h", shift_reg));
                                 end
                             end
                         endcase
@@ -393,22 +408,24 @@ module axi_i2c #(
                 ACK_CHECK: begin  // Check ACK from slave
                     if (scl_tick) begin
                         case (scl_phase)
-                            2'b00: begin  // SCL low - release SDA
+                            2'b00: begin  // SCL low - release SDA for slave to drive
                                 i2c_scl_o <= 1'b0;
                                 i2c_scl_t <= 1'b0;
                                 i2c_sda_t <= 1'b1;
                                 scl_phase <= 2'b01;
                             end
-                            2'b01: begin  // SCL high - sample ACK
+                            2'b01: begin  // SCL high - slave drives ACK
                                 i2c_scl_t <= 1'b1;
                                 scl_phase <= 2'b10;
                             end
-                            2'b10: begin  // SCL high - read ACK
+                            2'b10: begin  // SCL high - sample ACK
                                 ack_received <= ~i2c_sda_i;  // ACK=0, NACK=1
                                 scl_phase    <= 2'b11;
                                 `DBG2(("[I2C] ACK_CHECK: sda_i=%b, ack=%b", i2c_sda_i, ~i2c_sda_i));
                             end
-                            2'b11: begin  // SCL falling
+                            2'b11: begin  // SCL falling - lower SCL before returning to IDLE
+                                i2c_scl_o <= 1'b0;
+                                i2c_scl_t <= 1'b0;  // Pull SCL low
                                 scl_phase <= 2'b00;
                                 state     <= IDLE;
                             end
@@ -433,7 +450,9 @@ module axi_i2c #(
                             2'b10: begin  // SCL high continued
                                 scl_phase <= 2'b11;
                             end
-                            2'b11: begin  // SCL falling
+                            2'b11: begin  // SCL falling - lower SCL before returning to IDLE
+                                i2c_scl_o <= 1'b0;
+                                i2c_scl_t <= 1'b0;  // Pull SCL low
                                 scl_phase <= 2'b00;
                                 state     <= IDLE;
                             end

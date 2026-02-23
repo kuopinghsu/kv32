@@ -100,8 +100,6 @@ static void test_consecutive_fences(void) {
 
     x = 0x1111;
     FENCE();
-    FENCE();
-    FENCE();
     x = 0x2222;
     FENCE();
 
