@@ -225,22 +225,22 @@ module rv32_alu #(
                 end
             end
 
-            `ifndef SYNTHESIS
+            `ifdef DEBUG
             // Trace divider startup and completion to aid debugging.
             always_ff @(posedge clk) begin
                 if (rst_n) begin
                     if (is_div_op && !div_active && !div_valid &&
                         !div_by_zero && !signed_ovf) begin
-                        $display("[DIV_START] alu_op=%0d a=%h b=%h abs_a=%h abs_b=%h clz=%0d total=%0d q_init=%h neg_q=%b neg_r=%b",
+                        `DGB2(("[DIV_START] alu_op=%0d a=%h b=%h abs_a=%h abs_b=%h clz=%0d total=%0d q_init=%h neg_q=%b neg_r=%b",
                                  alu_op, operand_a, operand_b,
                                  abs_a, abs_b, clz_a, 6'd32 - clz_a,
                                  abs_a << clz_a,
                                  is_signed_div && (operand_a[31] ^ operand_b[31]),
-                                 is_signed_div && operand_a[31]);
+                                 is_signed_div && operand_a[31]));
                     end
                     if (div_valid) begin
-                        $display("[DIV_DONE] div_q=%h div_r=%h div_result_q=%h div_result_r=%h neg_q=%b neg_r=%b alu_op=%0d",
-                                 div_q, div_r, div_result_q, div_result_r, div_neg_q, div_neg_r, alu_op);
+                        `DBG2(("[DIV_DONE] div_q=%h div_r=%h div_result_q=%h div_result_r=%h neg_q=%b neg_r=%b alu_op=%0d",
+                                 div_q, div_r, div_result_q, div_result_r, div_neg_q, div_neg_r, alu_op));
                     end
                 end
             end
