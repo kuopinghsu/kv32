@@ -105,6 +105,21 @@ ifeq ($(COVERAGE),1)
   VERILATOR_FLAGS += --coverage --coverage-line --coverage-toggle
 endif
 
+# Division mode: FAST_DIV=0 selects serial divider (33 cycles), default=1 (combinatorial)
+ifdef FAST_DIV
+  VERILATOR_FLAGS += -pvalue+FAST_DIV=$(FAST_DIV)
+endif
+
+# Stamp file to detect compile-time parameter changes and force rebuild of rv32soc.
+# Each variable that is passed to Verilator at elaboration time must be listed here.
+# When any value differs from the previous build the stamp file is updated, which
+# makes rv32soc appear out-of-date and triggers a fresh Verilator elaboration.
+FAST_DIV     ?= 1
+COVERAGE     ?= 0
+DEBUG        ?=
+RTL_BUILD_PARAMS = FAST_DIV=$(FAST_DIV) ASSERT=$(ASSERT) DEBUG=$(DEBUG) COVERAGE=$(COVERAGE)
+RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
+
 # RTL source files
 # Package files must be compiled first
 RTL_SOURCES = \
@@ -125,7 +140,7 @@ TB_SOURCES = $(TB_DIR)/tb_rv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-
 # Output executable
 BUILD_TARGET = $(BUILD_DIR)/rv32soc
 
-.PHONY: all build-rtl build-sim rtl-build sim-build clean clean-tests run waves help info rtl-% sim-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES)
+.PHONY: all build-rtl build-sim rtl-build sim-build clean clean-tests run waves help info rtl-% sim-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
 # Default target - run all RTL tests
 all: rtl-all
@@ -138,7 +153,15 @@ build-rtl: $(BUILD_TARGET)
 # Alias for build-rtl (so both 'make build-rtl' and 'make rtl-build' work)
 rtl-build: build-rtl
 
-$(BUILD_TARGET): $(RTL_SOURCES) $(TB_SOURCES)
+# Stamp rule: always runs (FORCE), but only touches the file when params changed.
+# This means rv32soc is rebuilt only when a compile-time parameter actually differs.
+$(RTL_PARAMS_STAMP): FORCE
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s' "$(RTL_BUILD_PARAMS)" | cmp -s - $@ || printf '%s' "$(RTL_BUILD_PARAMS)" > $@
+
+FORCE:
+
+$(BUILD_TARGET): $(RTL_SOURCES) $(TB_SOURCES) $(RTL_PARAMS_STAMP)
 	@echo "=========================================="
 	@echo "Building RISC-V SoC with Verilator"
 	@echo "=========================================="

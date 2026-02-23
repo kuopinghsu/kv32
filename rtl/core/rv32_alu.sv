@@ -16,7 +16,9 @@
 //   - Multiply: fully combinatorial (single cycle)
 //   - Divide: configurable via FAST_DIV parameter
 //     - FAST_DIV=1: combinatorial (single cycle, larger area)
-//     - FAST_DIV=0: serial restoring divider (33 cycles, smaller area)
+//     - FAST_DIV=0: serial left-shift restoring divider, variable latency:
+//                   (32 - CLZ(|dividend|)) cycles, 0 for divide-by-zero /
+//                   signed overflow, minimum 1 cycle for small dividends.
 //   - Signed and unsigned variants
 // ============================================================================
 
@@ -74,64 +76,215 @@ module rv32_alu #(
             assign div_ready = 1'b1;
 
         end else begin : gen_serial_div
-            // Serial restoring divider (33 cycles, smaller area)
-            logic [4:0]  div_count;
-            logic [63:0] div_quotient;
-            logic [63:0] div_remainder;
-            logic        div_valid;
-            logic        div_active;
-            logic        div_is_signed;
+            // Serial left-shift restoring divider with early termination.
+            //
+            // Key properties:
+            //   - Works with the MAGNITUDE of both operands (sign fix-up is
+            //     applied combinatorially at the result mux below).
+            //   - Pre-normalises the dividend by shifting it left by CLZ(|A|)
+            //     so that the MSB is always at bit 31 going into the loop.
+            //   - This means only (32 - CLZ(|A|)) iterations are needed:
+            //       A = 0          → 0 iterations (instant-complete)
+            //       A = 1          → 1 iteration
+            //       A = 0x7FFFFFFF → 31 iterations
+            //       A = 0x80000000 → 32 iterations (signed overflow case)
+            //   - Divide-by-zero and signed overflow are detected combinatorially
+            //     and bypass the iterative path entirely (0 stall cycles).
+            //
+            // Latency: (32 - CLZ(|A|)) cycles for normal division.
 
+            // ---- state registers ----------------------------------------
+            logic [5:0]  div_count;   // current iteration index (0-based)
+            logic [5:0]  div_total;   // total iterations = 32 - CLZ(|A|)
+            logic [31:0] div_q;       // dividend → becomes quotient
+            logic [31:0] div_r;       // partial remainder → becomes remainder
+            logic [31:0] div_abs_b;   // latched |divisor|
+            logic        div_valid;   // high from completion until pipeline advances
+            logic        div_active;  // high during iterative computation
+            logic        div_neg_q;   // quotient needs sign flip (signed div)
+            logic        div_neg_r;   // remainder needs sign flip (signed rem)
+            // Latched snapshots of edge-case flags and dividend for the result
+            // mux. The live operand_a/b signals can change via forwarding while
+            // the div instruction is stalled in EX; we must use the values that
+            // were present when the instruction first entered EX.
+            logic        div_by_zero_lat;
+            logic        div_signed_ovf_lat;
+            logic [31:0] div_operand_a_lat; // for REM/REMU(x,0) = x
+            // Final latched quotient/remainder (after sign fixup).  These are
+            // written on the last iteration step and held until the instruction
+            // advances out of EX, so the result mux always reads stable values.
+            logic [31:0] div_result_q;    // holds quot_signed at completion
+            logic [31:0] div_result_r;    // holds rem_signed  at completion
+
+            // ---- combinatorial helpers for the START cycle ---------------
+            // These read alu_op / operand_* which are stable while EX stalls.
+            logic        is_div_op;
+            logic        is_signed_div;
+            assign is_div_op     = (alu_op == ALU_DIV  || alu_op == ALU_DIVU ||
+                                    alu_op == ALU_REM  || alu_op == ALU_REMU);
+            assign is_signed_div = (alu_op == ALU_DIV  || alu_op == ALU_REM);
+
+            // Magnitude of dividend and divisor
+            logic [31:0] abs_a, abs_b;
+            assign abs_a = (is_signed_div && operand_a[31]) ? (~operand_a + 1) : operand_a;
+            assign abs_b = (is_signed_div && operand_b[31]) ? (~operand_b + 1) : operand_b;
+
+            // Count leading zeros of |dividend| — determines iteration count.
+            // Returns 32 when abs_a == 0.
+            // Iterate LOW→HIGH so the highest set bit wins (last assignment).
+            logic [5:0] clz_a;
+            always_comb begin
+                clz_a = 6'd32;
+                for (int i = 0; i <= 31; i++)
+                    if (abs_a[i]) clz_a = 6'(31 - i);
+            end
+
+            // Special cases that bypass the iterative path
+            logic div_by_zero, signed_ovf;
+            assign div_by_zero  = (operand_b == 32'h0);
+            assign signed_ovf   = (operand_a == 32'h80000000) &&
+                                  (operand_b == 32'hffffffff);
+
+            // One iteration step (combinatorial read from current FF state)
+            // r_trial = {div_r[30:0], div_q[31]}  — shift partial remainder
+            //           left and bring in next dividend bit from div_q MSB.
+            logic [32:0] r_trial;
+            logic        q_bit;       // quotient bit produced this iteration
+            logic [31:0] next_q, next_r; // next-cycle quotient/remainder
+            assign r_trial = {div_r[30:0], div_q[31]};
+            assign q_bit   = (r_trial >= {1'b0, div_abs_b});
+            assign next_q  = {div_q[30:0], q_bit ? 1'b1 : 1'b0};
+            assign next_r  = q_bit ? r_trial[31:0] - div_abs_b : r_trial[31:0];
+
+            // ---- sequential state machine --------------------------------
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
-                    div_count     <= 5'd0;
-                    div_quotient  <= 64'd0;
-                    div_remainder <= 64'd0;
-                    div_valid     <= 1'b0;
-                    div_active    <= 1'b0;
-                    div_is_signed <= 1'b0;
+                    div_count           <= 6'd0;
+                    div_total           <= 6'd0;
+                    div_q               <= 32'd0;
+                    div_r               <= 32'd0;
+                    div_abs_b           <= 32'd0;
+                    div_valid           <= 1'b0;
+                    div_active          <= 1'b0;
+                    div_neg_q           <= 1'b0;
+                    div_neg_r           <= 1'b0;
+                    div_by_zero_lat     <= 1'b0;
+                    div_signed_ovf_lat  <= 1'b0;
+                    div_operand_a_lat   <= 32'd0;
+                    div_result_q        <= 32'd0;
+                    div_result_r        <= 32'd0;
                 end else begin
-                    div_valid <= 1'b0;
+                    div_valid <= 1'b0;   // default: pulse for one cycle only
 
-                    if ((alu_op == ALU_DIV || alu_op == ALU_DIVU ||
-                         alu_op == ALU_REM || alu_op == ALU_REMU) && !div_active) begin
-                        div_active     <= 1'b1;
-                        div_count      <= 5'd0;
-                        div_quotient   <= {32'd0, operand_a};
-                        div_remainder  <= 64'd0;
-                        div_is_signed  <= (alu_op == ALU_DIV || alu_op == ALU_REM);
-                    end else if (div_active) begin
-                        if (div_count < 5'd32) begin
-                            div_remainder <= {div_remainder[62:0], div_quotient[63]};
-                            div_quotient  <= {div_quotient[62:0], 1'b0};
-
-                            if (div_remainder[62:31] >= operand_b) begin
-                                div_remainder[62:31] <= div_remainder[62:31] - operand_b;
-                                div_quotient[0]      <= 1'b1;
+                    if (is_div_op && !div_active && !div_valid) begin
+                        // ---- START cycle --------------------------------
+                        // div_by_zero / signed_ovf bypass: div_ready is already
+                        // 1 this cycle (combinatorial), so the pipeline does NOT
+                        // stall and we don't need to start the algorithm.
+                        if (!div_by_zero && !signed_ovf) begin
+                            div_total <= 6'd32 - clz_a;    // 0..32
+                            div_count           <= 6'd0;
+                            // Pre-normalise: shift |A| so its MSB is at bit 31.
+                            // With total iterations this will produce the correct
+                            // quotient in div_q[total-1:0] (i.e. div_q directly).
+                            div_q               <= abs_a << clz_a;
+                            div_r               <= 32'd0;
+                            div_abs_b           <= abs_b;
+                            div_neg_q           <= is_signed_div && (operand_a[31] ^ operand_b[31]);
+                            div_neg_r           <= is_signed_div && operand_a[31];
+                            // Latch snapshot: operand_a/b can change via
+                            // forwarding while EX stalls during iteration.
+                            div_by_zero_lat     <= div_by_zero;
+                            div_signed_ovf_lat  <= signed_ovf;
+                            div_operand_a_lat   <= operand_a;
+                            if (clz_a == 6'd32) begin
+                                // Dividend is 0 → result is trivially 0. Done.
+                                div_result_q <= 32'd0;
+                                div_result_r <= 32'd0;
+                                div_valid    <= 1'b1;
+                            end else begin
+                                div_active <= 1'b1;
                             end
+                        end
 
-                            div_count <= div_count + 1;
+                    end else if (div_active) begin
+                        // ---- ITERATION step -----------------------------
+                        div_q  <= next_q;
+                        div_r  <= next_r;
+
+                        if (div_count + 1 >= div_total) begin
+                            // Last iteration — latch signed result and signal done.
+                            div_result_q <= div_neg_q ? (~next_q + 1) : next_q;
+                            div_result_r <= div_neg_r ? (~next_r + 1) : next_r;
+                            div_valid    <= 1'b1;
+                            div_active   <= 1'b0;
                         end else begin
-                            div_valid  <= 1'b1;
-                            div_active <= 1'b0;
+                            div_count    <= div_count + 1;
                         end
                     end
                 end
             end
 
-            // Handle divide by zero and signed overflow
-            logic div_by_zero;
-            logic signed_overflow;
-            assign div_by_zero     = (operand_b == 32'h0);
-            assign signed_overflow = (operand_a == 32'h80000000) && (operand_b == 32'hffffffff);
+            `ifndef SYNTHESIS
+            // Trace divider startup and completion to aid debugging.
+            always_ff @(posedge clk) begin
+                if (rst_n) begin
+                    if (is_div_op && !div_active && !div_valid &&
+                        !div_by_zero && !signed_ovf) begin
+                        $display("[DIV_START] alu_op=%0d a=%h b=%h abs_a=%h abs_b=%h clz=%0d total=%0d q_init=%h neg_q=%b neg_r=%b",
+                                 alu_op, operand_a, operand_b,
+                                 abs_a, abs_b, clz_a, 6'd32 - clz_a,
+                                 abs_a << clz_a,
+                                 is_signed_div && (operand_a[31] ^ operand_b[31]),
+                                 is_signed_div && operand_a[31]);
+                    end
+                    if (div_valid) begin
+                        $display("[DIV_DONE] div_q=%h div_r=%h div_result_q=%h div_result_r=%h neg_q=%b neg_r=%b alu_op=%0d",
+                                 div_q, div_r, div_result_q, div_result_r, div_neg_q, div_neg_r, alu_op);
+                    end
+                end
+            end
+            `endif
 
-            assign result_div  = div_by_zero ? 32'hffffffff :
-                                 (signed_overflow ? 32'h80000000 : div_quotient[31:0]);
-            assign result_divu = div_by_zero ? 32'hffffffff : div_quotient[31:0];
-            assign result_rem  = div_by_zero ? operand_a :
-                                 (signed_overflow ? 32'h0 : div_remainder[31:0]);
-            assign result_remu = div_by_zero ? operand_a : div_remainder[31:0];
-            assign div_ready   = div_valid || !div_active;
+            // ---- result mux (with sign fixup and spec-defined edge cases) --
+            // Sign fixup is applied combinatorially so that the corrected
+            // value is visible in the same cycle div_valid pulses.
+            // IMPORTANT: Use the LATCHED snapshot flags whenever the iterative
+            // algorithm is or was running (div_active || div_valid), because the
+            // live operand_a/b wires can be overwritten by forwarding while the
+            // div instruction is stalled in EX.
+            logic        use_latched;
+            assign use_latched = div_active || div_valid;
+
+            logic        eff_by_zero, eff_signed_ovf;
+            logic [31:0] eff_operand_a;
+            assign eff_by_zero    = use_latched ? div_by_zero_lat    : div_by_zero;
+            assign eff_signed_ovf = use_latched ? div_signed_ovf_lat : signed_ovf;
+            assign eff_operand_a  = use_latched ? div_operand_a_lat  : operand_a;
+
+            assign result_div  = eff_by_zero    ? 32'hffffffff :
+                                 eff_signed_ovf ? 32'h80000000 : div_result_q;
+            assign result_divu = eff_by_zero    ? 32'hffffffff : div_result_q;
+            assign result_rem  = eff_by_zero    ? eff_operand_a :
+                                 eff_signed_ovf ? 32'h0         : div_result_r;
+            assign result_remu = eff_by_zero    ? eff_operand_a : div_result_r;
+
+            // ---- ready signal --------------------------------------------
+            // Ready immediately when:
+            //   • No divide op is present, OR
+            //   • It is a divide-by-zero / signed-overflow (result from mux,
+            //     no iterative computation needed), OR
+            //   • The iterative computation just finished (div_valid == 1).
+            //
+            // IMPORTANT: While div_active is set (mid-computation), the live
+            // operand_b signal can change due to forwarding expiry (e.g., the
+            // instruction that wrote rs2 retires from WB and the forwarded
+            // value reverts to a stale register value).  If operand_b drifted
+            // to 0 the live div_by_zero would go high and falsely release the
+            // stall.  Guard against this by NEVER signalling ready while the
+            // iterative engine is running (div_active == 1).
+            assign div_ready = !is_div_op ||
+                               (!div_active && (div_by_zero || signed_ovf || div_valid));
 
         end
     endgenerate

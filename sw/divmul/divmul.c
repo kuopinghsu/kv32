@@ -235,6 +235,12 @@ static void test_divu(void)
     check32u("divu(UINT32_MAX, 1)",   do_divu(UINT32_MAX_VAL, 1),  UINT32_MAX_VAL);
     check32u("divu(UINT32_MAX, 2)",   do_divu(UINT32_MAX_VAL, 2),  0x7FFFFFFFU);
 
+    /* arch-test patterns: large unsigned dividends (32 iterations, clz=0) */
+    check32u("divu(0x10000, 0x10000)",  do_divu(0x10000U, 0x10000U),    1U);
+    check32u("divu(0x10001, 0x10000)",  do_divu(0x10001U, 0x10000U),    1U);
+    check32u("divu(0xffffffff, 3)",     do_divu(UINT32_MAX_VAL, 3U),    0x55555555U);
+    check32u("divu(0x80000000, 3)",     do_divu(0x80000000U, 3U),       0x2aaaaaaaU);
+
     /* Spec: division by zero → UINT32_MAX */
     check32u("divu(1, 0)",            do_divu(1, 0),               UINT32_MAX_VAL);
     check32u("divu(0, 0)",            do_divu(0, 0),               UINT32_MAX_VAL);
@@ -263,6 +269,18 @@ static void test_rem(void)
 
     /* Spec: signed overflow INT32_MIN % -1 → 0 */
     check32s("rem(INT32_MIN, -1)",    do_rem(INT32_MIN_VAL, -1),   0);
+
+    /* arch-test patterns: same dividend 0xb505, varying small negative divisors.
+     * Remainder sign always matches the dividend (positive here). */
+    check32s("rem(0xb505, -2)",       do_rem(0xb505, -2),          1);
+    check32s("rem(0xb505, -3)",       do_rem(0xb505, -3),          0);
+    check32s("rem(0xb505, -5)",       do_rem(0xb505, -5),          1);
+    check32s("rem(0xb505, -9)",       do_rem(0xb505, -9),          0);
+    check32s("rem(0xb505, -0x11)",    do_rem(0xb505, -0x11),       0x10);
+    check32s("rem(0xb505, -0x21)",    do_rem(0xb505, -0x21),       9);
+
+    /* Large negative dividend */
+    check32s("rem(INT32_MIN, 0xb505)", do_rem(INT32_MIN_VAL, 0xb505), (int32_t)-0xa2ec);
 }
 
 static void test_remu(void)
@@ -279,6 +297,14 @@ static void test_remu(void)
     check32u("remu(1, 0)",            do_remu(1, 0),               1);
     check32u("remu(0, 0)",            do_remu(0, 0),               0);
     check32u("remu(UINT32_MAX, 0)",   do_remu(UINT32_MAX_VAL, 0),  UINT32_MAX_VAL);
+
+    /* arch-test patterns: power-of-2 divisor, 32-iteration unsigned divides */
+    check32u("remu(0x10000, 0x10000)",   do_remu(0x10000U, 0x10000U),    0U);
+    check32u("remu(0xffffffff, 0x10000)", do_remu(UINT32_MAX_VAL, 0x10000U), 0xffffU);
+    check32u("remu(0, 0x10000)",         do_remu(0U, 0x10000U),           0U);
+    check32u("remu(0x10000, 0xfffffffe)", do_remu(0x10000U, 0xfffffffeU),  0x10000U);
+    check32u("remu(0xffffffff, 3)",      do_remu(UINT32_MAX_VAL, 3U),     0U);
+    check32u("remu(0x80000000, 3)",      do_remu(0x80000000U, 3U),        2U);
 }
 
 /* ========================================================================= */

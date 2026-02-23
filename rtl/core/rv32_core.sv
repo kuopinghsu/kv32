@@ -1432,40 +1432,55 @@ module rv32_core #(
             is_fence_mem  <= 1'b0;
             data_access_fault_mem <= 1'b0;
         end else if (!ex_mem_stall) begin
-            pc_mem        <= pc_ex;
-            instr_mem     <= instr_ex;
-            // alu_result_final already contains PC+4 for JAL/JALR
-            alu_result_mem <= alu_result_final;
-            if ((jal_ex || jalr_ex) && ex_valid) begin
-                `DBG2(("JAL/JALR @ PC=0x%h, return_addr=0x%h, rd=%0d",
-                       pc_ex, pc_ex + 32'd4, rd_addr_ex));
-            end
-            rs1_data_mem  <= rs1_forwarded;
-            rs2_data_mem  <= rs2_forwarded;
-            rs1_addr_mem  <= rs1_addr_ex;
-            rd_addr_mem   <= rd_addr_ex;
-            reg_we_mem    <= reg_we_ex;
-            mem_read_mem  <= mem_read_ex;
-            mem_write_mem <= mem_write_ex;
-            mem_op_mem    <= mem_op_ex;
-            system_mem    <= system_ex;
-            csr_op_mem    <= csr_op_ex;
-            csr_addr_mem  <= csr_addr_ex;
-            is_amo_mem    <= is_amo_ex;
-            amo_op_mem    <= amo_op_ex;
-            is_fence_mem  <= is_fence_ex;
-            mem_valid     <= ex_valid && !exception && !irq_pending && !wb_exception;
-            if (ex_valid) begin
-                `DBG2(("Cycle %0t: EX->MEM pc=0x%h instr=0x%h ex_valid=%b mem_valid_next=%b",
-                       $time, pc_ex, instr_ex, ex_valid, ex_valid && !exception && !irq_pending && !wb_exception));
-            end
-            // Capture data access error from buffered response for memory operations only
-            // Set fault only if the instruction entering MEM is a mem op to prevent
-            // non-memory instructions from incorrectly triggering exceptions
-            if (dmem_resp_valid_buf && dmem_resp_error_buf && (mem_read_ex || mem_write_ex)) begin
-                data_access_fault_mem <= 1'b1;
-            end else if (!ex_mem_stall) begin
-                // Clear fault when pipeline advances (new instruction enters MEM)
+            if (!id_ex_stall) begin
+                // Normal advance: EX result is ready, copy into MEM stage
+                pc_mem        <= pc_ex;
+                instr_mem     <= instr_ex;
+                // alu_result_final already contains PC+4 for JAL/JALR
+                alu_result_mem <= alu_result_final;
+                if ((jal_ex || jalr_ex) && ex_valid) begin
+                    `DBG2(("JAL/JALR @ PC=0x%h, return_addr=0x%h, rd=%0d",
+                           pc_ex, pc_ex + 32'd4, rd_addr_ex));
+                end
+                rs1_data_mem  <= rs1_forwarded;
+                rs2_data_mem  <= rs2_forwarded;
+                rs1_addr_mem  <= rs1_addr_ex;
+                rd_addr_mem   <= rd_addr_ex;
+                reg_we_mem    <= reg_we_ex;
+                mem_read_mem  <= mem_read_ex;
+                mem_write_mem <= mem_write_ex;
+                mem_op_mem    <= mem_op_ex;
+                system_mem    <= system_ex;
+                csr_op_mem    <= csr_op_ex;
+                csr_addr_mem  <= csr_addr_ex;
+                is_amo_mem    <= is_amo_ex;
+                amo_op_mem    <= amo_op_ex;
+                is_fence_mem  <= is_fence_ex;
+                mem_valid     <= ex_valid && !exception && !irq_pending && !wb_exception;
+                if (ex_valid) begin
+                    `DBG2(("Cycle %0t: EX->MEM pc=0x%h instr=0x%h ex_valid=%b mem_valid_next=%b",
+                           $time, pc_ex, instr_ex, ex_valid, ex_valid && !exception && !irq_pending && !wb_exception));
+                end
+                // Capture data access error from buffered response for memory operations only
+                // Set fault only if the instruction entering MEM is a mem op to prevent
+                // non-memory instructions from incorrectly triggering exceptions
+                if (dmem_resp_valid_buf && dmem_resp_error_buf && (mem_read_ex || mem_write_ex)) begin
+                    data_access_fault_mem <= 1'b1;
+                end else begin
+                    // Clear fault when pipeline advances (new instruction enters MEM)
+                    data_access_fault_mem <= 1'b0;
+                end
+            end else begin
+                // EX stage is stalled (e.g. serial divider FAST_DIV=0 computing).
+                // MEM is free to drain to WB, but we must NOT push the stalled EX
+                // instruction into MEM with a partial/garbage ALU result.
+                // Insert a bubble so MEM stays idle until EX is ready.
+                mem_valid     <= 1'b0;
+                reg_we_mem    <= 1'b0;
+                mem_read_mem  <= 1'b0;
+                mem_write_mem <= 1'b0;
+                system_mem    <= 1'b0;
+                is_fence_mem  <= 1'b0;
                 data_access_fault_mem <= 1'b0;
             end
         end

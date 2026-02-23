@@ -9,7 +9,9 @@
 // ============================================================================
 
 /* verilator lint_off SYNCASYNCNET */
-module tb_rv32_soc (
+module tb_rv32_soc #(
+    parameter int FAST_DIV = 1   // Division mode: 1=combinatorial, 0=serial
+) (
     input wire clk,
     input wire rst_n,
     output wire uart_rx,
@@ -69,7 +71,9 @@ module tb_rv32_soc (
     logic i2c_slave_sda_out, i2c_slave_sda_oe;
 
     // Instantiate RISC-V SoC
-    rv32_soc dut (
+    rv32_soc #(
+        .FAST_DIV(FAST_DIV)
+    ) dut (
         .clk(clk),
         .rst_n(rst_n),
         .uart_rx(uart_rx),
