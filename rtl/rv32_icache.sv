@@ -1,0 +1,772 @@
+// ============================================================================
+// File: rv32_icache.sv
+// Project: RV32 RISC-V Processor
+// Description: Configurable Instruction Cache
+//
+// Parameters
+//   CACHE_SIZE      – total cache capacity in bytes
+//   CACHE_LINE_SIZE – bytes per cache line  (must be power-of-2, >= 4)
+//   CACHE_WAYS      – set-associativity     (must be power-of-2, >= 1)
+//
+// Interfaces
+//   Core        – valid/ready request + valid/ready response (registered)
+//   CMO         – RISC-V CMO extension (INVAL / DISABLE / ENABLE)
+//   AXI4 read   – WRAP burst for cache-line fill; INCR single for bypass
+//
+// Architecture
+//   - Valid storage uses flip-flops (one bit per way per set).
+//   - Tag and cache-data storage use memory macros (sram_1rw instances,
+//     one per way for tags and one per way for data).
+//   - FAST_INIT=0 (default): on reset deassertion the cache enters S_INIT and
+//     clears valid bits one set per cycle (takes NUM_SETS cycles).
+//   - FAST_INIT=1: all valid bits and victim pointers are cleared
+//     asynchronously during reset assertion; the FSM resets directly to
+//     S_IDLE so the cache is ready to serve in one cycle after rst_n rises.
+//   - Replacement policy: per-set round-robin (victim pointer).
+//   - CMO DISABLE puts the cache into bypass mode; every fetch issues a single
+//     AXI transaction and the result is forwarded directly to the core.
+//   - CMO INVAL invalidates the way whose tag matches the supplied address.
+//   - CMO ENABLE re-enables normal caching.
+// ============================================================================
+
+module rv32_icache #(
+    parameter int  CACHE_SIZE      = 4096,   // bytes, must be power-of-2
+    parameter int  CACHE_LINE_SIZE = 64,     // bytes, must be power-of-2 >= 4
+    parameter int  CACHE_WAYS      = 2,      // ways,  must be power-of-2 >= 1
+    // FAST_INIT=1: clear all valid bits asynchronously during reset (1 cycle).
+    // FAST_INIT=0: clear valid bits one set per cycle in S_INIT (NUM_SETS cycles).
+    parameter bit  FAST_INIT       = 1'b1
+) (
+    input  logic        clk,
+    input  logic        rst_n,
+
+    // -------------------------------------------------------------------------
+    // Core instruction-fetch interface
+    // -------------------------------------------------------------------------
+    input  logic        imem_req_valid,
+    input  logic [31:0] imem_req_addr,
+    output logic        imem_req_ready,
+
+    output logic        imem_resp_valid,
+    output logic [31:0] imem_resp_data,
+    output logic        imem_resp_error,
+    input  logic        imem_resp_ready,
+
+    // -------------------------------------------------------------------------
+    // CMO (Cache Management Operation) sideband interface
+    //   cmo_op: CMO_INVAL   = 2'b00  – invalidate cache block at cmo_addr
+    //           CMO_DISABLE = 2'b01  – disable cache (enter bypass mode)
+    //           CMO_ENABLE  = 2'b10  – re-enable cache
+    // -------------------------------------------------------------------------
+    input  logic        cmo_valid,
+    input  logic [1:0]  cmo_op,
+    input  logic [31:0] cmo_addr,
+    output logic        cmo_ready,
+
+    // -------------------------------------------------------------------------
+    // AXI4 read master
+    // -------------------------------------------------------------------------
+    output logic        axi_arvalid,
+    output logic [31:0] axi_araddr,
+    output logic [7:0]  axi_arlen,    // beats-1
+    output logic [2:0]  axi_arsize,   // 3'b010 = 4 bytes/beat
+    output logic [1:0]  axi_arburst,  // WRAP=2'b10, INCR=2'b01
+    output logic [3:0]  axi_arcache,
+    output logic [2:0]  axi_arprot,
+    input  logic        axi_arready,
+
+    input  logic        axi_rvalid,
+    input  logic [31:0] axi_rdata,
+    input  logic [1:0]  axi_rresp,
+    input  logic        axi_rlast,
+    output logic        axi_rready
+);
+
+    // =========================================================================
+    // Derived parameters
+    // =========================================================================
+    localparam int WORDS_PER_LINE   = CACHE_LINE_SIZE / 4;
+    localparam int NUM_SETS         = CACHE_SIZE / (CACHE_LINE_SIZE * CACHE_WAYS);
+    localparam int BYTE_OFFSET_BITS = $clog2(CACHE_LINE_SIZE);
+    localparam int WORD_OFFSET_BITS = $clog2(WORDS_PER_LINE);
+    localparam int INDEX_BITS       = $clog2(NUM_SETS);
+    localparam int TAG_BITS         = 32 - INDEX_BITS - BYTE_OFFSET_BITS;
+    localparam int WAY_BITS         = (CACHE_WAYS > 1) ? $clog2(CACHE_WAYS) : 1;
+
+    // CMO opcodes
+    localparam logic [1:0] CMO_INVAL   = 2'b00;
+    localparam logic [1:0] CMO_DISABLE = 2'b01;
+    localparam logic [1:0] CMO_ENABLE  = 2'b10;
+
+    // AXI burst types
+    localparam logic [1:0] AXI_BURST_FIXED = 2'b00;
+    localparam logic [1:0] AXI_BURST_INCR  = 2'b01;
+    localparam logic [1:0] AXI_BURST_WRAP  = 2'b10;
+
+    // =========================================================================
+    // Cache storage
+    //   valid_array / victim_ptr  – flip-flops
+    //     FAST_INIT=1: async-cleared during rst_n assertion (1 cycle)
+    //     FAST_INIT=0: cleared one set per cycle in S_INIT (NUM_SETS cycles)
+    //   tag / data               – SRAM macro wrappers (sram_1rw)
+    // =========================================================================
+
+    // Flip-flop storage
+    logic                valid_array [CACHE_WAYS][NUM_SETS];
+    logic [WAY_BITS-1:0] victim_ptr  [NUM_SETS];
+
+    // SRAM parameters
+    localparam int DATA_SRAM_DEPTH     = NUM_SETS * WORDS_PER_LINE;
+    localparam int DATA_SRAM_ADDR_BITS = INDEX_BITS + WORD_OFFSET_BITS;
+
+    // Tag SRAM ports (one per way, depth=NUM_SETS, width=TAG_BITS)
+    logic                         tag_sram_ce    [CACHE_WAYS];
+    logic                         tag_sram_we    [CACHE_WAYS];
+    logic [INDEX_BITS-1:0]        tag_sram_addr  [CACHE_WAYS];
+    logic [TAG_BITS-1:0]          tag_sram_wdata [CACHE_WAYS];
+    logic [TAG_BITS-1:0]          tag_sram_rdata [CACHE_WAYS];
+
+    // Data SRAM ports (one per way, depth=NUM_SETS×WORDS_PER_LINE, width=32)
+    logic                              data_sram_ce    [CACHE_WAYS];
+    logic                              data_sram_we    [CACHE_WAYS];
+    logic [DATA_SRAM_ADDR_BITS-1:0]    data_sram_addr  [CACHE_WAYS];
+    logic [31:0]                       data_sram_wdata [CACHE_WAYS];
+    logic [31:0]                       data_sram_rdata [CACHE_WAYS];
+
+    // =========================================================================
+    // State machine
+    // =========================================================================
+    typedef enum logic [2:0] {
+        S_INIT,     // clearing valid bits after reset (FAST_INIT=0 only)
+        S_IDLE,     // waiting for fetch request or CMO
+        S_LOOKUP,   // tag compare (request address has been registered)
+        S_MISS_AR,  // drive AXI AR channel
+        S_MISS_R,   // receive AXI R channel burst / single
+        S_RESP,     // hold response until core accepts it
+        S_CMO       // execute one CMO operation (single cycle)
+    } state_t;
+
+    state_t state, next_state;
+
+    // =========================================================================
+    // Registered signals
+    // =========================================================================
+    logic [31:0] req_addr_r;   // captured on request acceptance
+    logic [31:0] cmo_addr_r;
+    logic [1:0]  cmo_op_r;
+    logic [31:0] resp_data_r;
+    logic        resp_error_r;
+    logic        cache_enable; // 1 = normal, 0 = bypass
+
+    // =========================================================================
+    // Address decomposition (from registered request)
+    // =========================================================================
+    logic [TAG_BITS-1:0]         req_tag;
+    logic [INDEX_BITS-1:0]       req_index;
+    logic [WORD_OFFSET_BITS-1:0] req_word_off;
+
+    assign req_tag      = req_addr_r[31 : 32-TAG_BITS];
+    assign req_index    = req_addr_r[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS];
+    assign req_word_off = req_addr_r[BYTE_OFFSET_BITS-1 : 2];
+
+    // Decomposition directly from the unregistered incoming request address.
+    // Used to drive SRAM reads on the same cycle a request is accepted so the
+    // result is available one cycle later in S_LOOKUP.
+    logic [INDEX_BITS-1:0]       new_req_index;
+    logic [WORD_OFFSET_BITS-1:0] new_req_word_off;
+    assign new_req_index    = imem_req_addr[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS];
+    assign new_req_word_off = imem_req_addr[BYTE_OFFSET_BITS-1 : 2];
+
+    // CMO address decomposition
+    logic [INDEX_BITS-1:0] cmo_index;
+    logic [TAG_BITS-1:0]   cmo_tag;
+    assign cmo_index = cmo_addr_r[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS];
+    assign cmo_tag   = cmo_addr_r[31 : 32-TAG_BITS];
+
+    // =========================================================================
+    // Init counter – used only when FAST_INIT=0; counts sets cleared per cycle
+    //                during S_INIT.  Unused (optimised away) when FAST_INIT=1.
+    // =========================================================================
+    logic [INDEX_BITS-1:0] init_idx;
+
+    // =========================================================================
+    // Hit detection (combinational, uses req_index / req_tag)
+    // =========================================================================
+    logic [CACHE_WAYS-1:0]  way_hit;
+    logic                   cache_hit;
+    logic [WAY_BITS-1:0]    hit_way;
+    logic [31:0]            hit_data;
+
+    // Tag comparison uses SRAM read-data (launched one cycle earlier in S_IDLE).
+    always_comb begin
+        way_hit = '0;
+        for (int w = 0; w < CACHE_WAYS; w++) begin
+            if (valid_array[w][req_index] &&
+                (tag_sram_rdata[w] == req_tag))
+                way_hit[w] = 1'b1;
+        end
+    end
+
+    assign cache_hit = |way_hit;
+
+    // Priority encode hit way
+    always_comb begin
+        hit_way = '0;
+        for (int w = CACHE_WAYS-1; w >= 0; w--) begin
+            if (way_hit[w])
+                hit_way = WAY_BITS'(unsigned'(w));
+        end
+    end
+
+    // Hit data comes from data SRAM read-data (registered one cycle earlier).
+    assign hit_data = data_sram_rdata[hit_way];
+
+    // =========================================================================
+    // Fill tracking
+    // =========================================================================
+    logic [WAY_BITS-1:0]         fill_way;
+    logic [WORD_OFFSET_BITS-1:0] fill_word_cnt;
+    logic                        fill_error;
+
+    // =========================================================================
+    // Next-state logic (combinational)
+    // =========================================================================
+    always_comb begin
+        next_state = state;
+        case (state)
+
+            // S_INIT is only reachable when FAST_INIT=0.
+            // Transition to S_IDLE once the last set has been cleared.
+            S_INIT: begin
+                if (init_idx == INDEX_BITS'(NUM_SETS - 1))
+                    next_state = S_IDLE;
+            end
+
+            S_IDLE: begin
+                if (cmo_valid)
+                    next_state = S_CMO;
+                else if (imem_req_valid)
+                    next_state = S_LOOKUP;
+            end
+
+            S_LOOKUP: begin
+                if (cache_enable && cache_hit)
+                    next_state = S_RESP;       // hit
+                else
+                    next_state = S_MISS_AR;    // miss or bypass
+            end
+
+            S_MISS_AR: begin
+                if (axi_arvalid && axi_arready)
+                    next_state = S_MISS_R;
+            end
+
+            S_MISS_R: begin
+                if (axi_rvalid && axi_rready && axi_rlast)
+                    next_state = S_RESP;
+            end
+
+            S_RESP: begin
+                if (imem_resp_valid && imem_resp_ready) begin
+                    if (cmo_valid)
+                        next_state = S_CMO;
+                    else if (imem_req_valid)
+                        next_state = S_LOOKUP;
+                    else
+                        next_state = S_IDLE;
+                end
+            end
+
+            S_CMO:   next_state = S_IDLE;   // single-cycle operation
+
+            default: next_state = S_IDLE;
+        endcase
+    end
+
+    // =========================================================================
+    // State register + cache_enable
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            // FAST_INIT=1 → skip S_INIT; valid bits are cleared by async reset
+            state        <= FAST_INIT ? S_IDLE : S_INIT;
+            cache_enable <= 1'b1;
+        end else begin
+            state <= next_state;
+            // Cache enable/disable via CMO
+            if (state == S_CMO) begin
+                if (cmo_op_r == CMO_DISABLE)
+                    cache_enable <= 1'b0;
+                else if (cmo_op_r == CMO_ENABLE)
+                    cache_enable <= 1'b1;
+            end
+        end
+    end
+
+    // =========================================================================
+    // Init counter (FAST_INIT=0 only)
+    //   Counts from 0 to NUM_SETS-1 during S_INIT, clearing one set per cycle.
+    //   When FAST_INIT=1 the FSM never enters S_INIT so this counter is
+    //   never written; synthesis tools will optimise it away entirely.
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            init_idx <= '0;
+        else if (state == S_INIT)
+            init_idx <= init_idx + 1'b1;
+    end
+
+    // =========================================================================
+    // Capture request address
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            req_addr_r <= '0;
+        end else if (imem_req_valid && imem_req_ready) begin
+            req_addr_r <= imem_req_addr;
+        end
+    end
+
+    // =========================================================================
+    // Capture CMO parameters
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            cmo_addr_r <= '0;
+            cmo_op_r   <= '0;
+        end else if (cmo_valid && cmo_ready) begin
+            cmo_addr_r <= cmo_addr;
+            cmo_op_r   <= cmo_op;
+        end
+    end
+
+    // =========================================================================
+    // Fill tracking registers
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            fill_way      <= '0;
+            fill_word_cnt <= '0;
+            fill_error    <= 1'b0;
+        end else if (state == S_MISS_AR && axi_arready) begin
+            // Latch victim way; reset word counter and error flag
+            fill_way      <= victim_ptr[req_index];
+            fill_word_cnt <= '0;
+            fill_error    <= 1'b0;
+        end else if (state == S_MISS_R && axi_rvalid) begin
+            fill_word_cnt <= fill_word_cnt + 1'b1;
+            if (axi_rresp != 2'b00)
+                fill_error <= 1'b1;
+        end
+    end
+
+    // =========================================================================
+    // Response data register
+    //   – On a hit : registered directly from data_array.
+    //   – On a miss: captured word-by-word as the burst arrives; the beat
+    //     matching req_word_off is stored into resp_data_r.
+    //   – On bypass: the single returned beat is stored directly.
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            resp_data_r  <= '0;
+            resp_error_r <= 1'b0;
+        end else begin
+            if (state == S_LOOKUP && cache_enable && cache_hit) begin
+                resp_data_r  <= hit_data;
+                resp_error_r <= 1'b0;
+            end
+            if (state == S_MISS_R && axi_rvalid && axi_rready) begin
+                if (!cache_enable) begin
+                    // Bypass: single beat – capture unconditionally
+                    resp_data_r  <= axi_rdata;
+                    resp_error_r <= (axi_rresp != 2'b00);
+                end else if (fill_word_cnt == req_word_off) begin
+                    // Cache fill: capture the requested word as it arrives
+                    resp_data_r  <= axi_rdata;
+                    resp_error_r <= (axi_rresp != 2'b00) | fill_error;
+                end
+                // Always propagate accumulated fill errors on last beat
+                if (axi_rlast && cache_enable && fill_error)
+                    resp_error_r <= 1'b1;
+            end
+        end
+    end
+
+    // =========================================================================
+    // valid_array / victim_ptr flip-flop write logic
+    //   tag and data are written exclusively via the SRAM write ports below.
+    //
+    // Two compile-time paths selected by FAST_INIT:
+    //
+    //   FAST_INIT=1  –  g_valid_fast:
+    //     All valid bits and victim pointers are cleared asynchronously
+    //     when rst_n is asserted.  The FSM wakes up in S_IDLE and can accept
+    //     the first request immediately on the rising edge after rst_n.
+    //     S_INIT is never entered, so init_idx is optimised away.
+    //
+    //   FAST_INIT=0  –  g_valid_slow (default):
+    //     Valid bits and victim pointers are cleared one set per cycle during
+    //     S_INIT.  The cache becomes ready after NUM_SETS clock cycles.
+    //     Preferred when the target memory compiler cannot synthesise a large
+    //     asynchronous reset fan-out efficiently.
+    // =========================================================================
+    generate
+        if (FAST_INIT) begin : g_valid_fast
+
+            // -----------------------------------------------------------------
+            // FAST_INIT=1: async reset clears all storage in one cycle.
+            // Runtime updates (fill commit, CMO INVAL) are synchronous.
+            // -----------------------------------------------------------------
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    // One-cycle clear: all valid bits and victim pointers reset
+                    // during rst_n assertion; ready immediately when rst_n rises.
+                    for (int w = 0; w < CACHE_WAYS; w++)
+                        for (int s = 0; s < NUM_SETS; s++)
+                            valid_array[w][s] <= 1'b0;
+                    for (int s = 0; s < NUM_SETS; s++)
+                        victim_ptr[s] <= '0;
+                end else begin
+                    // ---------------------------------------------------------
+                    // Fill commit: set valid bit and advance victim pointer
+                    // on the last successful fill beat.
+                    // ---------------------------------------------------------
+                    if (state == S_MISS_R && axi_rvalid && axi_rready && axi_rlast &&
+                        cache_enable && !fill_error && (axi_rresp == 2'b00)) begin
+                        valid_array[fill_way][req_index] <= 1'b1;
+                        victim_ptr[req_index] <=
+                            WAY_BITS'((int'(fill_way) + 1) % CACHE_WAYS);
+                    end
+
+                    // ---------------------------------------------------------
+                    // CMO INVAL: clear valid bit for the matching way.
+                    // Tag comparison uses tag_sram_rdata latched in S_IDLE
+                    // (one cycle before S_CMO).
+                    // ---------------------------------------------------------
+                    if (state == S_CMO && cmo_op_r == CMO_INVAL) begin
+                        for (int w = 0; w < CACHE_WAYS; w++) begin
+                            if (valid_array[w][cmo_index] &&
+                                (tag_sram_rdata[w] == cmo_tag))
+                                valid_array[w][cmo_index] <= 1'b0;
+                        end
+                    end
+                end
+            end
+
+        end else begin : g_valid_slow
+
+            // -----------------------------------------------------------------
+            // FAST_INIT=0 (default): clear one set per cycle during S_INIT.
+            // -----------------------------------------------------------------
+            always_ff @(posedge clk) begin
+                // S_INIT: clear one set per cycle; done after NUM_SETS cycles.
+                if (state == S_INIT) begin
+                    for (int w = 0; w < CACHE_WAYS; w++)
+                        valid_array[w][init_idx] <= 1'b0;
+                    victim_ptr[init_idx] <= '0;
+                end
+
+                // -------------------------------------------------------------
+                // Fill commit: set valid bit and advance victim pointer
+                // on the last successful fill beat.
+                // -------------------------------------------------------------
+                if (state == S_MISS_R && axi_rvalid && axi_rready && axi_rlast &&
+                    cache_enable && !fill_error && (axi_rresp == 2'b00)) begin
+                    valid_array[fill_way][req_index] <= 1'b1;
+                    victim_ptr[req_index] <=
+                        WAY_BITS'((int'(fill_way) + 1) % CACHE_WAYS);
+                end
+
+                // -------------------------------------------------------------
+                // CMO INVAL: clear valid bit for the matching way.
+                // Tag comparison uses tag_sram_rdata latched in S_IDLE
+                // (one cycle before S_CMO).
+                // -------------------------------------------------------------
+                if (state == S_CMO && cmo_op_r == CMO_INVAL) begin
+                    for (int w = 0; w < CACHE_WAYS; w++) begin
+                        if (valid_array[w][cmo_index] &&
+                            (tag_sram_rdata[w] == cmo_tag))
+                            valid_array[w][cmo_index] <= 1'b0;
+                    end
+                end
+            end
+
+        end
+    endgenerate
+
+    // =========================================================================
+    // SRAM control – combinational CE / WE / addr / wdata
+    //
+    // Read launch: fires when a new request or CMO is accepted in S_IDLE, or
+    //              when a request is accepted back-to-back from S_RESP.
+    //              Result is available one cycle later (S_LOOKUP / S_CMO).
+    // Write: tag  – written only for fill_way on the last successful fill beat.
+    //        data – written for fill_way on every received fill beat.
+    //
+    // The 1RW SRAM has no read-write conflict because:
+    //   – Reads are launched only in S_IDLE / S_RESP (never during S_MISS_R).
+    //   – Writes occur only during S_MISS_R.
+    // =========================================================================
+
+    // Unified read-launch strobe (covers both fetch and CMO)
+    logic                  sram_read_en;
+    logic [INDEX_BITS-1:0] sram_read_index;
+
+    assign sram_read_en =
+        (imem_req_valid && imem_req_ready) ||
+        (state == S_IDLE && cmo_valid);       // CMO accepted → read tag for comparison
+
+    // CMO takes index priority over fetch when both arrive in S_IDLE
+    assign sram_read_index =
+        (state == S_IDLE && cmo_valid)
+            ? cmo_addr[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS]
+            : new_req_index;
+
+    // Tag fill commit strobe (last beat, no error)
+    logic tag_fill_commit;
+    assign tag_fill_commit = (state == S_MISS_R) && axi_rvalid && axi_rready &&
+                             axi_rlast && cache_enable && !fill_error &&
+                             (axi_rresp == 2'b00);
+
+    // Data fill write strobe (every received beat)
+    logic data_fill_we_s;
+    assign data_fill_we_s = (state == S_MISS_R) && axi_rvalid && axi_rready && cache_enable;
+
+    generate
+        for (genvar w = 0; w < CACHE_WAYS; w++) begin : g_sram_ctrl
+
+            // --- Tag SRAM ---
+            assign tag_sram_ce   [w] = sram_read_en ||
+                                       (tag_fill_commit && (fill_way == WAY_BITS'(w)));
+            assign tag_sram_we   [w] = tag_fill_commit && (fill_way == WAY_BITS'(w));
+            // Write uses registered req_index/req_tag (from captured fill address)
+            assign tag_sram_addr [w] = tag_sram_we[w] ? req_index : sram_read_index;
+            assign tag_sram_wdata[w] = req_tag;
+
+            // --- Data SRAM ---
+            assign data_sram_ce   [w] = sram_read_en ||
+                                        (data_fill_we_s && (fill_way == WAY_BITS'(w)));
+            assign data_sram_we   [w] = data_fill_we_s && (fill_way == WAY_BITS'(w));
+            // Read:  word address = {set_index, word_offset} from incoming request
+            // Write: word address = {set_index, fill_word_cnt}
+            assign data_sram_addr [w] = data_sram_we[w]
+                ? DATA_SRAM_ADDR_BITS'({req_index,        fill_word_cnt})
+                : DATA_SRAM_ADDR_BITS'({sram_read_index,  new_req_word_off});
+            assign data_sram_wdata[w] = axi_rdata;
+
+        end
+    endgenerate
+
+    // =========================================================================
+    // SRAM macro instances (one tag + one data SRAM per way)
+    // =========================================================================
+    generate
+        for (genvar w = 0; w < CACHE_WAYS; w++) begin : g_sram
+
+            sram_1rw #(
+                .DEPTH (NUM_SETS),
+                .WIDTH (TAG_BITS)
+            ) u_tag_sram (
+                .clk   (clk),
+                .ce    (tag_sram_ce   [w]),
+                .we    (tag_sram_we   [w]),
+                .addr  (tag_sram_addr [w]),
+                .wdata (tag_sram_wdata[w]),
+                .rdata (tag_sram_rdata[w])
+            );
+
+            sram_1rw #(
+                .DEPTH (DATA_SRAM_DEPTH),
+                .WIDTH (32)
+            ) u_data_sram (
+                .clk   (clk),
+                .ce    (data_sram_ce   [w]),
+                .we    (data_sram_we   [w]),
+                .addr  (data_sram_addr [w]),
+                .wdata (data_sram_wdata[w]),
+                .rdata (data_sram_rdata[w])
+            );
+
+        end
+    endgenerate
+
+    // =========================================================================
+    // AXI AR channel
+    //   Cache mode  : WRAP burst, length = WORDS_PER_LINE-1, starting at the
+    //                 cache-line-aligned address.
+    //   Bypass mode : single INCR transaction to the word-aligned address.
+    // =========================================================================
+    logic [31:0] ar_addr_cache;
+    logic [31:0] ar_addr_bypass;
+
+    // Align to cache-line boundary
+    assign ar_addr_cache  = {req_addr_r[31:BYTE_OFFSET_BITS],
+                             {BYTE_OFFSET_BITS{1'b0}}};
+    // Align to word boundary (bypass)
+    assign ar_addr_bypass = {req_addr_r[31:2], 2'b00};
+
+    assign axi_arvalid = (state == S_MISS_AR);
+    assign axi_araddr  = cache_enable ? ar_addr_cache : ar_addr_bypass;
+    assign axi_arlen   = cache_enable ? 8'(WORDS_PER_LINE - 1) : 8'h00;
+    assign axi_arsize  = 3'b010;   // 4 bytes per beat
+    assign axi_arburst = cache_enable ? AXI_BURST_WRAP : AXI_BURST_INCR;
+    assign axi_arcache = 4'b0010;  // Normal non-cacheable bufferable
+    assign axi_arprot  = 3'b100;   // Instruction access
+    assign axi_rready  = (state == S_MISS_R);
+
+    // =========================================================================
+    // Core handshake outputs
+    // =========================================================================
+    // Accept new requests only in IDLE, or transitionally from RESP
+    // (simplified: always accept in IDLE; the core re-presents if rejected)
+    assign imem_req_ready  = (state == S_IDLE) ||
+                             (state == S_RESP && imem_resp_ready &&
+                              !cmo_valid);
+    assign imem_resp_valid = (state == S_RESP);
+    assign imem_resp_data  = resp_data_r;
+    assign imem_resp_error = resp_error_r;
+
+    // CMO accepted in IDLE and (transitionally) from RESP
+    assign cmo_ready = (state == S_IDLE) ||
+                       (state == S_RESP && imem_resp_ready);
+
+    // =========================================================================
+    // Performance counters (simulation only)
+    //
+    // Counters are reset with rst_n and count the following events:
+    //   perf_req_cnt    – fetch requests dispatched (one per S_LOOKUP entry)
+    //   perf_hit_cnt    – hits  : S_LOOKUP, cache enabled,  tag matched
+    //   perf_miss_cnt   – misses: S_LOOKUP, cache enabled,  tag not matched
+    //   perf_bypass_cnt – bypass: S_LOOKUP, cache disabled (CMO_DISABLE)
+    //   perf_fill_cnt   – completed cache-line fills (last AXI beat, no error)
+    //   perf_cmo_cnt    – CMO operations executed (one per S_CMO entry)
+    //
+    // Invariant: perf_req_cnt == perf_hit_cnt + perf_miss_cnt + perf_bypass_cnt
+    // =========================================================================
+`ifndef SYNTHESIS
+    logic [31:0] perf_req_cnt;     // total fetches entering the pipeline
+    logic [31:0] perf_hit_cnt;     // cache hits  (cache enabled, tag matched)
+    logic [31:0] perf_miss_cnt;    // cache misses (cache enabled, tag not matched)
+    logic [31:0] perf_bypass_cnt;  // bypass fetches (cache disabled)
+    logic [31:0] perf_fill_cnt;    // completed cache-line fills
+    logic [31:0] perf_cmo_cnt;     // CMO operations executed
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            perf_req_cnt    <= '0;
+            perf_hit_cnt    <= '0;
+            perf_miss_cnt   <= '0;
+            perf_bypass_cnt <= '0;
+            perf_fill_cnt   <= '0;
+            perf_cmo_cnt    <= '0;
+        end else begin
+            // S_LOOKUP is exactly one cycle per accepted fetch request.
+            if (state == S_LOOKUP) begin
+                perf_req_cnt <= perf_req_cnt + 32'd1;
+                if      ( cache_enable &&  cache_hit) perf_hit_cnt    <= perf_hit_cnt    + 32'd1;
+                else if ( cache_enable && !cache_hit) perf_miss_cnt   <= perf_miss_cnt   + 32'd1;
+                else                                  perf_bypass_cnt <= perf_bypass_cnt + 32'd1;
+            end
+            // Successful cache-line fill: last AXI beat, cache enabled, no error.
+            if (state == S_MISS_R && axi_rvalid && axi_rready && axi_rlast &&
+                    cache_enable && !fill_error && (axi_rresp == 2'b00))
+                perf_fill_cnt <= perf_fill_cnt + 32'd1;
+            // CMO operation: S_CMO is exactly one cycle per accepted CMO.
+            if (state == S_CMO)
+                perf_cmo_cnt <= perf_cmo_cnt + 32'd1;
+        end
+    end
+`endif // SYNTHESIS
+
+    // =========================================================================
+    // Formal / simulation assertions
+    // =========================================================================
+    // =======================================================================
+    // AXI protocol: ARVALID must not deassert before ARREADY
+    // =======================================================================
+    // Define ASSERTION by default (can be disabled with +define+NO_ASSERTION)
+`ifndef NO_ASSERTION
+`ifndef ASSERTION
+`define ASSERTION
+`endif
+`endif // NO_ASSERTION
+
+`ifdef ASSERTION
+    logic axi_ar_accepted;
+    assign axi_ar_accepted = axi_arvalid && axi_arready;
+
+    property p_arvalid_stable;
+        @(posedge clk) disable iff (!rst_n)
+        (axi_arvalid && !axi_arready) |=> axi_arvalid;
+    endproperty
+    assert property (p_arvalid_stable)
+        else $error("ARVALID deasserted before ARREADY");
+
+    // -----------------------------------------------------------------------
+    // AXI protocol: AR address/control must be stable while ARVALID && !ARREADY
+    // -----------------------------------------------------------------------
+    property p_araddr_stable;
+        @(posedge clk) disable iff (!rst_n)
+        (axi_arvalid && !axi_arready) |=>
+        ($stable(axi_araddr) && $stable(axi_arlen) &&
+         $stable(axi_arsize) && $stable(axi_arburst));
+    endproperty
+    assert property (p_araddr_stable)
+        else $error("AR channel signals changed while ARVALID && !ARREADY");
+
+    // -----------------------------------------------------------------------
+    // AXI: RLAST must arrive on the expected beat
+    // -----------------------------------------------------------------------
+    property p_rlast_on_final_beat;
+        @(posedge clk) disable iff (!rst_n)
+        (state == S_MISS_R && axi_rvalid && axi_rready && axi_rlast) |->
+            (cache_enable
+                ? (fill_word_cnt == WORD_OFFSET_BITS'(WORDS_PER_LINE - 1))
+                : (fill_word_cnt == '0));
+    endproperty
+    assert property (p_rlast_on_final_beat)
+        else $error("RLAST arrived on unexpected beat (fill_word_cnt=%0d)",
+                    fill_word_cnt);
+
+    // -----------------------------------------------------------------------
+    // A cache hit implies the state is S_LOOKUP and cache is enabled
+    // -----------------------------------------------------------------------
+    property p_hit_only_in_lookup;
+        @(posedge clk) disable iff (!rst_n)
+        cache_hit |-> (state == S_LOOKUP || state == S_IDLE ||
+                       state == S_RESP   || state == S_INIT ||
+                       state == S_CMO    || state == S_MISS_AR ||
+                       state == S_MISS_R);
+    endproperty
+    // (structural, always true – kept as documentation)
+
+    // -----------------------------------------------------------------------
+    // Response valid must not deassert before it is accepted
+    // -----------------------------------------------------------------------
+    property p_resp_valid_stable;
+        @(posedge clk) disable iff (!rst_n)
+        (imem_resp_valid && !imem_resp_ready) |=> imem_resp_valid;
+    endproperty
+    assert property (p_resp_valid_stable)
+        else $error("imem_resp_valid deasserted before imem_resp_ready");
+
+    // -----------------------------------------------------------------------
+    // No simultaneous hit and miss (sanity)
+    // -----------------------------------------------------------------------
+    property p_no_multi_way_hit;
+        @(posedge clk) disable iff (!rst_n)
+        $onehot0(way_hit);
+    endproperty
+    assert property (p_no_multi_way_hit)
+        else $error("Multiple ways hit simultaneously – tag aliasing!");
+
+    // -----------------------------------------------------------------------
+    // Init must complete: once S_INIT is entered, S_IDLE must be reached.
+    // (Cover with a simple immediate-cover if formal tools support it;
+    //  the ##[1:$] range syntax is not used to stay Verilator-compatible.)
+    // -----------------------------------------------------------------------
+
+`endif // ASSERTION
+
+endmodule
