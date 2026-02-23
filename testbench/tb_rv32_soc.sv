@@ -115,6 +115,19 @@ module tb_rv32_soc (
 `endif
     );
 
+    // AXI write-channel monitor — detects tohost writes and exits simulation
+    axi_monitor tohost_monitor (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .axi_awaddr  (axi_awaddr),
+        .axi_awvalid (axi_awvalid),
+        .axi_awready (axi_awready),
+        .axi_wdata   (axi_wdata),
+        .axi_wstrb   (axi_wstrb),
+        .axi_wvalid  (axi_wvalid),
+        .axi_wready  (axi_wready)
+    );
+
     // Instantiate external memory (2MB)
     axi_memory #(
         .ADDR_WIDTH(32),

@@ -113,6 +113,7 @@ RTL_SOURCES = \
 	$(filter-out $(CORE_DIR)/rv32_pkg.sv, $(wildcard $(CORE_DIR)/*.sv)) \
 	$(filter-out $(RTL_DIR)/axi_pkg.sv, $(wildcard $(RTL_DIR)/*.sv)) \
 	$(TB_DIR)/axi_memory.sv \
+	$(TB_DIR)/axi_monitor.sv \
 	$(TB_DIR)/uart_loopback.sv \
 	$(TB_DIR)/spi_slave_memory.sv \
 	$(TB_DIR)/i2c_slave_eeprom.sv \

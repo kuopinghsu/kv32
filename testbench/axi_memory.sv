@@ -52,27 +52,6 @@ module axi_memory #(
     input  logic                    axi_rready
 );
 
-    // DPI import for getting tohost address from testbench
-    import "DPI-C" function int get_tohost_addr();
-
-    // DPI import for requesting simulation exit
-    import "DPI-C" function void sim_request_exit(input int exit_code);
-
-    // Register to hold tohost address
-    logic [31:0] tohost_addr;
-    logic tohost_addr_initialized;
-
-    // Initialize tohost address after reset
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            tohost_addr_initialized <= 1'b0;
-            tohost_addr <= 32'h0;
-        end else if (!tohost_addr_initialized) begin
-            tohost_addr <= get_tohost_addr();
-            tohost_addr_initialized <= 1'b1;
-        end
-    end
-
     import rv32_pkg::*;
 
     // Memory array
@@ -363,18 +342,6 @@ module axi_memory #(
             // Single cycle write: perform immediately in stage 0
             // Check address bounds directly to avoid race condition with write_pipe[0].resp
 
-            // Check for tohost write BEFORE bounds check
-            if (write_addr_valid && axi_wvalid && write_can_accept) begin
-                if (tohost_addr != 0 && (write_addr_reg & ~32'h3) == (tohost_addr & ~32'h3)) begin
-                    $display("[TOHOST] Write detected: addr=0x%08x data=0x%08x", write_addr_reg, axi_wdata);
-                    if (axi_wdata != 0) begin
-                        automatic int exit_code = (axi_wdata >> 1) & 32'h7FFFFFFF;
-                        $display("\n[EXIT] tohost write: exit code = %0d\n", exit_code);
-                        sim_request_exit(exit_code);
-                    end
-                end
-            end
-
             if (write_addr_valid && axi_wvalid && write_can_accept &&
                 (write_addr_reg >= BASE_ADDR && write_addr_reg < (BASE_ADDR + MEM_SIZE))) begin
                 automatic logic [31:0] base_addr = ((write_addr_reg - BASE_ADDR) & (MEM_SIZE - 1)) & ~32'h3;
@@ -394,19 +361,6 @@ module axi_memory #(
             end
         end else begin
             // Multi-cycle write: perform at last pipeline stage
-
-            // Check for tohost write BEFORE bounds/resp check
-            if (write_pipe[MEM_WRITE_LATENCY-1].valid) begin
-                if (tohost_addr != 0 && (write_pipe[MEM_WRITE_LATENCY-1].addr & ~32'h3) == (tohost_addr & ~32'h3)) begin
-                    $display("[TOHOST] Write detected: addr=0x%08x data=0x%08x",
-                             write_pipe[MEM_WRITE_LATENCY-1].addr, write_pipe[MEM_WRITE_LATENCY-1].data);
-                    if (write_pipe[MEM_WRITE_LATENCY-1].data != 0) begin
-                        automatic int exit_code = (write_pipe[MEM_WRITE_LATENCY-1].data >> 1) & 32'h7FFFFFFF;
-                        $display("\n[EXIT] tohost write: exit code = %0d\n", exit_code);
-                        sim_request_exit(exit_code);
-                    end
-                end
-            end
 
             if (write_pipe[MEM_WRITE_LATENCY-1].valid && write_pipe[MEM_WRITE_LATENCY-1].resp == 2'b00) begin
                 automatic logic [31:0] base_addr = ((write_pipe[MEM_WRITE_LATENCY-1].addr - BASE_ADDR) & (MEM_SIZE - 1)) & ~32'h3;
