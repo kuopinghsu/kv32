@@ -24,20 +24,28 @@
 //   - Signed and unsigned variants
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+`endif
 module rv32_alu #(
     parameter FAST_MUL = 1, // 1=combinatorial multiply, 0=serial multiplier
     parameter FAST_DIV = 1  // 1=combinatorial divide, 0=serial divider
 )(
     input  logic        clk,
     input  logic        rst_n,
+`ifndef SYNTHESIS
     input  alu_op_e     alu_op,
+`else
+    input  logic [4:0]  alu_op,    // alu_op_e (synthesis: logic [4:0])
+`endif
     input  logic [31:0] operand_a,
     input  logic [31:0] operand_b,
     output logic [31:0] result,
     output logic        ready
 );
-
+`ifndef SYNTHESIS
     import rv32_pkg::*;
+`endif
 
     // ========================================================================
     // Multiplication Logic (configurable)

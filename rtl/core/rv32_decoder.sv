@@ -16,6 +16,9 @@
 //   - Illegal instruction detection
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+`endif
 module rv32_decoder (
     input  logic [31:0] instr,
     input  logic        valid,
@@ -25,14 +28,26 @@ module rv32_decoder (
     output logic [4:0]  rs2_addr,
     output logic [4:0]  rd_addr,
     output logic [31:0] imm,
+`ifndef SYNTHESIS
     output alu_op_e     alu_op,
+`else
+    output logic [4:0]  alu_op,    // alu_op_e (synthesis: logic [4:0])
+`endif
     output logic        alu_src,      // 0: rs2, 1: imm
     output logic        reg_we,
     output logic        mem_read,
     output logic        mem_write,
+`ifndef SYNTHESIS
     output mem_op_e     mem_op,
+`else
+    output logic [2:0]  mem_op,     // mem_op_e (synthesis: logic [2:0])
+`endif
     output logic        branch,
+`ifndef SYNTHESIS
     output branch_op_e  branch_op,
+`else
+    output logic [2:0]  branch_op,  // branch_op_e (synthesis: logic [2:0])
+`endif
     output logic        jal,
     output logic        jalr,
     output logic        lui,
@@ -45,13 +60,18 @@ module rv32_decoder (
     output logic        is_ecall,
     output logic        is_ebreak,
     output logic        is_amo,
+`ifndef SYNTHESIS
     output amo_op_e     amo_op,
+`else
+    output logic [4:0]  amo_op,     // amo_op_e (synthesis: logic [4:0])
+`endif
     output logic        is_fence,
     output logic        is_fence_i,   // FENCE.I (funct3=001): flush instruction cache
     output logic        is_cbo        // Zicbom CBO (funct3=010): cache block operation
 );
-
+`ifndef SYNTHESIS
     import rv32_pkg::*;
+`endif
 
     logic [6:0] opcode;
     logic [2:0] funct3;
@@ -164,7 +184,11 @@ module rv32_decoder (
                     alu_src  = 1'b1;
                     reg_we   = 1'b1;
                     mem_read = 1'b1;
+`ifndef SYNTHESIS
                     mem_op   = mem_op_e'(funct3);
+`else
+                    mem_op   = funct3;
+`endif
                     if (funct3 == 3'b011 || funct3 == 3'b110 || funct3 == 3'b111)
                         illegal = 1'b1;
                 end
@@ -172,14 +196,22 @@ module rv32_decoder (
                 OPCODE_STORE: begin
                     alu_src   = 1'b1;
                     mem_write = 1'b1;
+`ifndef SYNTHESIS
                     mem_op    = mem_op_e'(funct3);
+`else
+                    mem_op    = funct3;
+`endif
                     if (funct3[2:0] > 3'b010)
                         illegal = 1'b1;
                 end
 
                 OPCODE_BRANCH: begin
                     branch    = 1'b1;
+`ifndef SYNTHESIS
                     branch_op = branch_op_e'(funct3);
+`else
+                    branch_op = funct3;
+`endif
                     if (funct3 == 3'b010 || funct3 == 3'b011)
                         illegal = 1'b1;
                 end
@@ -234,7 +266,11 @@ module rv32_decoder (
                     if (funct3 != 3'b010)  // Only word-sized
                         illegal = 1'b1;
                     // Decode AMO operation from funct5
+`ifndef SYNTHESIS
                     amo_op = amo_op_e'(funct5);
+`else
+                    amo_op = funct5;
+`endif
                 end
 
                 OPCODE_MISC_MEM: begin

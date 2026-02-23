@@ -16,7 +16,7 @@ endif
 YOSYS ?= yosys
 
 # Design configuration
-DESIGN = rv32
+DESIGN = rv32_soc
 CONFIG = config.tcl
 
 # Directories

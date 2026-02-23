@@ -2,8 +2,8 @@
 # ASAP7 7nm Predictive PDK with Yosys synthesis
 
 # Design name
-set DESIGN_NAME "rv32"
-set TOP_MODULE "rv32"
+set DESIGN_NAME "rv32_soc"
+set TOP_MODULE "rv32_soc"
 
 # Target frequency (optimized for 7nm process)
 set TARGET_FREQ_MHZ 120
@@ -31,6 +31,7 @@ set RTL_FILES [list \
     "$RTL_ROOT/core/rv32_decoder.sv" \
     "$RTL_ROOT/core/rv32_sb.sv" \
     "$RTL_ROOT/core/rv32_core.sv" \
+    "$RTL_ROOT/memories/sram_1rw.sv" \
     "$RTL_ROOT/axi_pkg.sv" \
     "$RTL_ROOT/axi_arbiter.sv" \
     "$RTL_ROOT/axi_xbar.sv" \
@@ -41,6 +42,7 @@ set RTL_FILES [list \
     "$RTL_ROOT/axi_magic.sv" \
     "$RTL_ROOT/mem_axi.sv" \
     "$RTL_ROOT/mem_axi_ro.sv" \
+    "$RTL_ROOT/rv32_icache.sv" \
     "$RTL_ROOT/rv32_soc.sv" \
 ]
 
@@ -88,6 +90,13 @@ set SYNTH_OPTIONS {
     -flatten
     -abc9
 }
+
+# I-Cache parameters for synthesis
+# (smaller than simulation defaults; SRAM macros are instantiated separately)
+set ICACHE_EN         1    ;# 1=enabled, 0=bypass
+set ICACHE_SIZE       512  ;# bytes  (512 B)
+set ICACHE_LINE_SIZE  16   ;# bytes per cache line (4 words)
+set ICACHE_WAYS       1    ;# direct-mapped
 
 # Optimization options
 set OPT_STRATEGY "balanced"  ;# Options: area, delay, balanced

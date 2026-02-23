@@ -16,8 +16,14 @@
 //   - Error response propagation
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+import axi_pkg::*;
+`endif
 module mem_axi #(
+`ifndef SYNTHESIS
     parameter string BRIDGE_NAME = "AXI_BRIDGE",
+`endif
     parameter int    OUTSTANDING_DEPTH = 4  // Max outstanding transactions (2-16)
 ) (
     input  logic        clk,
@@ -63,8 +69,10 @@ module mem_axi #(
     input  logic                     axi_rvalid,
     output logic                     axi_rready
 );
+`ifndef SYNTHESIS
     import rv32_pkg::*;
     import axi_pkg::*;
+`endif
 
     // ========================================================================
     // Transaction tracking
@@ -132,13 +140,10 @@ module mem_axi #(
     // ========================================================================
     // Response FIFO - Buffer responses to prevent deadlock
     // ========================================================================
-    typedef struct packed {
-        logic [31:0] data;
-        logic        error;
-        logic        is_write; // 1=B response (store), 0=R response (load)
-    } resp_entry_t;
-
-    resp_entry_t resp_fifo [0:OUTSTANDING_DEPTH-1];
+    // Response FIFO as flat arrays (synthesis-compatible)
+    logic [31:0] fifo_data    [0:OUTSTANDING_DEPTH-1];
+    logic        fifo_error   [0:OUTSTANDING_DEPTH-1];
+    logic        fifo_is_write[0:OUTSTANDING_DEPTH-1];
     logic [$clog2(OUTSTANDING_DEPTH):0] resp_wr_ptr;
     logic [$clog2(OUTSTANDING_DEPTH):0] resp_rd_ptr;
     logic [$clog2(OUTSTANDING_DEPTH):0] resp_count;
@@ -239,9 +244,9 @@ module mem_axi #(
     // mem_resp: Feed from response FIFO
     // ========================================================================
     assign mem_resp_valid    = (resp_count > 0);
-    assign mem_resp_data     = (resp_count > 0) ? resp_fifo[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data     : '0;
-    assign mem_resp_error    = (resp_count > 0) ? resp_fifo[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error    : 1'b0;
-    assign mem_resp_is_write = (resp_count > 0) ? resp_fifo[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].is_write : 1'b0;
+    assign mem_resp_data     = (resp_count > 0) ? fifo_data    [resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] : '0;
+    assign mem_resp_error    = (resp_count > 0) ? fifo_error   [resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] : 1'b0;
+    assign mem_resp_is_write = (resp_count > 0) ? fifo_is_write[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] : 1'b0;
 
     // FIFO management
     always_ff @(posedge clk or negedge rst_n) begin
@@ -252,17 +257,17 @@ module mem_axi #(
         end else begin
             // Push: AXI R channel response (read)
             if (resp_push_r) begin
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data     <= axi_rdata;
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error    <= (axi_rresp != 2'b00);
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].is_write <= 1'b0;
+                fifo_data    [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= axi_rdata;
+                fifo_error   [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= (axi_rresp != 2'b00);
+                fifo_is_write[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= 1'b0;
                 resp_wr_ptr <= resp_wr_ptr + 1'b1;
                 `DBG2(("%s: R response FIFO push data=0x%h resp=%0d count=%0d", BRIDGE_NAME, axi_rdata, axi_rresp, resp_count + 1));
             end
             // Push: AXI B channel response (write)
             else if (resp_push_b) begin
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data     <= 32'h0;  // Write has no data
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error    <= (axi_bresp != 2'b00);
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].is_write <= 1'b1;
+                fifo_data    [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= 32'h0;  // Write has no data
+                fifo_error   [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= (axi_bresp != 2'b00);
+                fifo_is_write[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= 1'b1;
                 resp_wr_ptr <= resp_wr_ptr + 1'b1;
                 `DBG2(("%s: B response FIFO push bresp=%0d count=%0d", BRIDGE_NAME, axi_bresp, resp_count + 1));
             end

@@ -1,28 +1,24 @@
 # Formal Equivalence Checking Script
-# Verifies synthesized logic is functionally equivalent to RTL
-# Note: This checks pre-techmap equivalence since post-techmap
-# introduces library-specific cells that complicate comparison
+# Checks pre-techmap equivalence: RTL vs. synthesis-optimised design.
+# Uses design -stash / -copy-from to isolate the two RTL reads
+# so package enum items are not re-defined on second pass.
 
-# Load configuration
 source config.tcl
 
-puts "=========================================="
-puts "Formal Equivalence Checking"
-puts "Design: $DESIGN_NAME"
-puts "=========================================="
-puts ""
-puts "Note: Checking RTL <-> Pre-Technology-Map equivalence"
-puts "This verifies synthesis optimizations preserve functionality"
-puts ""
+puts {=== Formal Equivalence Checking ===}
+puts {Design: $DESIGN_NAME}
+puts {Note: RTL <=> Pre-Technology-Map equivalence}
+puts {}
 
-puts "\n\[1/4\] Reading and elaborating RTL design (golden)..."
-foreach rtl_file $RTL_FILES {
-    puts "  Reading: $rtl_file"
-    yosys read_verilog -sv $rtl_file
-}
-
-# Prepare RTL design (same flow as synthesis, but stop before techmap)
-puts "  Processing RTL..."
+# ------------------------------------------------
+# [1/4]  Golden design  (RTL, minimal passes)
+# ------------------------------------------------
+puts "\n\[1/4\] Reading RTL (golden)..."
+yosys read_verilog -sv -D SYNTHESIS -D NO_ASSERTION {*}$RTL_FILES
+yosys chparam -set ICACHE_EN        $ICACHE_EN        $TOP_MODULE
+yosys chparam -set ICACHE_SIZE      $ICACHE_SIZE      $TOP_MODULE
+yosys chparam -set ICACHE_LINE_SIZE $ICACHE_LINE_SIZE $TOP_MODULE
+yosys chparam -set ICACHE_WAYS      $ICACHE_WAYS      $TOP_MODULE
 yosys hierarchy -check -top $TOP_MODULE
 yosys proc
 yosys flatten
@@ -37,16 +33,18 @@ yosys opt_clean
 yosys alumacc
 yosys share
 yosys opt
-yosys rename $TOP_MODULE gold
+yosys design -stash gold
 
-puts "\n\[2/4\] Reading and re-synthesizing for comparison..."
-foreach rtl_file $RTL_FILES {
-    puts "  Reading: $rtl_file"
-    yosys read_verilog -sv $rtl_file
-}
-
-# Synthesize again (gate design)
-puts "  Processing synthesis..."
+# ------------------------------------------------
+# [2/4]  Gate design  (same passes)
+# ------------------------------------------------
+puts "\n\[2/4\] Reading RTL (gate)..."
+yosys design -reset
+yosys read_verilog -sv -D SYNTHESIS -D NO_ASSERTION {*}$RTL_FILES
+yosys chparam -set ICACHE_EN        $ICACHE_EN        $TOP_MODULE
+yosys chparam -set ICACHE_SIZE      $ICACHE_SIZE      $TOP_MODULE
+yosys chparam -set ICACHE_LINE_SIZE $ICACHE_LINE_SIZE $TOP_MODULE
+yosys chparam -set ICACHE_WAYS      $ICACHE_WAYS      $TOP_MODULE
 yosys hierarchy -check -top $TOP_MODULE
 yosys proc
 yosys flatten
@@ -61,21 +59,28 @@ yosys opt_clean
 yosys alumacc
 yosys share
 yosys opt
-yosys rename $TOP_MODULE gate
+yosys opt -full
+yosys opt_clean
+yosys design -stash gate
 
+# ------------------------------------------------
+# [3/4]  Equivalence check
+# ------------------------------------------------
 puts "\n\[3/4\] Running equivalence check..."
+yosys design -reset
+yosys design -copy-from gold -as gold $TOP_MODULE
+yosys design -copy-from gate -as gate $TOP_MODULE
 yosys equiv_make gold gate equiv
 yosys hierarchy -top equiv
 
-# Prove equivalence
+# ------------------------------------------------
+# [4/4]  Prove
+# ------------------------------------------------
 puts "\n\[4/4\] Proving equivalence..."
+yosys async2sync
 yosys equiv_simple -undef
 yosys equiv_induct -undef
 yosys equiv_status -assert
 
-puts "\n=========================================="
-puts "Equivalence Check PASSED!"
-puts "=========================================="
-puts "The synthesized netlist is functionally"
-puts "equivalent to the RTL design."
-puts ""
+puts {}
+puts {=== Equivalence Check PASSED! ===}

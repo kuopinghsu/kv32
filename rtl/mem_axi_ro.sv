@@ -15,8 +15,14 @@
 //   - Error response propagation
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+import axi_pkg::*;
+`endif
 module mem_axi_ro #(
+`ifndef SYNTHESIS
     parameter string BRIDGE_NAME = "AXI_BRIDGE_RO",
+`endif
     parameter int    OUTSTANDING_DEPTH = 4  // Max outstanding transactions (2-16)
 ) (
     input  logic        clk,
@@ -44,8 +50,10 @@ module mem_axi_ro #(
     input  logic                     axi_rvalid,
     output logic                     axi_rready
 );
+`ifndef SYNTHESIS
     import rv32_pkg::*;
     import axi_pkg::*;
+`endif
 
     // ========================================================================
     // Transaction tracking
@@ -156,12 +164,9 @@ module mem_axi_ro #(
     //   When the FIFO already has entries (core is stalled), responses still
     //   enter the FIFO to preserve ordering.
     // ========================================================================
-    typedef struct packed {
-        logic [31:0] data;
-        logic        error;
-    } resp_entry_t;
-
-    resp_entry_t resp_fifo [0:OUTSTANDING_DEPTH-1];
+    // Response FIFO as flat arrays (synthesis-compatible)
+    logic [31:0] fifo_data [0:OUTSTANDING_DEPTH-1];
+    logic        fifo_error[0:OUTSTANDING_DEPTH-1];
     logic [$clog2(OUTSTANDING_DEPTH):0] resp_wr_ptr;
     logic [$clog2(OUTSTANDING_DEPTH):0] resp_rd_ptr;
     logic [$clog2(OUTSTANDING_DEPTH):0] resp_count;
@@ -184,9 +189,9 @@ module mem_axi_ro #(
     assign mem_resp_valid = axi_rvalid && resp_fifo_empty ? 1'b1 :  // bypass path
                             (resp_count > 0);                        // FIFO path
     assign mem_resp_data  = (axi_rvalid && resp_fifo_empty) ? axi_rdata :
-                            resp_fifo[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data;
+                            fifo_data[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]];
     assign mem_resp_error = (axi_rvalid && resp_fifo_empty) ? (axi_rresp != 2'b00) :
-                            resp_fifo[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error;
+                            fifo_error[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]];
 
     logic resp_pop;
     assign resp_pop = mem_resp_valid && mem_resp_ready && !resp_fifo_empty;
@@ -199,8 +204,8 @@ module mem_axi_ro #(
             resp_count  <= '0;
         end else begin
             if (resp_push) begin
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].data  <= axi_rdata;
-                resp_fifo[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]].error <= (axi_rresp != 2'b00);
+                fifo_data [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= axi_rdata;
+                fifo_error[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= (axi_rresp != 2'b00);
                 resp_wr_ptr <= resp_wr_ptr + 1'b1;
                 `DBG2(("%s: R FIFO push data=0x%h resp=%0d count=%0d", BRIDGE_NAME, axi_rdata, axi_rresp, resp_count + 1));
             end

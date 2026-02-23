@@ -15,6 +15,10 @@
 //   - Configurable outstanding transaction depth
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+import axi_pkg::*;
+`endif
 module axi_arbiter #(
     parameter int OUTSTANDING_DEPTH = 4  // Max outstanding transactions per master
 ) (
@@ -86,8 +90,10 @@ module axi_arbiter #(
     input  logic                     s_axi_rvalid,
     output logic                     s_axi_rready
 );
+`ifndef SYNTHESIS
     import rv32_pkg::*;
     import axi_pkg::*;
+`endif
 
     // State for AR channel arbitration
     // Track outstanding AR transactions per master to allow bursts

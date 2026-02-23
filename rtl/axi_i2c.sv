@@ -31,6 +31,9 @@
 //   - Status flags for polling-based operation
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+`endif
 module axi_i2c #(
     parameter CLK_FREQ = 100_000_000  // System clock frequency
 )(
@@ -68,8 +71,9 @@ module axi_i2c #(
     input  logic        i2c_sda_i,    // SDA input
     output logic        i2c_sda_t     // SDA tristate (1=output disabled/high-Z)
 );
-
+`ifndef SYNTHESIS
     import rv32_pkg::*;
+`endif
 
     // Register offsets
     localparam CTRL_OFFSET  = 16'h0000;

@@ -37,6 +37,9 @@
 //     - 0: Serial divider (33 cycles, smaller area)
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+`endif
 module rv32_core #(
     parameter int IB_DEPTH = 4,  // Instruction buffer depth (outstanding fetches); must be power-of-2 and >= effective_latency+1
     parameter int SB_DEPTH = 4,  // Store buffer depth (buffered stores)
@@ -106,8 +109,9 @@ module rv32_core #(
     input  logic        trace_mode
 `endif
 );
-
+`ifndef SYNTHESIS
     import rv32_pkg::*;
+`endif
 
     // Timeout for detecting pipeline deadlocks (simulation only)
     localparam int STALL_TIMEOUT = 200;  // Cycles before timeout assertion
@@ -219,20 +223,36 @@ module rv32_core #(
     logic [4:0]  rs1_addr, rs2_addr, rd_addr_id;
     logic [31:0] rs1_data, rs2_data;
     logic [31:0] imm_id;
+`ifdef SYNTHESIS
+    logic [4:0]  alu_op_id;
+`else
     alu_op_e     alu_op_id;
+`endif
     logic        alu_src_id;
     logic        reg_we_id;
     logic        mem_read_id, mem_write_id;
+`ifdef SYNTHESIS
+    logic [2:0]  mem_op_id;
+`else
     mem_op_e     mem_op_id;
+`endif
     logic        branch_id, jal_id, jalr_id;
+`ifdef SYNTHESIS
+    logic [2:0]  branch_op_id;
+`else
     branch_op_e  branch_op_id;
+`endif
     logic        lui_id, auipc_id;
     logic        system_id, illegal_id;
     logic [2:0]  csr_op_id;
     logic [11:0] csr_addr_id;
     logic        is_mret_id, is_ecall_id, is_ebreak_id;
     logic        is_amo_id;
+`ifdef SYNTHESIS
+    logic [4:0]  amo_op_id;
+`else
     amo_op_e     amo_op_id;
+`endif
     logic        is_fence_id;
     logic        is_fence_i_id;  // FENCE.I: also flush icache
     logic        is_cbo_id;      // Zicbom CBO: cache block operation
@@ -249,20 +269,36 @@ module rv32_core #(
     logic [31:0] imm_ex;
     logic [4:0]  rd_addr_ex;
     logic [4:0]  rs1_addr_ex, rs2_addr_ex;
+`ifdef SYNTHESIS
+    logic [4:0]  alu_op_ex;
+`else
     alu_op_e     alu_op_ex;
+`endif
     logic        alu_src_ex;
     logic        reg_we_ex;
     logic        mem_read_ex, mem_write_ex;
+`ifdef SYNTHESIS
+    logic [2:0]  mem_op_ex;
+`else
     mem_op_e     mem_op_ex;
+`endif
     logic        branch_ex, jal_ex, jalr_ex;
+`ifdef SYNTHESIS
+    logic [2:0]  branch_op_ex;
+`else
     branch_op_e  branch_op_ex;
+`endif
     logic        lui_ex, auipc_ex;
     logic        system_ex, illegal_ex;
     logic [2:0]  csr_op_ex;
     logic [11:0] csr_addr_ex;
     logic        is_mret_ex, is_ecall_ex, is_ebreak_ex;
     logic        is_amo_ex;
+`ifdef SYNTHESIS
+    logic [4:0]  amo_op_ex;
+`else
     amo_op_e     amo_op_ex;
+`endif
     logic        is_fence_ex;
     logic        is_fence_i_ex;  // FENCE.I in EX stage
     logic        is_cbo_ex;      // CBO in EX stage
@@ -287,12 +323,20 @@ module rv32_core #(
     logic        reg_we_mem;
     logic        mem_read_mem;
     logic        mem_write_mem;
+`ifdef SYNTHESIS
+    logic [2:0]  mem_op_mem;
+`else
     mem_op_e     mem_op_mem;
+`endif
     logic        system_mem;
     logic [2:0]  csr_op_mem;
     logic [11:0] csr_addr_mem;
     logic        is_amo_mem;
+`ifdef SYNTHESIS
+    logic [4:0]  amo_op_mem;
+`else
     amo_op_e     amo_op_mem;
+`endif
     logic        is_fence_mem;
     logic        is_fence_i_mem;  // FENCE.I in MEM stage
     logic        is_cbo_mem;      // CBO in MEM stage
@@ -349,7 +393,11 @@ module rv32_core #(
     logic [11:0] csr_addr_wb;
     logic [31:0] csr_rdata_wb;
     logic        is_amo_wb;
+`ifdef SYNTHESIS
+    logic [4:0]  amo_op_wb;
+`else
     amo_op_e     amo_op_wb;
+`endif
     logic        wb_valid;
     logic        data_access_fault_wb;  // Load/store access error in WB
     logic [31:0] wb_write_data;         // Final WB data (mem/alu/csr)

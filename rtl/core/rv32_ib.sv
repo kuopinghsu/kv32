@@ -34,6 +34,9 @@
 //
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+`endif
 module rv32_ib #(
     parameter int DEPTH = 2,  // Number of outstanding requests supported
     parameter int ADDR_WIDTH = 32
@@ -59,7 +62,9 @@ module rv32_ib #(
     // Status
     output logic [$clog2(DEPTH+1)-1:0] outstanding_count
 );
+`ifndef SYNTHESIS
     import rv32_pkg::*;
+`endif
 
     localparam int PTR_WIDTH = $clog2(DEPTH);
     localparam int CNT_WIDTH = $clog2(DEPTH+1);

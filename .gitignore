@@ -12,6 +12,10 @@ objdir/
 *.cpp.d
 *.h.d
 
+# Synthesis results
+syn/reports
+syn/results
+
 # Executables
 *.exe
 

@@ -28,6 +28,9 @@
 //   - Status flags for polling-based operation
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+`endif
 module axi_spi #(
     parameter CLK_FREQ = 100_000_000  // System clock frequency
 )(
@@ -63,8 +66,9 @@ module axi_spi #(
     input  logic        spi_miso,     // Master In Slave Out
     output logic [3:0]  spi_cs_n      // Chip Select (active low)
 );
-
+`ifndef SYNTHESIS
     import rv32_pkg::*;
+`endif
 
     // Register offsets
     localparam CTRL_OFFSET  = 16'h0000;

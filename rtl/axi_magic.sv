@@ -14,8 +14,10 @@
 // and not synthesized for FPGA/ASIC implementations.
 // ============================================================================
 
+`ifndef SYNTHESIS
 // DPI-C import for exit notification
 import "DPI-C" function void sim_request_exit(input int exit_code);
+`endif
 
 module axi_magic (
     input  logic        clk,
@@ -48,11 +50,11 @@ module axi_magic (
 `ifdef SYNTHESIS
     assign axi_awready      = 1'b1;
     assign axi_wready       = 1'b1;
-    assign axi_bresp[1:0]   = RESP_OKAY;
+    assign axi_bresp[1:0]   = 2'b00;  // RESP_OKAY
     assign axi_bvalid       = 1'b1;
     assign axi_arready      = 1'b1;
     assign axi_rdata[31:0]  = 32'b0;
-    assign axi_rresp[1:0]   = RESP_OKAY;
+    assign axi_rresp[1:0]   = 2'b00;  // RESP_OKAY
     assign axi_rvalid       = 1'b1;
 `else // SYNTHESIS
     // Magic addresses

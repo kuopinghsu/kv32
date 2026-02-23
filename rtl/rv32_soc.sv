@@ -492,7 +492,9 @@ module rv32_soc #(
 
             // Simple read-only AXI bridge (original behaviour)
             mem_axi_ro #(
+`ifndef SYNTHESIS
                 .BRIDGE_NAME("IMEM_BRIDGE"),
+`endif
                 .OUTSTANDING_DEPTH(IB_DEPTH)
             ) imem_bridge (
                 .clk(clk),
@@ -545,7 +547,9 @@ module rv32_soc #(
     // Converts core's simple request/response to full AXI4 (AW/W/B/AR/R) with ID support
     // Supports both loads and stores with byte-level write enables
     mem_axi #(
+`ifndef SYNTHESIS
         .BRIDGE_NAME("DMEM_BRIDGE"),
+`endif
         .OUTSTANDING_DEPTH(4)  // Conservative limit matching original system capability
     ) dmem_bridge (
         .clk(clk),

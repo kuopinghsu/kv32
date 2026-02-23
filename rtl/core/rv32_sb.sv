@@ -41,6 +41,9 @@
 //
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+`endif
 module rv32_sb #(
     parameter int DEPTH = 2,      // Number of stores that can be buffered
     parameter int ADDR_WIDTH = 32,
@@ -83,7 +86,9 @@ module rv32_sb #(
     output logic [$clog2(DEPTH+1)-1:0] buffered_count,
     output logic                  store_pending
 );
+`ifndef SYNTHESIS
     import rv32_pkg::*;
+`endif
 
     localparam int PTR_WIDTH = $clog2(DEPTH);
     localparam int CNT_WIDTH = $clog2(DEPTH+1);
@@ -104,21 +109,17 @@ module rv32_sb #(
     //   INFLIGHT (valid=1, inflight=1) -> INVALID (valid=0)
     // ========================================================================
 
-    typedef struct packed {
-        logic [ADDR_WIDTH-1:0]     addr;
-        logic [DATA_WIDTH-1:0]     data;
-        logic [DATA_WIDTH/8-1:0]   strb;
-        logic [ADDR_TAG_WIDTH-1:0] addr_tag;  // Lower ADDR_TAG_WIDTH bits for fast lookup
-        logic                      valid;     // Entry contains pending store
-        logic                      inflight;  // Sent to memory, waiting for ack
-    } store_entry_t;
-
     // ========================================================================
     // Internal State
     // ========================================================================
 
-    // Store buffer organized as circular FIFO
-    store_entry_t buffer [0:DEPTH-1];
+    // Store buffer as flat arrays (synthesis-compatible, avoids struct-array issues)
+    logic [ADDR_WIDTH-1:0]     buf_addr    [0:DEPTH-1];
+    logic [DATA_WIDTH-1:0]     buf_data    [0:DEPTH-1];
+    logic [DATA_WIDTH/8-1:0]   buf_strb    [0:DEPTH-1];
+    logic [ADDR_TAG_WIDTH-1:0] buf_tag     [0:DEPTH-1];
+    logic                      buf_valid   [0:DEPTH-1];
+    logic                      buf_inflight[0:DEPTH-1];
 
     // FIFO pointers:
     //   wr_ptr: Where next CPU store is written (tail of queue)
@@ -129,23 +130,27 @@ module rv32_sb #(
     // Number of valid entries currently in buffer
     logic [CNT_WIDTH-1:0] count;
 
-    // Helper signals for assertions
-    logic alloc, complete, issue;
+    // Combinational helper signals used for count tracking and assertions
+    logic alloc, complete;
+    assign alloc    = cpu_valid && cpu_ready && !flush;
+    assign complete = resp_valid && buf_valid[rd_ptr];
+
+`ifndef SYNTHESIS
+    // Simulation-only assertion helper signals
+    logic issue;
     logic [CNT_WIDTH-1:0] inflight_count;
 
-    assign alloc = cpu_valid && cpu_ready && !flush;
-    assign complete = resp_valid && buffer[rd_ptr].valid;
     assign issue = mem_valid && mem_ready;
 
-    // Count inflight entries
     always_comb begin
         inflight_count = '0;
         for (int i = 0; i < DEPTH; i++) begin
-            if (buffer[i].valid && buffer[i].inflight) begin
+            if (buf_valid[i] && buf_inflight[i]) begin
                 inflight_count = inflight_count + 1'b1;
             end
         end
     end
+`endif // SYNTHESIS
 
     // ========================================================================
     // Output Assignment Logic
@@ -159,7 +164,7 @@ module rv32_sb #(
     always_comb begin
         lookup_hit = 1'b0;
         for (int i = 0; i < DEPTH; i++) begin
-            if (buffer[i].valid && (buffer[i].addr_tag == lookup_addr)) begin
+            if (buf_valid[i] && (buf_tag[i] == lookup_addr)) begin
                 lookup_hit = 1'b1;
             end
         end
@@ -177,7 +182,9 @@ module rv32_sb #(
     //   2. Entry is not already inflight (prevents duplicate issue)
     // This ensures in-order issue: oldest store goes first
     logic can_issue;
-    assign can_issue = buffer[rd_ptr].valid && !buffer[rd_ptr].inflight;
+    always_comb begin
+        can_issue = buf_valid[rd_ptr] && !buf_inflight[rd_ptr];
+    end
 
     // ========================================================================
     // Memory Interface
@@ -189,9 +196,11 @@ module rv32_sb #(
     // ========================================================================
 
     assign mem_valid = can_issue;
-    assign mem_addr = buffer[rd_ptr].addr;
-    assign mem_data = buffer[rd_ptr].data;
-    assign mem_strb = buffer[rd_ptr].strb;
+    always_comb begin
+        mem_addr = buf_addr[rd_ptr];
+        mem_data = buf_data[rd_ptr];
+        mem_strb = buf_strb[rd_ptr];
+    end
     assign resp_ready = 1'b1;  // Always ready to accept responses
 
     // ========================================================================
@@ -210,7 +219,12 @@ module rv32_sb #(
         if (!rst_n) begin
             wr_ptr <= '0;
             for (int i = 0; i < DEPTH; i++) begin
-                buffer[i] <= '0;
+                buf_addr[i]     <= '0;
+                buf_data[i]     <= '0;
+                buf_strb[i]     <= '0;
+                buf_tag[i]      <= '0;
+                buf_valid[i]    <= 1'b0;
+                buf_inflight[i] <= 1'b0;
             end
         end else begin
             // Operation 1: Allocate new entry when CPU writes
@@ -219,12 +233,12 @@ module rv32_sb #(
             //   - Buffer has space (cpu_ready)
             //   - Not flushing (flush would immediately invalidate)
             if (cpu_valid && cpu_ready && !flush) begin
-                buffer[wr_ptr].addr    <= cpu_addr;
-                buffer[wr_ptr].data    <= cpu_data;
-                buffer[wr_ptr].strb    <= cpu_strb;
-                buffer[wr_ptr].addr_tag <= cpu_addr[ADDR_TAG_WIDTH-1:0];
-                buffer[wr_ptr].valid   <= 1'b1;
-                buffer[wr_ptr].inflight <= 1'b0;
+                buf_addr[wr_ptr]     <= cpu_addr;
+                buf_data[wr_ptr]     <= cpu_data;
+                buf_strb[wr_ptr]     <= cpu_strb;
+                buf_tag[wr_ptr]      <= cpu_addr[ADDR_TAG_WIDTH-1:0];
+                buf_valid[wr_ptr]    <= 1'b1;
+                buf_inflight[wr_ptr] <= 1'b0;
                 if (PTR_WIDTH > 0) begin
                     wr_ptr <= wr_ptr + 1'b1;  // Advance tail pointer
                 end
@@ -235,8 +249,8 @@ module rv32_sb #(
             // Operation 2: Mark entry as inflight when issued to memory
             // Condition: Memory accepts the store (handshake completes)
             if (mem_valid && mem_ready) begin
-                buffer[rd_ptr].inflight <= 1'b1;
-                `DBG2(("SB: Issue store rdptr=%0d addr=0x%h", rd_ptr, buffer[rd_ptr].addr));
+                buf_inflight[rd_ptr] <= 1'b1;
+                `DBG2(("SB: Issue store rdptr=%0d addr=0x%h", rd_ptr, buf_addr[rd_ptr]));
             end
 
             // Operation 3: Flush - clear all entries
@@ -244,8 +258,8 @@ module rv32_sb #(
             // All pending stores are discarded (may be from wrong execution path)
             if (flush) begin
                 for (int i = 0; i < DEPTH; i++) begin
-                    buffer[i].valid <= 1'b0;
-                    buffer[i].inflight <= 1'b0;
+                    buf_valid[i]    <= 1'b0;
+                    buf_inflight[i] <= 1'b0;
                 end
                 `DBG2(("SB: Flush all entries"));
             end
@@ -270,9 +284,9 @@ module rv32_sb #(
             // Complete entry when response arrives
             // resp_valid indicates memory system has finished the store
             // Valid check prevents spurious responses from affecting invalid entries
-            if (resp_valid && buffer[rd_ptr].valid) begin
-                buffer[rd_ptr].valid <= 1'b0;      // Free the entry
-                buffer[rd_ptr].inflight <= 1'b0;   // Clear inflight flag
+            if (resp_valid && buf_valid[rd_ptr]) begin
+                buf_valid[rd_ptr]    <= 1'b0;  // Free the entry
+                buf_inflight[rd_ptr] <= 1'b0;  // Clear inflight flag
                 if (PTR_WIDTH > 0) begin
                     rd_ptr <= rd_ptr + 1'b1;       // Advance head pointer
                 end
@@ -363,7 +377,7 @@ module rv32_sb #(
     // FIFO Underflow Protection
     property p_no_underflow_issue;
         @(posedge clk) disable iff (!rst_n)
-        mem_valid |-> buffer[rd_ptr].valid;
+        mem_valid |-> buf_valid[rd_ptr];
     endproperty
     assert property (p_no_underflow_issue)
         else $error("[SB] FIFO underflow: issue when entry invalid");
@@ -397,7 +411,7 @@ module rv32_sb #(
     // State Transition Checks at Pointer Locations
     property p_alloc_creates_valid;
         @(posedge clk) disable iff (!rst_n)
-        alloc |=> buffer[$past(wr_ptr)].valid && !buffer[$past(wr_ptr)].inflight;
+        alloc |=> buf_valid[$past(wr_ptr)] && !buf_inflight[$past(wr_ptr)];
     endproperty
     assert property (p_alloc_creates_valid)
         else $error("[SB] Allocation did not create valid (non-inflight) entry");
@@ -405,14 +419,14 @@ module rv32_sb #(
     // Note: Issue assertion accounts for flush which can clear inflight flag
     property p_issue_sets_inflight;
         @(posedge clk) disable iff (!rst_n)
-        (issue && !flush) |=> buffer[$past(rd_ptr)].inflight;
+        (issue && !flush) |=> buf_inflight[$past(rd_ptr)];
     endproperty
     assert property (p_issue_sets_inflight)
         else $error("[SB] Issue (without flush) did not set inflight flag");
 
     property p_complete_invalidates;
         @(posedge clk) disable iff (!rst_n)
-        (complete && !flush) |=> !buffer[$past(rd_ptr)].valid;
+        (complete && !flush) |=> !buf_valid[$past(rd_ptr)];
     endproperty
     assert property (p_complete_invalidates)
         else $error("[SB] Completion did not invalidate entry");
@@ -422,7 +436,7 @@ module rv32_sb #(
     always_comb begin
         actual_count = '0;
         for (int i = 0; i < DEPTH; i++) begin
-            if (buffer[i].valid) begin
+            if (buf_valid[i]) begin
                 actual_count = actual_count + 1'b1;
             end
         end
@@ -501,14 +515,14 @@ module rv32_sb #(
     // mem_valid Behavior
     property p_mem_valid_needs_valid_entry;
         @(posedge clk) disable iff (!rst_n)
-        mem_valid |-> buffer[rd_ptr].valid;
+        mem_valid |-> buf_valid[rd_ptr];
     endproperty
     assert property (p_mem_valid_needs_valid_entry)
         else $error("[SB] mem_valid asserted with invalid entry");
 
     property p_mem_valid_not_inflight;
         @(posedge clk) disable iff (!rst_n)
-        mem_valid |-> !buffer[rd_ptr].inflight;
+        mem_valid |-> !buf_inflight[rd_ptr];
     endproperty
     assert property (p_mem_valid_not_inflight)
         else $error("[SB] mem_valid asserted for already inflight entry");

@@ -11,16 +11,25 @@ puts "Cell Library: $CELL_LIBRARY"
 puts "=========================================="
 
 # Read RTL files
+# Pass all files in a single read_verilog -sv call so that Yosys processes
+# package definitions and cross-file imports (import rv32_pkg::*) in one pass.
 puts "\n\[1/6\] Reading RTL files..."
 foreach rtl_file $RTL_FILES {
-    if {[file exists $rtl_file]} {
-        puts "  Reading: $rtl_file"
-        yosys read_verilog -sv $rtl_file
-    } else {
+    if {![file exists $rtl_file]} {
         puts "ERROR: RTL file not found: $rtl_file"
         exit 1
     }
+    puts "  Reading: $rtl_file"
 }
+yosys read_verilog -sv -D SYNTHESIS -D NO_ASSERTION {*}$RTL_FILES
+
+# Override top-level parameters for synthesis (icache sizing etc.)
+puts "\n\[1b/6\] Overriding synthesis parameters..."
+yosys chparam -set ICACHE_EN        $ICACHE_EN        $TOP_MODULE
+yosys chparam -set ICACHE_SIZE      $ICACHE_SIZE      $TOP_MODULE
+yosys chparam -set ICACHE_LINE_SIZE $ICACHE_LINE_SIZE $TOP_MODULE
+yosys chparam -set ICACHE_WAYS      $ICACHE_WAYS      $TOP_MODULE
+puts "  ICACHE_EN=$ICACHE_EN  SIZE=${ICACHE_SIZE}B  LINE=${ICACHE_LINE_SIZE}B  WAYS=$ICACHE_WAYS"
 
 # Set hierarchy
 puts "\n\[2/6\] Setting design hierarchy..."

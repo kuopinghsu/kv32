@@ -16,6 +16,9 @@
 //   - Performance counters
 // ============================================================================
 
+`ifdef SYNTHESIS
+import rv32_pkg::*;
+`endif
 module rv32_csr (
     input  logic        clk,
     input  logic        rst_n,
@@ -60,8 +63,9 @@ module rv32_csr (
     input  logic        trace_mode
 `endif
 );
-
+`ifndef SYNTHESIS
     import rv32_pkg::*;
+`endif
 
     // CSR registers
     logic [31:0] mstatus;
