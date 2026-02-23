@@ -11,7 +11,10 @@
 // Interfaces
 //   Core        – valid/ready request + valid/ready response (registered)
 //   CMO         – RISC-V CMO extension (INVAL / DISABLE / ENABLE)
-//   AXI4 read   – WRAP burst for cache-line fill; INCR single for bypass
+//   AXI4 read   – WRAP burst starting at the critical word (AXI4 WRAP wraps at
+//                 cache-line boundary); critical-word-first / early-restart:
+//                 CPU is unblocked after beat 0, remaining beats drain in bg.
+//                 INCR single-beat for bypass mode.
 //
 // Architecture
 //   - Valid storage uses flip-flops (one bit per way per set).
@@ -80,6 +83,17 @@ module rv32_icache #(
     input  logic [1:0]  axi_rresp,
     input  logic        axi_rlast,
     output logic        axi_rready
+
+`ifndef SYNTHESIS
+    ,
+    // Performance counters (simulation / verification only – not synthesised)
+    output logic [31:0] perf_req_cnt,     // total fetch lookups  (one per S_LOOKUP entry)
+    output logic [31:0] perf_hit_cnt,     // cache hits  (enabled, tag matched)
+    output logic [31:0] perf_miss_cnt,    // cache misses (enabled, tag not matched)
+    output logic [31:0] perf_bypass_cnt,  // bypass fetches (cache disabled)
+    output logic [31:0] perf_fill_cnt,    // completed cache-line fills
+    output logic [31:0] perf_cmo_cnt      // CMO operations executed
+`endif
 );
 
     // =========================================================================
@@ -94,9 +108,10 @@ module rv32_icache #(
     localparam int WAY_BITS         = (CACHE_WAYS > 1) ? $clog2(CACHE_WAYS) : 1;
 
     // CMO opcodes
-    localparam logic [1:0] CMO_INVAL   = 2'b00;
-    localparam logic [1:0] CMO_DISABLE = 2'b01;
-    localparam logic [1:0] CMO_ENABLE  = 2'b10;
+    localparam logic [1:0] CMO_INVAL     = 2'b00;
+    localparam logic [1:0] CMO_DISABLE   = 2'b01;
+    localparam logic [1:0] CMO_ENABLE    = 2'b10;
+    localparam logic [1:0] CMO_FLUSH_ALL = 2'b11;  // FENCE.I: invalidate all ways/sets
 
     // AXI burst types
     localparam logic [1:0] AXI_BURST_FIXED = 2'b00;
@@ -141,9 +156,10 @@ module rv32_icache #(
         S_IDLE,     // waiting for fetch request or CMO
         S_LOOKUP,   // tag compare (request address has been registered)
         S_MISS_AR,  // drive AXI AR channel
-        S_MISS_R,   // receive AXI R channel burst / single
-        S_RESP,     // hold response until core accepts it
-        S_CMO       // execute one CMO operation (single cycle)
+        S_MISS_R,      // receive AXI R channel burst until critical word ready
+        S_RESP,        // hold response until core accepts it
+        S_FILL_REST,   // drain remaining line-fill beats after early restart (CWF)
+        S_CMO          // execute one CMO operation (single cycle)
     } state_t;
 
     state_t state, next_state;
@@ -227,6 +243,7 @@ module rv32_icache #(
     logic [WAY_BITS-1:0]         fill_way;
     logic [WORD_OFFSET_BITS-1:0] fill_word_cnt;
     logic                        fill_error;
+    logic                        fill_active_r; // AXI burst in-progress (rlast not yet seen)
 
     // =========================================================================
     // Next-state logic (combinational)
@@ -262,19 +279,37 @@ module rv32_icache #(
             end
 
             S_MISS_R: begin
-                if (axi_rvalid && axi_rready && axi_rlast)
-                    next_state = S_RESP;
+                if (axi_rvalid && axi_rready) begin
+                    // Critical-word-first: respond as soon as beat 0 of the WRAP
+                    // burst arrives (= critical word).  The remaining beats are
+                    // drained in S_FILL_REST / S_RESP after the CPU is unblocked.
+                    // Also catches: bypass (axi_rlast on only beat) and the
+                    // degenerate single-word-per-line case.
+                    if (axi_rlast || (fill_word_cnt == '0 && cache_enable))
+                        next_state = S_RESP;
+                end
             end
 
             S_RESP: begin
                 if (imem_resp_valid && imem_resp_ready) begin
-                    if (cmo_valid)
+                    if (fill_active_r)
+                        // CWF: burst not complete yet – drain remaining beats
+                        next_state = S_FILL_REST;
+                    else if (cmo_valid)
                         next_state = S_CMO;
                     else if (imem_req_valid)
                         next_state = S_LOOKUP;
                     else
                         next_state = S_IDLE;
                 end
+            end
+
+            S_FILL_REST: begin
+                // Drain AXI beats remaining after the early-restart response.
+                // Must pass through S_IDLE on completion so req_addr_r and the
+                // SRAM read are set up properly for the next lookup.
+                if (axi_rvalid && axi_rready && axi_rlast)
+                    next_state = S_IDLE;
             end
 
             S_CMO:   next_state = S_IDLE;   // single-cycle operation
@@ -353,11 +388,28 @@ module rv32_icache #(
             fill_way      <= victim_ptr[req_index];
             fill_word_cnt <= '0;
             fill_error    <= 1'b0;
-        end else if (state == S_MISS_R && axi_rvalid) begin
+        end else if ((state == S_MISS_R || state == S_FILL_REST ||
+                      (state == S_RESP && fill_active_r)) && axi_rvalid && axi_rready) begin
+            // Continue counting beats in all fill states (covers S_MISS_R,
+            // S_RESP during CWF, and S_FILL_REST)
             fill_word_cnt <= fill_word_cnt + 1'b1;
             if (axi_rresp != 2'b00)
                 fill_error <= 1'b1;
         end
+    end
+
+    // =========================================================================
+    // Fill-active tracking
+    //   Set when the AR channel handshakes; cleared when the last AXI R beat
+    //   (axi_rlast) is received.  Spans S_MISS_R through S_FILL_REST / S_RESP.
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            fill_active_r <= 1'b0;
+        else if (state == S_MISS_AR && axi_arvalid && axi_arready)
+            fill_active_r <= 1'b1;
+        else if (axi_rvalid && axi_rready && axi_rlast)
+            fill_active_r <= 1'b0;
     end
 
     // =========================================================================
@@ -381,8 +433,9 @@ module rv32_icache #(
                     // Bypass: single beat – capture unconditionally
                     resp_data_r  <= axi_rdata;
                     resp_error_r <= (axi_rresp != 2'b00);
-                end else if (fill_word_cnt == req_word_off) begin
-                    // Cache fill: capture the requested word as it arrives
+                end else if (fill_word_cnt == '0) begin
+                    // CWF: WRAP burst starts at req_addr, so beat 0 is always
+                    // the critical word – capture it immediately.
                     resp_data_r  <= axi_rdata;
                     resp_error_r <= (axi_rresp != 2'b00) | fill_error;
                 end
@@ -430,10 +483,9 @@ module rv32_icache #(
                 end else begin
                     // ---------------------------------------------------------
                     // Fill commit: set valid bit and advance victim pointer
-                    // on the last successful fill beat.
+                    // on the last successful fill beat (any fill state).
                     // ---------------------------------------------------------
-                    if (state == S_MISS_R && axi_rvalid && axi_rready && axi_rlast &&
-                        cache_enable && !fill_error && (axi_rresp == 2'b00)) begin
+                    if (tag_fill_commit) begin
                         valid_array[fill_way][req_index] <= 1'b1;
                         victim_ptr[req_index] <=
                             WAY_BITS'((int'(fill_way) + 1) % CACHE_WAYS);
@@ -450,6 +502,19 @@ module rv32_icache #(
                                 (tag_sram_rdata[w] == cmo_tag))
                                 valid_array[w][cmo_index] <= 1'b0;
                         end
+                    end
+
+                    // ---------------------------------------------------------
+                    // CMO FLUSH_ALL: invalidate every way in every set and
+                    // reset the victim pointer.  Used by FENCE.I to guarantee
+                    // all fetched instructions are re-fetched from memory.
+                    // ---------------------------------------------------------
+                    if (state == S_CMO && cmo_op_r == CMO_FLUSH_ALL) begin
+                        for (int w = 0; w < CACHE_WAYS; w++)
+                            for (int s = 0; s < NUM_SETS; s++)
+                                valid_array[w][s] <= 1'b0;
+                        for (int s = 0; s < NUM_SETS; s++)
+                            victim_ptr[s] <= '0;
                     end
                 end
             end
@@ -469,10 +534,9 @@ module rv32_icache #(
 
                 // -------------------------------------------------------------
                 // Fill commit: set valid bit and advance victim pointer
-                // on the last successful fill beat.
+                // on the last successful fill beat (any fill state).
                 // -------------------------------------------------------------
-                if (state == S_MISS_R && axi_rvalid && axi_rready && axi_rlast &&
-                    cache_enable && !fill_error && (axi_rresp == 2'b00)) begin
+                if (tag_fill_commit) begin
                     valid_array[fill_way][req_index] <= 1'b1;
                     victim_ptr[req_index] <=
                         WAY_BITS'((int'(fill_way) + 1) % CACHE_WAYS);
@@ -490,6 +554,18 @@ module rv32_icache #(
                             valid_array[w][cmo_index] <= 1'b0;
                     end
                 end
+
+                // -------------------------------------------------------------
+                // CMO FLUSH_ALL: invalidate every way in every set and reset
+                // victim pointers.  Used by FENCE.I.
+                // -------------------------------------------------------------
+                if (state == S_CMO && cmo_op_r == CMO_FLUSH_ALL) begin
+                    for (int w = 0; w < CACHE_WAYS; w++)
+                        for (int s = 0; s < NUM_SETS; s++)
+                            valid_array[w][s] <= 1'b0;
+                    for (int s = 0; s < NUM_SETS; s++)
+                        victim_ptr[s] <= '0;
+                end
             end
 
         end
@@ -505,8 +581,9 @@ module rv32_icache #(
     //        data – written for fill_way on every received fill beat.
     //
     // The 1RW SRAM has no read-write conflict because:
-    //   – Reads are launched only in S_IDLE / S_RESP (never during S_MISS_R).
-    //   – Writes occur only during S_MISS_R.
+    //   – Reads are launched only in S_IDLE, or from S_RESP when fill_active_r=0
+    //     (imem_req_ready is blocked during all fill states).
+    //   – Writes occur in S_MISS_R, S_RESP (fill_active_r=1), and S_FILL_REST.
     // =========================================================================
 
     // Unified read-launch strobe (covers both fetch and CMO)
@@ -523,15 +600,19 @@ module rv32_icache #(
             ? cmo_addr[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS]
             : new_req_index;
 
-    // Tag fill commit strobe (last beat, no error)
+    // Tag fill commit strobe (last beat, no error) – fires in any fill state
     logic tag_fill_commit;
-    assign tag_fill_commit = (state == S_MISS_R) && axi_rvalid && axi_rready &&
-                             axi_rlast && cache_enable && !fill_error &&
-                             (axi_rresp == 2'b00);
+    assign tag_fill_commit = (state == S_MISS_R || state == S_FILL_REST ||
+                              (state == S_RESP && fill_active_r))
+                             && axi_rvalid && axi_rready
+                             && axi_rlast && cache_enable && !fill_error
+                             && (axi_rresp == 2'b00);
 
-    // Data fill write strobe (every received beat)
+    // Data fill write strobe (every received beat, all fill states)
     logic data_fill_we_s;
-    assign data_fill_we_s = (state == S_MISS_R) && axi_rvalid && axi_rready && cache_enable;
+    assign data_fill_we_s = (state == S_MISS_R || state == S_FILL_REST ||
+                              (state == S_RESP && fill_active_r))
+                            && axi_rvalid && axi_rready && cache_enable;
 
     generate
         for (genvar w = 0; w < CACHE_WAYS; w++) begin : g_sram_ctrl
@@ -551,7 +632,10 @@ module rv32_icache #(
             // Read:  word address = {set_index, word_offset} from incoming request
             // Write: word address = {set_index, fill_word_cnt}
             assign data_sram_addr [w] = data_sram_we[w]
-                ? DATA_SRAM_ADDR_BITS'({req_index,        fill_word_cnt})
+                // CWF: beat 0 → req_word_off, beat 1 → req_word_off+1, …
+                // Overflow of the addition wraps naturally at WORD_OFFSET_BITS
+                // (cache-line boundary) matching AXI WRAP semantics.
+                ? DATA_SRAM_ADDR_BITS'({req_index, WORD_OFFSET_BITS'(req_word_off + fill_word_cnt)})
                 : DATA_SRAM_ADDR_BITS'({sram_read_index,  new_req_word_off});
             assign data_sram_wdata[w] = axi_rdata;
 
@@ -600,10 +684,11 @@ module rv32_icache #(
     logic [31:0] ar_addr_cache;
     logic [31:0] ar_addr_bypass;
 
-    // Align to cache-line boundary
-    assign ar_addr_cache  = {req_addr_r[31:BYTE_OFFSET_BITS],
-                             {BYTE_OFFSET_BITS{1'b0}}};
-    // Align to word boundary (bypass)
+    // CWF: WRAP burst starts at the critical word address (word-aligned).
+    // The AXI WRAP wraps at the cache-line boundary ((arlen+1)*4 bytes),
+    // so every word in the line is fetched in order with the critical word first.
+    assign ar_addr_cache  = {req_addr_r[31:2], 2'b00};  // critical-word-first
+    // Align to word boundary (bypass – single INCR beat)
     assign ar_addr_bypass = {req_addr_r[31:2], 2'b00};
 
     assign axi_arvalid = (state == S_MISS_AR);
@@ -613,16 +698,21 @@ module rv32_icache #(
     assign axi_arburst = cache_enable ? AXI_BURST_WRAP : AXI_BURST_INCR;
     assign axi_arcache = 4'b0010;  // Normal non-cacheable bufferable
     assign axi_arprot  = 3'b100;   // Instruction access
-    assign axi_rready  = (state == S_MISS_R);
+    // Accept beats in S_MISS_R (before early restart) and S_FILL_REST /
+    // S_RESP-with-fill-active (draining remaining beats after early restart).
+    assign axi_rready  = (state == S_MISS_R) || (state == S_FILL_REST) ||
+                         (state == S_RESP && fill_active_r);
 
     // =========================================================================
     // Core handshake outputs
     // =========================================================================
     // Accept new requests only in IDLE, or transitionally from RESP
     // (simplified: always accept in IDLE; the core re-presents if rejected)
+    // Back-to-back from S_RESP is only safe when the fill is complete;
+    // block it when fill_active_r=1 (go via S_FILL_REST → S_IDLE instead).
     assign imem_req_ready  = (state == S_IDLE) ||
                              (state == S_RESP && imem_resp_ready &&
-                              !cmo_valid);
+                              !cmo_valid && !fill_active_r);
     assign imem_resp_valid = (state == S_RESP);
     assign imem_resp_data  = resp_data_r;
     assign imem_resp_error = resp_error_r;
@@ -645,13 +735,6 @@ module rv32_icache #(
     // Invariant: perf_req_cnt == perf_hit_cnt + perf_miss_cnt + perf_bypass_cnt
     // =========================================================================
 `ifndef SYNTHESIS
-    logic [31:0] perf_req_cnt;     // total fetches entering the pipeline
-    logic [31:0] perf_hit_cnt;     // cache hits  (cache enabled, tag matched)
-    logic [31:0] perf_miss_cnt;    // cache misses (cache enabled, tag not matched)
-    logic [31:0] perf_bypass_cnt;  // bypass fetches (cache disabled)
-    logic [31:0] perf_fill_cnt;    // completed cache-line fills
-    logic [31:0] perf_cmo_cnt;     // CMO operations executed
-
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             perf_req_cnt    <= '0;
@@ -668,9 +751,8 @@ module rv32_icache #(
                 else if ( cache_enable && !cache_hit) perf_miss_cnt   <= perf_miss_cnt   + 32'd1;
                 else                                  perf_bypass_cnt <= perf_bypass_cnt + 32'd1;
             end
-            // Successful cache-line fill: last AXI beat, cache enabled, no error.
-            if (state == S_MISS_R && axi_rvalid && axi_rready && axi_rlast &&
-                    cache_enable && !fill_error && (axi_rresp == 2'b00))
+            // Successful cache-line fill: tag_fill_commit fires in any fill state
+            if (tag_fill_commit)
                 perf_fill_cnt <= perf_fill_cnt + 32'd1;
             // CMO operation: S_CMO is exactly one cycle per accepted CMO.
             if (state == S_CMO)

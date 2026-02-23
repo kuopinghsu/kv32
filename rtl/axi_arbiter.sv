@@ -24,11 +24,15 @@ module axi_arbiter #(
     // Master 0 (Instruction memory - Read Only) with ID support
     input  logic [31:0]              m0_axi_araddr,
     input  logic [axi_pkg::AXI_ID_WIDTH-1:0] m0_axi_arid,
+    input  logic [7:0]               m0_axi_arlen,
+    input  logic [2:0]               m0_axi_arsize,
+    input  logic [1:0]               m0_axi_arburst,
     input  logic                     m0_axi_arvalid,
     output logic                     m0_axi_arready,
     output logic [31:0]              m0_axi_rdata,
     output logic [1:0]               m0_axi_rresp,
     output logic [axi_pkg::AXI_ID_WIDTH-1:0] m0_axi_rid,
+    output logic                     m0_axi_rlast,
     output logic                     m0_axi_rvalid,
     input  logic                     m0_axi_rready,
 
@@ -70,11 +74,15 @@ module axi_arbiter #(
     output logic                     s_axi_bready,
     output logic [31:0]              s_axi_araddr,
     output logic [axi_pkg::AXI_ID_WIDTH-1:0] s_axi_arid,
+    output logic [7:0]               s_axi_arlen,
+    output logic [2:0]               s_axi_arsize,
+    output logic [1:0]               s_axi_arburst,
     output logic                     s_axi_arvalid,
     input  logic                     s_axi_arready,
     input  logic [31:0]              s_axi_rdata,
     input  logic [1:0]               s_axi_rresp,
     input  logic [axi_pkg::AXI_ID_WIDTH-1:0] s_axi_rid,
+    input  logic                     s_axi_rlast,
     input  logic                     s_axi_rvalid,
     output logic                     s_axi_rready
 );
@@ -173,9 +181,12 @@ module axi_arbiter #(
     // Mux AR channel outputs with ID - Encode master_id in MSB of ID
     always_comb begin
         // Default: no activity
-        s_axi_araddr  = 32'h0;
-        s_axi_arid    = '0;
-        s_axi_arvalid = 1'b0;
+        s_axi_araddr   = 32'h0;
+        s_axi_arid     = '0;
+        s_axi_arlen    = 8'h0;
+        s_axi_arsize   = 3'b010;   // 4 bytes
+        s_axi_arburst  = 2'b01;   // INCR
+        s_axi_arvalid  = 1'b0;
         m0_axi_arready = 1'b0;
         m1_axi_arready = 1'b0;
 
@@ -183,6 +194,9 @@ module axi_arbiter #(
             AR_MASTER0: begin
                 s_axi_araddr  = m0_axi_araddr;
                 s_axi_arid    = {1'b0, m0_axi_arid[axi_pkg::AXI_ID_WIDTH-2:0]};  // MSB=0 for M0
+                s_axi_arlen   = m0_axi_arlen;
+                s_axi_arsize  = m0_axi_arsize;
+                s_axi_arburst = m0_axi_arburst;
                 s_axi_arvalid = m0_axi_arvalid;
                 m0_axi_arready = s_axi_arready;
             end
@@ -190,6 +204,10 @@ module axi_arbiter #(
             AR_MASTER1: begin
                 s_axi_araddr  = m1_axi_araddr;
                 s_axi_arid    = {1'b1, m1_axi_arid[axi_pkg::AXI_ID_WIDTH-2:0]};  // MSB=1 for M1
+                // M1 (data) always issues single-beat transfers
+                s_axi_arlen   = 8'h0;
+                s_axi_arsize  = 3'b010;
+                s_axi_arburst = 2'b01;
                 s_axi_arvalid = m1_axi_arvalid;
                 m1_axi_arready = s_axi_arready;
             end
@@ -251,6 +269,7 @@ module axi_arbiter #(
         m0_axi_rdata  = 32'h0;
         m0_axi_rresp  = 2'b00;
         m0_axi_rid    = '0;
+        m0_axi_rlast  = 1'b0;
         m0_axi_rvalid = 1'b0;
         m1_axi_rdata  = 32'h0;
         m1_axi_rresp  = 2'b00;
@@ -269,6 +288,7 @@ module axi_arbiter #(
                 m0_axi_rdata  = s_axi_rdata;
                 m0_axi_rresp  = s_axi_rresp;
                 m0_axi_rid    = {1'b0, s_axi_rid[axi_pkg::AXI_ID_WIDTH-2:0]};  // Strip master bit
+                m0_axi_rlast  = s_axi_rlast;
                 m0_axi_rvalid = 1'b1;
                 s_axi_rready  = m0_axi_rready;
             end

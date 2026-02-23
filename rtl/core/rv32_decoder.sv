@@ -46,7 +46,9 @@ module rv32_decoder (
     output logic        is_ebreak,
     output logic        is_amo,
     output amo_op_e     amo_op,
-    output logic        is_fence
+    output logic        is_fence,
+    output logic        is_fence_i,   // FENCE.I (funct3=001): flush instruction cache
+    output logic        is_cbo        // Zicbom CBO (funct3=010): cache block operation
 );
 
     import rv32_pkg::*;
@@ -108,6 +110,8 @@ module rv32_decoder (
         is_amo     = 1'b0;
         amo_op     = AMO_ADD;  // Default AMO operation
         is_fence   = 1'b0;
+        is_fence_i = 1'b0;
+        is_cbo     = 1'b0;
 
         if (valid) begin
             case (opcode)
@@ -234,8 +238,14 @@ module rv32_decoder (
                 end
 
                 OPCODE_MISC_MEM: begin
-                    if (funct3 == 3'b000 || funct3 == 3'b001) begin
-                        is_fence = 1'b1;  // FENCE or FENCE.I
+                    if (funct3 == 3'b000) begin
+                        is_fence = 1'b1;             // FENCE: drain stores only
+                    end else if (funct3 == 3'b001) begin
+                        is_fence   = 1'b1;           // FENCE.I: drain stores ...
+                        is_fence_i = 1'b1;           //          ... then flush I-cache
+                    end else if (funct3 == 3'b010) begin
+                        is_cbo  = 1'b1;              // Zicbom: cbo.inval / cbo.clean / cbo.flush
+                        alu_src = 1'b1;              // ALU_ADD(rs1, imm=0) → rs1 = cache address
                     end else begin
                         illegal = 1'b1;
                     end

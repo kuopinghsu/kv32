@@ -38,12 +38,16 @@ module axi_xbar (
 
     input  logic [31:0]              m_axi_araddr,
     input  logic [axi_pkg::AXI_ID_WIDTH-1:0] m_axi_arid,
+    input  logic [7:0]               m_axi_arlen,
+    input  logic [2:0]               m_axi_arsize,
+    input  logic [1:0]               m_axi_arburst,
     input  logic                     m_axi_arvalid,
     output logic                     m_axi_arready,
 
     output logic [31:0]              m_axi_rdata,
     output logic [1:0]               m_axi_rresp,
     output logic [axi_pkg::AXI_ID_WIDTH-1:0] m_axi_rid,
+    output logic                     m_axi_rlast,
     output logic                     m_axi_rvalid,
     input  logic                     m_axi_rready,
 
@@ -62,11 +66,15 @@ module axi_xbar (
     output logic        s0_axi_bready,
 
     output logic [31:0] s0_axi_araddr,
+    output logic [7:0]  s0_axi_arlen,
+    output logic [2:0]  s0_axi_arsize,
+    output logic [1:0]  s0_axi_arburst,
     output logic        s0_axi_arvalid,
     input  logic        s0_axi_arready,
 
     input  logic [31:0] s0_axi_rdata,
     input  logic [1:0]  s0_axi_rresp,
+    input  logic        s0_axi_rlast,
     input  logic        s0_axi_rvalid,
     output logic        s0_axi_rready,
 
@@ -260,7 +268,8 @@ module axi_xbar (
                 s5_ar_id_wr_ptr <= s5_ar_id_wr_ptr + 1;
             end
             // Pop: R handshake completes for each slave
-            if (s0_axi_rvalid && s0_axi_rready) s0_ar_id_rd_ptr <= s0_ar_id_rd_ptr + 1;
+            // Slave 0 may return multi-beat bursts – only pop FIFO on the last beat.
+            if (s0_axi_rvalid && s0_axi_rready && s0_axi_rlast) s0_ar_id_rd_ptr <= s0_ar_id_rd_ptr + 1;
             if (s1_axi_rvalid && s1_axi_rready) s1_ar_id_rd_ptr <= s1_ar_id_rd_ptr + 1;
             if (s2_axi_rvalid && s2_axi_rready) s2_ar_id_rd_ptr <= s2_ar_id_rd_ptr + 1;
             if (s3_axi_rvalid && s3_axi_rready) s3_ar_id_rd_ptr <= s3_ar_id_rd_ptr + 1;
@@ -586,6 +595,9 @@ module axi_xbar (
     // Read address channel routing
     always_comb begin
         s0_axi_araddr  = m_axi_araddr;
+        s0_axi_arlen   = m_axi_arlen;
+        s0_axi_arsize  = m_axi_arsize;
+        s0_axi_arburst = m_axi_arburst;
         s0_axi_arvalid = m_axi_arvalid && sel_s0_ar;
 
         s1_axi_araddr  = m_axi_araddr;
@@ -652,6 +664,7 @@ module axi_xbar (
         m_axi_rdata  = 32'h0;
         m_axi_rresp  = 2'b00;
         m_axi_rid    = '0;
+        m_axi_rlast  = 1'b0;
         m_axi_rvalid = 1'b0;
 
         //Priority encoder: route first slave with rvalid and return head of its ID FIFO
@@ -659,42 +672,49 @@ module axi_xbar (
             s0_axi_rready = m_axi_rready;
             m_axi_rdata   = s0_axi_rdata;
             m_axi_rresp   = s0_axi_rresp;
+            m_axi_rlast   = s0_axi_rlast;
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = s0_ar_id_fifo[s0_ar_id_rd_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]];
         end else if (s1_axi_rvalid) begin
             s1_axi_rready = m_axi_rready;
             m_axi_rdata   = s1_axi_rdata;
             m_axi_rresp   = s1_axi_rresp;
+            m_axi_rlast   = 1'b1;  // single-beat slaves always assert rlast
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = s1_ar_id_fifo[s1_ar_id_rd_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]];
         end else if (s2_axi_rvalid) begin
             s2_axi_rready = m_axi_rready;
             m_axi_rdata   = s2_axi_rdata;
             m_axi_rresp   = s2_axi_rresp;
+            m_axi_rlast   = 1'b1;
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = s2_ar_id_fifo[s2_ar_id_rd_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]];
         end else if (s3_axi_rvalid) begin
             s3_axi_rready = m_axi_rready;
             m_axi_rdata   = s3_axi_rdata;
             m_axi_rresp   = s3_axi_rresp;
+            m_axi_rlast   = 1'b1;
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = s3_ar_id_fifo[s3_ar_id_rd_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]];
         end else if (s4_axi_rvalid) begin
             s4_axi_rready = m_axi_rready;
             m_axi_rdata   = s4_axi_rdata;
             m_axi_rresp   = s4_axi_rresp;
+            m_axi_rlast   = 1'b1;
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = s4_ar_id_fifo[s4_ar_id_rd_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]];
         end else if (s5_axi_rvalid) begin
             s5_axi_rready = m_axi_rready;
             m_axi_rdata   = s5_axi_rdata;
             m_axi_rresp   = s5_axi_rresp;
+            m_axi_rlast   = 1'b1;
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = s5_ar_id_fifo[s5_ar_id_rd_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]];
         end else if (decode_err_pending) begin
             // Generate decode error response for unmapped address
             m_axi_rdata   = 32'hDEADBEEF;  // Debug pattern for decode errors
             m_axi_rresp   = 2'b10;  // SLVERR
+            m_axi_rlast   = 1'b1;
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = decode_err_id_fifo[decode_err_rd_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]];
         end

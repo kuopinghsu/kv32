@@ -677,9 +677,9 @@ int main(int argc, char** argv) {
     int max_outstanding_writes = mem_get_stat_max_outstanding_writes();
 
     std::cout << std::endl;
-    std::cout << "Read Operations:" << std::endl;
-    std::cout << "  AR Requests (Master):        " << ar_requests << std::endl;
-    std::cout << "  R Responses (Slave):         " << r_responses << std::endl;
+    std::cout << "Read Operations :" << std::endl;
+    std::cout << "  AR Requests (Master) :       " << ar_requests << std::endl;
+    std::cout << "  R Responses (Slave) :        " << r_responses << std::endl;
     if ((ar_requests - r_responses) > 1) {
         // Diff of 1 is always expected: at normal program exit the CPU has one
         // instruction fetch in-flight (AR accepted, R not yet returned). Only
@@ -687,13 +687,13 @@ int main(int argc, char** argv) {
         std::cout << "  WARNING: Mismatch AR=" << ar_requests << ", R=" << r_responses
                   << " (Diff=" << (ar_requests - r_responses) << ")" << std::endl;
     }
-    std::cout << "  Max Outstanding Reads:       " << max_outstanding_reads << std::endl;
+    std::cout << "  Max Outstanding Reads :      " << max_outstanding_reads << std::endl;
     std::cout << std::endl;
 
-    std::cout << "Write Operations:" << std::endl;
-    std::cout << "  AW Requests (Master):        " << aw_requests << std::endl;
-    std::cout << "  W Data (Master):             " << w_data << std::endl;
-    std::cout << "  B Responses (Slave):         " << b_responses << std::endl;
+    std::cout << "Write Operations :" << std::endl;
+    std::cout << "  AW Requests (Master) :       " << aw_requests << std::endl;
+    std::cout << "  W Data (Master) :            " << w_data << std::endl;
+    std::cout << "  B Responses (Slave) :        " << b_responses << std::endl;
     if (aw_requests != b_responses) {
         std::cout << "  WARNING: Mismatch AW=" << aw_requests << ", B=" << b_responses
                   << " (Diff=" << (aw_requests - b_responses) << ")" << std::endl;
@@ -702,10 +702,34 @@ int main(int argc, char** argv) {
         std::cout << "  WARNING: Mismatch AW=" << aw_requests << ", W=" << w_data
                   << " (Diff=" << (aw_requests - w_data) << ")" << std::endl;
     }
-    std::cout << "  Max Outstanding Writes:      " << max_outstanding_writes << std::endl;
+    std::cout << "  Max Outstanding Writes :     " << max_outstanding_writes << std::endl;
     std::cout << std::endl;
 
-    std::cout << "Total Transactions:            " << (ar_requests + aw_requests) << std::endl;
+    std::cout << "Total Transactions :           " << (ar_requests + aw_requests) << std::endl;
+
+#if ICACHE_EN
+    // Print I-Cache performance statistics
+    {
+        uint64_t req    = (uint64_t)dut->icache_perf_req_cnt;
+        uint64_t hits   = (uint64_t)dut->icache_perf_hit_cnt;
+        uint64_t misses = (uint64_t)dut->icache_perf_miss_cnt;
+        uint64_t bypass = (uint64_t)dut->icache_perf_bypass_cnt;
+        uint64_t fills  = (uint64_t)dut->icache_perf_fill_cnt;
+        uint64_t cmos   = (uint64_t)dut->icache_perf_cmo_cnt;
+        double   hit_rate = req ? (100.0 * hits / req) : 0.0;
+
+        std::cout << std::endl;
+        std::cout << "I-Cache Statistics :" << std::endl;
+        std::cout << "  Fetch lookups :              " << req    << std::endl;
+        std::cout << "  Cache hits :                 " << hits
+                  << " (" << std::fixed << std::setprecision(2) << hit_rate << "%)" << std::endl;
+        std::cout << "  Cache misses :               " << misses << std::endl;
+        std::cout << "  Bypass fetches :             " << bypass << std::endl;
+        std::cout << "  Cache-line fills :           " << fills  << std::endl;
+        std::cout << "  CMO operations :             " << cmos   << std::endl;
+    }
+#endif
+
     std::cout << "==========================================" << std::endl;
 
     // Write RISCOF signature file if requested

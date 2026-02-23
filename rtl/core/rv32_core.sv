@@ -81,6 +81,12 @@ module rv32_core #(
     output logic [63:0] first_retire_cycle,
     output logic [63:0] last_retire_cycle,
 
+    // I-Cache CMO interface (driven from MEM stage for FENCE.I and cbo.inval)
+    output logic        icache_cmo_valid,   // CMO request to icache
+    output logic [1:0]  icache_cmo_op,      // CMO operation (FLUSH_ALL=11 or INVAL=00)
+    output logic [31:0] icache_cmo_addr,    // CMO target address (cbo.inval) or 0 (fence.i)
+    input  logic        icache_cmo_ready,   // Icache ready to accept CMO
+
 `ifndef SYNTHESIS
     // Timeout detection (simulation only)
     output logic        timeout_error,
@@ -228,6 +234,8 @@ module rv32_core #(
     logic        is_amo_id;
     amo_op_e     amo_op_id;
     logic        is_fence_id;
+    logic        is_fence_i_id;  // FENCE.I: also flush icache
+    logic        is_cbo_id;      // Zicbom CBO: cache block operation
     logic        id_ex_stall;
     logic        id_flush;
 
@@ -256,6 +264,8 @@ module rv32_core #(
     logic        is_amo_ex;
     amo_op_e     amo_op_ex;
     logic        is_fence_ex;
+    logic        is_fence_i_ex;  // FENCE.I in EX stage
+    logic        is_cbo_ex;      // CBO in EX stage
     logic [31:0] alu_result_ex;
     logic        alu_ready;
     logic        branch_taken;
@@ -284,6 +294,16 @@ module rv32_core #(
     logic        is_amo_mem;
     amo_op_e     amo_op_mem;
     logic        is_fence_mem;
+    logic        is_fence_i_mem;  // FENCE.I in MEM stage
+    logic        is_cbo_mem;      // CBO in MEM stage
+    logic        fence_i_flush;     // Gate new fetches/IB while FENCE.I in MEM
+    logic        fence_i_committing; // FENCE.I retiring from MEM this cycle (no stall)
+    logic        cbo_flush;          // Gate new fetches/IB while CBO in MEM (breaks deadlock)
+    logic        cbo_committing;     // CBO retiring from MEM this cycle
+    logic        fence_i_drain_stall; // Stall FENCE.I waiting for store buffer to drain
+    logic        fence_i_cmo_stall;   // Stall FENCE.I in MEM until icache CMO accepted
+    logic        cbo_cmo_stall;       // Stall CBO in MEM until icache CMO accepted
+    logic        cmo_sent_r;          // Registered: icache CMO accepted this MEM stage
     logic        mem_valid;
     logic        mem_wb_stall;
     logic        mem_flush;
@@ -404,30 +424,50 @@ module rv32_core #(
     //
     //   For non-branch flushes (exception / irq / mret) the old PC is not
     //   yet valid, so we still block.
-    logic        non_branch_flush;        // exception / irq / mret flush (not branch)
+    logic        non_branch_flush;        // exception / irq / mret / fence.i flush (not branch)
     logic        fetch_issued_for_effective_pc;
     logic [31:0] imem_req_addr_comb;      // combinational fetch address
     logic        imem_req_valid_comb;     // combinational fetch valid (before gating)
 
-    assign non_branch_flush = exception || irq_pending || is_mret_ex;
+    // fence_i_flush: FENCE.I in MEM — stop new instruction fetches and drain IB.
+    // Defined here (combinationally from MEM-stage signals) so it feeds if_flush.
+    assign fence_i_flush      = is_fence_i_mem && mem_valid;
+    // fence_i_committing: FENCE.I retiring this cycle — reset pc_if to fence.i+4
+    // so that instructions pre-fetched and discarded during the CMO stall are re-fetched.
+    assign fence_i_committing = is_fence_i_mem && mem_valid && !mem_wb_stall;
+    // cbo_flush: CBO.INVAL in MEM — same drain mechanic as FENCE.I.
+    // When CBO stalls waiting for icache CMO acceptance (cbo_cmo_stall), the icache may
+    // be in S_RESP.  S_RESP only transitions when imem_resp_ready=1, but imem_resp_ready
+    // depends on !if_id_stall which depends on cbo_cmo_stall: a deadlock.
+    // Asserting cbo_flush makes ib_resp_discard=1 -> imem_resp_ready=1, letting S_RESP
+    // deliver its response and the icache accept the CMO in the same cycle.
+    assign cbo_flush          = is_cbo_mem && mem_valid;
+    assign cbo_committing     = is_cbo_mem && mem_valid && !mem_wb_stall;
+    assign non_branch_flush = exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush;
 
-    // dedup_consuming: the current pc_if is already in-flight and its
-    // response is arriving this cycle.  In this case pc_if will advance to
-    // pc_next at the end of this cycle, so we should issue for pc_next
-    // immediately rather than waiting for the flip-flop update.
+    // dedup_consumed: pc_if is already in-flight and its response is being
+    // consumed this cycle.  Used to advance pc_if to pc_next *regardless* of
+    // whether the memory bus is ready to accept the next request.
     //
-    // IMPORTANT: gate on imem_req_ready.  If the memory system cannot
-    // accept a new request right now, asserting imem_req_valid for pc_next
-    // and then dropping it next cycle (when dedup_consuming=0) violates the
-    // handshake rule "valid must stay high until ready".  When the memory is
-    // busy, fall back to the one-cycle-stall path (Consumed-no-issue + normal
-    // sequential issue next cycle) which is always correct.
+    // CWF fix: during S_FILL_REST the icache keeps imem_req_ready=0 while
+    // the remaining line-fill beats drain.  Without this ungated signal,
+    // pc_if would stay stuck at the critical-word address.  When S_FILL_REST
+    // ends and imem_req_ready rises, the fetch unit would re-issue for the
+    // stale pc_if, executing the critical word a second time.
+    logic dedup_consumed;
+    assign dedup_consumed = last_issued_valid &&
+                            (pc_if == last_issued_fetch_pc) &&
+                            imem_resp_valid && imem_resp_ready && !ib_resp_discard &&
+                            !if_flush;
+
+    // dedup_consuming: like dedup_consumed but also gated on imem_req_ready.
+    // When true it is safe (AXI-handshake-compliant) to speculatively issue
+    // the fetch for pc_next in the same cycle (look-ahead issue).
+    // IMPORTANT: do NOT remove the imem_req_ready gate here — asserting
+    // imem_req_valid for pc_next and then dropping it next cycle violates the
+    // AXI rule "VALID must not deassert before READY".
     logic dedup_consuming;
-    assign dedup_consuming = last_issued_valid &&
-                             (pc_if == last_issued_fetch_pc) &&
-                             imem_resp_valid && imem_resp_ready && !ib_resp_discard &&
-                             !if_flush &&
-                             imem_req_ready;  // only look-ahead when mem can take it now
+    assign dedup_consuming = dedup_consumed && imem_req_ready;
 
     // imem_req_addr / imem_req_valid:
     //   Combinational address and valid.
@@ -588,6 +628,14 @@ module rv32_core #(
                 pc_if <= branch_target;
                 `DBG2(("[FETCH_PC] BRANCH: pc=0x%h -> target=0x%h, outstanding=%0d",
                        pc_if, branch_target, ib_outstanding));
+            end else if (fence_i_committing || cbo_committing) begin
+                // FENCE.I / CBO.INVAL commits: reset fetch pointer to instr+4.
+                // During the CMO stall pc_if drifted ahead; pre-fetched instructions
+                // were discarded by the flush.  Without this correction the CPU would
+                // resume from the drifted pc_if, silently skipping those instructions.
+                pc_if <= pc_mem + 32'd4;
+                `DBG1(("[CMO] Commit: resetting pc_if 0x%h -> 0x%h",
+                       pc_if, pc_mem + 32'd4));
             end else begin
                 if (imem_req_ready && imem_req_valid) begin
                     // Fetch accepted: advance to the PC after what was issued.
@@ -597,18 +645,26 @@ module rv32_core #(
                     pc_if <= imem_req_addr + 32'd4;
                     `DBG2(("[FETCH_PC] Sequential: pc=0x%h -> 0x%h (issued=0x%h), outstanding=%0d",
                            pc_if, imem_req_addr + 32'd4, imem_req_addr, ib_outstanding));
-                end else if (!imem_req_valid && dedup_consuming) begin
-                    // Dedup suppression with no new fetch issued.
-                    // dedup_consuming=1: the response arriving this cycle IS for pc_if,
-                    // so it is safe to advance pc_if to pc_next.
-                    // (IB full or some other block prevented issuing for pc_next)
-                    // dedup_consuming already checks imem_req_ready, imem_resp_valid,
-                    // imem_resp_ready, !ib_resp_discard, !if_flush.
-                    // IMPORTANT: do NOT advance pc_if when a response arrives for an
-                    // earlier in-flight PC while pc_if itself has not yet been fetched.
+                end else if (!imem_req_valid && dedup_consumed) begin
+                    // Response for pc_if was consumed but no new fetch was issued.
+                    // Advance pc_if to pc_next so the next available cycle issues
+                    // for the correct address rather than re-fetching pc_if.
+                    //
+                    // Sub-cases:
+                    //   (a) imem_req_ready=1, IB full: dedup_consuming would be set
+                    //       but imem_req_valid=0 from ib_can_accept=0.
+                    //   (b) imem_req_ready=0 (e.g. CWF S_FILL_REST in progress):
+                    //       dedup_consuming=0, so without the dedup_consumed guard
+                    //       pc_if would stay stuck at the critical-word address and
+                    //       get re-fetched once S_FILL_REST completes.
+                    //
+                    // No AXI hazard: imem_req_valid=0, so we never assert valid for
+                    // pc_next here.  The pc_next issue (if desired) will happen in
+                    // the next cycle via the normal imem_req_ready && imem_req_valid
+                    // path when the bus becomes free.
                     pc_if <= pc_next;
-                    `DBG2(("[FETCH_PC] Consumed(no-issue): pc=0x%h -> 0x%h, outstanding=%0d",
-                           pc_if, pc_next, ib_outstanding));
+                    `DBG2(("[FETCH_PC] Consumed(no-issue): pc=0x%h -> 0x%h, outstanding=%0d (imem_ready=%b)",
+                           pc_if, pc_next, ib_outstanding, imem_req_ready));
                 end else if (imem_req_valid && !imem_req_ready) begin
                     // PC update blocked by memory system backpressure
                     `DBG2(("[FETCH_PC] BLOCKED: pc=0x%h (imem ready=0), outstanding=%0d",
@@ -695,7 +751,9 @@ module rv32_core #(
         .is_ebreak(is_ebreak_id),
         .is_amo(is_amo_id),
         .amo_op(amo_op_id),
-        .is_fence(is_fence_id)
+        .is_fence(is_fence_id),
+        .is_fence_i(is_fence_i_id),
+        .is_cbo(is_cbo_id)
     );
 
     // Register File (32 x 32-bit registers)
@@ -941,6 +999,8 @@ module rv32_core #(
             is_amo_ex     <= 1'b0;
             amo_op_ex     <= AMO_ADD;
             is_fence_ex   <= 1'b0;
+            is_fence_i_ex <= 1'b0;
+            is_cbo_ex     <= 1'b0;
             ex_valid      <= 1'b0;
         end else if (ex_flush) begin
             // Branch misprediction or exception: flush pipeline stage
@@ -1002,6 +1062,8 @@ module rv32_core #(
             is_amo_ex     <= 1'b0;
             amo_op_ex     <= AMO_ADD;
             is_fence_ex   <= 1'b0;
+            is_fence_i_ex <= 1'b0;
+            is_cbo_ex     <= 1'b0;
             ex_valid      <= 1'b0;
         end else if (!id_ex_stall) begin
             pc_ex         <= pc_id;
@@ -1035,6 +1097,8 @@ module rv32_core #(
             is_amo_ex     <= is_amo_id;
             amo_op_ex     <= amo_op_id;
             is_fence_ex   <= is_fence_id;
+            is_fence_i_ex <= is_fence_i_id;
+            is_cbo_ex     <= is_cbo_id;
             ex_valid      <= id_valid;
             if (id_valid) begin
                 `DBG2(("Cycle %0t: ID->EX pc=0x%h instr=0x%h rd=%0d mem_w=%b mem_r=%b id_valid=%b ex_valid_next=%b",
@@ -1285,7 +1349,7 @@ module rv32_core #(
     //
     // MEM flush: On all exceptions, interrupts, and MRET
     //   - But not on branches (need PC+4 for JAL/JALR link register)
-    assign if_flush = (branch_taken && !branch_flushed) || exception || irq_pending || is_mret_ex;
+    assign if_flush = (branch_taken && !branch_flushed) || exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush;
     assign id_flush = (branch_taken && !branch_flushed) || exception || irq_pending || is_mret_ex;
     assign ex_flush = irq_pending || wb_exception;
     // Note: is_mret_ex is intentionally NOT included here. When mret is in EX stage,
@@ -1347,8 +1411,16 @@ module rv32_core #(
             interrupt_pc = pc_ex;    // EX stage (no valid instruction in MEM)
         end else if (id_valid) begin
             interrupt_pc = pc_id;    // ID stage
+        end else if (ib_outstanding > 0 || imem_resp_valid) begin
+            // A fetch is in-flight inside the IB / icache but has not entered any
+            // pipeline stage yet (e.g. during a cache miss when the pipeline drained).
+            // pc_if has already advanced to AFTER the in-flight instruction, so using
+            // it here would cause mret to skip that instruction entirely.
+            // ib_resp_pc tracks the oldest outstanding fetch (IB rd_ptr), which is
+            // the correct next-instruction-to-execute address.
+            interrupt_pc = ib_resp_pc;
         end else begin
-            interrupt_pc = pc_if;    // Pipeline is empty; resume from IF target
+            interrupt_pc = pc_if;    // Pipeline truly empty, no in-flight fetches
         end
         exception_tval = 32'd0;
 
@@ -1425,6 +1497,8 @@ module rv32_core #(
             is_amo_mem    <= 1'b0;
             amo_op_mem    <= AMO_ADD;
             is_fence_mem  <= 1'b0;
+            is_fence_i_mem <= 1'b0;
+            is_cbo_mem    <= 1'b0;
             mem_valid     <= 1'b0;
             data_access_fault_mem <= 1'b0;
         end else if (mem_flush) begin
@@ -1435,6 +1509,8 @@ module rv32_core #(
             system_mem    <= 1'b0;
             mem_valid     <= 1'b0;
             is_fence_mem  <= 1'b0;
+            is_fence_i_mem <= 1'b0;
+            is_cbo_mem    <= 1'b0;
             data_access_fault_mem <= 1'b0;
         end else if (!ex_mem_stall) begin
             if (!id_ex_stall) begin
@@ -1461,6 +1537,8 @@ module rv32_core #(
                 is_amo_mem    <= is_amo_ex;
                 amo_op_mem    <= amo_op_ex;
                 is_fence_mem  <= is_fence_ex;
+                is_fence_i_mem <= is_fence_i_ex;
+                is_cbo_mem    <= is_cbo_ex;
                 mem_valid     <= ex_valid && !exception && !irq_pending && !wb_exception;
                 if (ex_valid) begin
                     `DBG2(("Cycle %0t: EX->MEM pc=0x%h instr=0x%h ex_valid=%b mem_valid_next=%b",
@@ -1486,6 +1564,8 @@ module rv32_core #(
                 mem_write_mem <= 1'b0;
                 system_mem    <= 1'b0;
                 is_fence_mem  <= 1'b0;
+                is_fence_i_mem <= 1'b0;
+                is_cbo_mem    <= 1'b0;
                 data_access_fault_mem <= 1'b0;
             end
         end
@@ -2049,7 +2129,46 @@ module rv32_core #(
     // Combine all MEM->WB stall conditions (load_stall and store_stall defined above for forwarding)
     // fence_stall: stall until store buffer drains (fence ordering guarantee)
     assign fence_stall  = is_fence_mem && mem_valid && sb_store_pending;
-    assign mem_wb_stall = load_stall || store_stall || (is_amo_mem && amo_in_progress) || fence_stall;
+
+    // cmo_sent_r: registered flag set when the icache accepts our CMO request.
+    // Using a register breaks the combinational loop:
+    //   mem_wb_stall -> if_id_stall -> imem_resp_ready -> icache.cmo_ready
+    //                -> fence_i_cmo_stall -> mem_wb_stall
+    // Once set, stall gates drop so FENCE.I / CBO can advance next cycle.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            cmo_sent_r <= 1'b0;
+        else if (!mem_valid || (!is_fence_i_mem && !is_cbo_mem))
+            cmo_sent_r <= 1'b0;  // clear when no CMO instruction in MEM
+        else if (icache_cmo_valid && icache_cmo_ready)
+            cmo_sent_r <= 1'b1;  // latch when icache accepts
+    end
+
+    // fence_i_drain_stall: wait for store buffer to drain before issuing FENCE.I CMO.
+    // (fence_stall covers only FENCE, not FENCE.I, so we need this separately.)
+    assign fence_i_drain_stall = is_fence_i_mem && mem_valid && sb_store_pending;
+
+    // fence_i_cmo_stall: wait until icache accepts the FENCE.I CMO.
+    // Uses cmo_sent_r (registered) to avoid combinational loop through icache.cmo_ready.
+    assign fence_i_cmo_stall = is_fence_i_mem && mem_valid && !sb_store_pending && !cmo_sent_r;
+
+    // cbo_cmo_stall: stall CBO in MEM until icache CMO accepted.
+    assign cbo_cmo_stall = is_cbo_mem && mem_valid && !cmo_sent_r;
+
+    assign mem_wb_stall = load_stall || store_stall || (is_amo_mem && amo_in_progress) || fence_stall ||
+                          fence_i_drain_stall || fence_i_cmo_stall || cbo_cmo_stall;
+
+    // ====== I-Cache CMO Outputs ======
+    // CMO opcodes (must match localparams in rv32_icache.sv)
+    localparam logic [1:0] ICACHE_CMO_INVAL     = 2'b00;  // Invalidate specific cache line
+    localparam logic [1:0] ICACHE_CMO_FLUSH_ALL = 2'b11;  // Flush entire cache (FENCE.I)
+
+    // Drive CMO request when FENCE.I has drained stores and CMO not yet sent, or CBO reaches MEM.
+    // icache_cmo_valid deasserts once cmo_sent_r=1, so the icache sees exactly one pulse.
+    assign icache_cmo_valid = (is_fence_i_mem && mem_valid && !sb_store_pending && !cmo_sent_r) ||
+                              (is_cbo_mem     && mem_valid && !cmo_sent_r);
+    assign icache_cmo_op    = is_fence_i_mem ? ICACHE_CMO_FLUSH_ALL : ICACHE_CMO_INVAL;
+    assign icache_cmo_addr  = is_fence_i_mem ? 32'h0 : alu_result_mem;  // cbo: use rs1 address
 
     // Debug mem/wb stall reasons
     always @(posedge clk) begin

@@ -392,7 +392,7 @@ module rv32_alu #(
                 if (rst_n) begin
                     if (is_div_op && !div_active && !div_valid &&
                         !div_by_zero && !signed_ovf) begin
-                        `DGB2(("[DIV_START] alu_op=%0d a=%h b=%h abs_a=%h abs_b=%h clz=%0d total=%0d q_init=%h neg_q=%b neg_r=%b",
+                        `DBG2(("[DIV_START] alu_op=%0d a=%h b=%h abs_a=%h abs_b=%h clz=%0d total=%0d q_init=%h neg_q=%b neg_r=%b",
                                  alu_op, operand_a, operand_b,
                                  abs_a, abs_b, clz_a, 6'd32 - clz_a,
                                  abs_a << clz_a,

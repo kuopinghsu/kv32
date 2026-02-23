@@ -258,8 +258,12 @@ int main(void) {
     puts("  Triggering software interrupt via MSIP...\n");
     *(volatile uint32_t*)MSIP = 1;
 
-    // Small delay for interrupt to be processed
-    for (int i = 0; i < 500; i++) {
+    // Wait for the interrupt to be processed, with a timeout.
+    // Use software_interrupt_count as the exit condition (same pattern as the
+    // timer test) so that if the interrupt fires mid-loop and corrupts the
+    // loop counter register (caller-saved, not preserved by the ISR), the loop
+    // still exits on the very next iteration rather than spinning ~32M times.
+    for (volatile uint32_t timeout = 0; timeout < 50000 && software_interrupt_count == 0; timeout++) {
         asm volatile("nop");
     }
 

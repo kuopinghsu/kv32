@@ -42,12 +42,16 @@ module axi_memory #(
 
     // Read Address Channel
     input  logic [ADDR_WIDTH-1:0]   axi_araddr,
+    input  logic [7:0]              axi_arlen,
+    input  logic [2:0]              axi_arsize,
+    input  logic [1:0]              axi_arburst,
     input  logic                    axi_arvalid,
     output logic                    axi_arready,
 
     // Read Data Channel
     output logic [DATA_WIDTH-1:0]   axi_rdata,
     output logic [1:0]              axi_rresp,
+    output logic                    axi_rlast,
     output logic                    axi_rvalid,
     input  logic                    axi_rready
 );
@@ -140,6 +144,7 @@ module axi_memory #(
         logic [ADDR_WIDTH-1:0] addr;
         logic [DATA_WIDTH-1:0] data;
         logic [1:0]            resp;
+        logic                  is_last;  // rlast flag (last beat of a burst)
         logic                  valid;
     } read_pipeline_t;
 
@@ -404,8 +409,65 @@ module axi_memory #(
     assign read_pipe_busy = (read_stages_occupied >= MAX_READ_STAGES);
     assign read_can_accept = MEM_DUAL_PORT ? !read_pipe_busy : (arb_read_grant && !read_pipe_busy);
 
+    // ============================================================================
+    // Burst Expansion State Machine
+    // ============================================================================
+    // When an AR with arlen>0 is accepted, the subsequent (arlen) beats are
+    // generated internally without a new AR handshake.
+    logic        burst_active;        // A multi-beat burst is being expanded
+    logic [31:0] burst_addr;          // Current burst word address
+    logic [7:0]  burst_remaining;     // Remaining beats to issue (after first)
+    logic [1:0]  burst_type;          // Captured arburst (INCR or WRAP)
+    logic [7:0]  burst_total_len;     // Captured arlen
+    logic [31:0] burst_wrap_mask;     // Wrap boundary mask
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            burst_active    <= 1'b0;
+            burst_addr      <= '0;
+            burst_remaining <= '0;
+            burst_type      <= '0;
+            burst_total_len <= '0;
+            burst_wrap_mask <= '0;
+        end else begin
+            if (axi_arvalid && axi_arready && axi_arlen != 8'h0) begin
+                // New burst: record parameters, first beat is issued by pipeline logic
+                burst_active    <= 1'b1;
+                burst_type      <= axi_arburst;
+                burst_total_len <= axi_arlen;
+                // Wrap mask: (arlen+1) * 4 bytes - wraps at cache-line boundary
+                burst_wrap_mask <= 32'((int'(axi_arlen) + 1) * 4 - 1);
+                // Address of second beat (increment from first)
+                if (axi_arburst == 2'b10) begin  // WRAP
+                    // Word-increment within the wrap window
+                    automatic logic [31:0] wrap_mask_v;
+                    wrap_mask_v = 32'((int'(axi_arlen) + 1) * 4 - 1);
+                    burst_addr <= (axi_araddr & ~wrap_mask_v) |
+                                  ((axi_araddr + 32'd4) & wrap_mask_v);
+                end else begin  // INCR
+                    burst_addr <= axi_araddr + 32'd4;
+                end
+                burst_remaining <= axi_arlen;  // beats remaining after first
+            end else if (burst_active && !read_pipe_busy) begin
+                // Issue the next burst beat when pipeline has space
+                burst_remaining <= burst_remaining - 8'h1;
+                if (burst_remaining == 8'h1) begin
+                    burst_active <= 1'b0;  // last beat being issued now
+                end
+                // Advance address
+                if (burst_type == 2'b10) begin  // WRAP
+                    burst_addr <= (burst_addr & ~burst_wrap_mask) |
+                                  ((burst_addr + 32'd4) & burst_wrap_mask);
+                end else begin  // INCR
+                    burst_addr <= burst_addr + 32'd4;
+                end
+            end
+        end
+    end
+
+    // Pipeline can accept new AR only when not expanding a burst
     // AXI read address ready - accept if outstanding limit not reached AND pipeline has space
-    assign axi_arready = !read_limit_reached && !read_pipe_busy;
+    assign axi_arready = !read_limit_reached && !read_pipe_busy && !burst_active;
     // Track AR/R channel handshakes and outstanding reads
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -479,10 +541,21 @@ module axi_memory #(
             end
 
             // Accept new request into available stage
-            if (axi_arvalid && axi_arready) begin
-                automatic logic [31:0] word_addr = ((axi_araddr - BASE_ADDR) & (MEM_SIZE - 1)) & ~32'h3;
-                automatic logic [31:0] read_value;
-                automatic int target_stage;
+            // Accepts both fresh AR handshakes (arvalid&&arready) and
+            // burst continuation beats (burst_active && pipeline has space).
+            if ((axi_arvalid && axi_arready) || (burst_active && !read_pipe_busy)) begin
+                automatic logic [31:0] raw_addr;
+                automatic logic        this_is_last;
+                automatic int          target_stage;
+                raw_addr = (axi_arvalid && axi_arready) ? axi_araddr : burst_addr;
+                // is_last: true when this is the final beat of the transaction
+                if (axi_arvalid && axi_arready) begin
+                    // Single-beat (arlen==0) or first beat of burst that has only 1 beat
+                    this_is_last = (axi_arlen == 8'h0);
+                end else begin
+                    // Burst continuation: last when only 1 remaining beat left
+                    this_is_last = (burst_remaining == 8'h1);
+                end
 
                 // For 1-cycle latency, go directly to output stage if it's becoming free
                 // Otherwise, insert at the first free position
@@ -493,14 +566,18 @@ module axi_memory #(
                 end
 
                 if (target_stage >= 0) begin
-                    read_pipe[target_stage].valid <= 1'b1;
-                    read_pipe[target_stage].addr <= axi_araddr;
-                    if (axi_araddr < BASE_ADDR || axi_araddr >= (BASE_ADDR + MEM_SIZE)) begin
+                    automatic logic [31:0] word_addr;
+                    automatic logic [31:0] read_value;
+                    word_addr  = (raw_addr - BASE_ADDR) & (MEM_SIZE - 1) & ~32'h3;
+                    read_pipe[target_stage].valid   <= 1'b1;
+                    read_pipe[target_stage].addr    <= raw_addr;
+                    read_pipe[target_stage].is_last <= this_is_last;
+                    if (raw_addr < BASE_ADDR || raw_addr >= (BASE_ADDR + MEM_SIZE)) begin
                         read_pipe[target_stage].resp <= 2'b10;
                         read_pipe[target_stage].data <= 32'hDEADBEEF;
                         if (ENABLE_MEM_TRACE) begin
                             $display("[AXI READ ERROR] addr=0x%08x out of range [0x%08x - 0x%08x]",
-                                     axi_araddr, BASE_ADDR, BASE_ADDR + MEM_SIZE);
+                                     raw_addr, BASE_ADDR, BASE_ADDR + MEM_SIZE);
                         end
                     end else begin
                         read_value = {mem[(word_addr + 3) & (MEM_SIZE-1)],
@@ -511,7 +588,7 @@ module axi_memory #(
                         read_pipe[target_stage].data <= read_value;
                         if (ENABLE_MEM_TRACE) begin
                             $display("[AXI_MEM READ ] addr=0x%08x data=0x%08x [bytes: %02x %02x %02x %02x]",
-                                     axi_araddr, read_value,
+                                     raw_addr, read_value,
                                      mem[word_addr],
                                      mem[(word_addr + 1) & (MEM_SIZE-1)],
                                      mem[(word_addr + 2) & (MEM_SIZE-1)],
@@ -525,8 +602,9 @@ module axi_memory #(
 
     // Read data channel outputs
     assign axi_rvalid = read_pipe[0].valid;
-    assign axi_rdata = read_pipe[0].data;
-    assign axi_rresp = read_pipe[0].resp;
+    assign axi_rdata  = read_pipe[0].data;
+    assign axi_rresp  = read_pipe[0].resp;
+    assign axi_rlast  = read_pipe[0].valid && read_pipe[0].is_last;
 
     // ============================================================================
     // One-Port Memory Arbitration (only used when DUAL_PORT=0)

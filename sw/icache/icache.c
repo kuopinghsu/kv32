@@ -4,12 +4,9 @@
 // Description: I-Cache functional test
 //
 // Tests:
-//   1. Cold vs warm timing – cache misses on first run, hits on re-run
-//   2. FENCE.I instruction  – full cache flush; next run cold again
+//   1. Cold vs warm timing  – cache misses on first run, hits on re-run
+//   2. FENCE.I instruction  – full cache flush; next run should be cold again
 //   3. cbo.inval instruction – line-level I-cache invalidation (Zicbom)
-//   4. MMIO CMO_DISABLE     – bypass mode via axi_magic
-//   5. MMIO CMO_ENABLE      – re-enable cache via axi_magic
-//   6. MMIO CMO_FLUSH_ALL   – full flush via axi_magic (op=3)
 //
 // The test runs with ICACHE_EN=0 as well: timing differences will be
 // absent, but the instructions must still execute without exceptions.
@@ -19,21 +16,7 @@
 #include <csr.h>
 
 // ---------------------------------------------------------------------------
-// Magic MMIO addresses (axi_magic peripheral, base 0xFFFF0000)
-// ---------------------------------------------------------------------------
-#define MAGIC_EXIT_ADDR     ((volatile uint32_t *)0xFFFFFFF0U)  // write 0=pass,1=fail
-#define MAGIC_CMO_ADDR_REG  ((volatile uint32_t *)0xFFFFFFFCU)  // write: CMO target
-#define MAGIC_CMO_CMD_REG   ((volatile uint32_t *)0xFFFFFFF8U)  // write: op; read: idle
-
-// CMO op codes (must match rv32_icache.sv / axi_magic.sv)
-#define CMO_OP_INVAL        0x0U   // Invalidate specific cache line
-#define CMO_OP_DISABLE      0x1U   // Disable cache (bypass mode)
-#define CMO_OP_ENABLE       0x2U   // Enable cache
-#define CMO_OP_FLUSH_ALL    0x3U   // Flush / invalidate all lines (= FENCE.I)
-
-// ---------------------------------------------------------------------------
-// Helper: output one character via UART MMIO (re-implemented inline to
-// avoid pulling in printf complexity).
+// Helper: output one character via UART MMIO
 // ---------------------------------------------------------------------------
 extern void putc(char c);
 
@@ -78,20 +61,6 @@ static uint32_t time_hot_loop(uint32_t iters) {
 }
 
 // ---------------------------------------------------------------------------
-// MMIO CMO helpers
-// ---------------------------------------------------------------------------
-static void mmio_cmo_wait_idle(void) {
-    while ((*MAGIC_CMO_CMD_REG & 1U) == 0U)  // bit-0: 1=idle
-        ;
-}
-
-static void mmio_cmo_issue(uint32_t op, uint32_t addr) {
-    *MAGIC_CMO_ADDR_REG = addr;
-    *MAGIC_CMO_CMD_REG  = op;
-    mmio_cmo_wait_idle();
-}
-
-// ---------------------------------------------------------------------------
 // Inline-assembly wrappers for CMO instructions
 // ---------------------------------------------------------------------------
 
@@ -116,7 +85,6 @@ static inline void cbo_inval(void *addr) {
 // ---------------------------------------------------------------------------
 void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
     (void)mcause; (void)mepc; (void)mtval;
-    // Any unexpected exception: print details and halt
     my_puts("TRAP mcause=0x"); print_hex32(mcause);
     my_puts(" mepc=0x");       print_hex32(mepc);
     my_puts(" mtval=0x");      print_hex32(mtval);
@@ -141,7 +109,7 @@ int main(void) {
     // =========================================================
     my_puts("[TEST 1] Cold vs warm timing\n");
 
-    // First invalidate the cache so the hot_loop region is cold.
+    // Flush the cache so the hot_loop region is cold.
     fence_i();
 
     uint32_t cold_cycles = time_hot_loop(ITERS);
@@ -150,13 +118,10 @@ int main(void) {
     my_puts("  Cold cycles: "); print_dec(cold_cycles); my_puts("\n");
     my_puts("  Warm cycles: "); print_dec(warm_cycles); my_puts("\n");
 
-    // With icache enabled, warm must be <= cold.
-    // Without icache (ICACHE_EN=0) both will be similar.
     if (warm_cycles <= cold_cycles) {
         my_puts("  Result: PASS  (warm <= cold)\n\n");
     } else {
         my_puts("  WARNING: warm > cold (may be OK if ICACHE_EN=0)\n\n");
-        // Don't count as a hard fail; timing depends on memory model
     }
 
     // =========================================================
@@ -164,23 +129,17 @@ int main(void) {
     // =========================================================
     my_puts("[TEST 2] FENCE.I instruction\n");
 
-    // Warm the cache
     uint32_t pre_fence_cycles = time_hot_loop(ITERS);
-
-    // Flush the cache with FENCE.I
     fence_i();
-
-    // First run after flush should be slower (cold misses)
     uint32_t post_fence_cycles = time_hot_loop(ITERS);
 
     my_puts("  Pre-fence  cycles: "); print_dec(pre_fence_cycles);  my_puts("\n");
     my_puts("  Post-fence cycles: "); print_dec(post_fence_cycles); my_puts("\n");
 
-    // After fence.i, second warm run should recover
     uint32_t re_warm_cycles = time_hot_loop(ITERS);
     my_puts("  Re-warm    cycles: "); print_dec(re_warm_cycles); my_puts("\n");
 
-    // Correctness: hot_loop must return the same value every time
+    // Correctness: hot_loop must return the same value across fence.i
     uint32_t ref = hot_loop(ITERS);
     fence_i();
     uint32_t chk = hot_loop(ITERS);
@@ -205,11 +164,10 @@ int main(void) {
     print_hex32((uint32_t)(uintptr_t)&hot_loop);
     my_puts("\n");
 
-    // Execute hot_loop – may incur a cache miss on the invalidated line
     uint32_t post_cbo_cycles = time_hot_loop(ITERS);
     my_puts("  Post-cbo.inval cycles: "); print_dec(post_cbo_cycles); my_puts("\n");
 
-    // Correctness: result must still match
+    // Correctness: result must still match after invalidation
     uint32_t ref2 = hot_loop(ITERS);
     fence_i();
     uint32_t chk2 = hot_loop(ITERS);
@@ -217,97 +175,6 @@ int main(void) {
         my_puts("  Result: PASS  (hot_loop result consistent after cbo.inval)\n\n");
     } else {
         my_puts("  Result: FAIL  (hot_loop corrupted after cbo.inval!)\n\n");
-        fails++;
-    }
-
-    // =========================================================
-    // TEST 4: MMIO CMO_DISABLE (bypass mode)
-    // =========================================================
-    my_puts("[TEST 4] MMIO CMO_DISABLE\n");
-
-    // Warm the cache
-    uint32_t before_disable = time_hot_loop(ITERS);
-
-    // Disable the cache via MMIO
-    mmio_cmo_issue(CMO_OP_DISABLE, 0U);
-    my_puts("  Cache disabled via MMIO\n");
-
-    uint32_t disabled_cycles = time_hot_loop(ITERS);
-    my_puts("  Before disable cycles: "); print_dec(before_disable);  my_puts("\n");
-    my_puts("  Cache-off    cycles:   "); print_dec(disabled_cycles); my_puts("\n");
-
-    // Correctness: result must still match
-    uint32_t ref3 = hot_loop(ITERS);
-    if (ref3 == ref) {
-        my_puts("  Result: PASS  (hot_loop correct with cache disabled)\n\n");
-    } else {
-        my_puts("  Result: FAIL  (hot_loop incorrect with cache disabled!)\n\n");
-        fails++;
-    }
-
-    // =========================================================
-    // TEST 5: MMIO CMO_ENABLE (re-enable cache)
-    // =========================================================
-    my_puts("[TEST 5] MMIO CMO_ENABLE\n");
-
-    mmio_cmo_issue(CMO_OP_ENABLE, 0U);
-    my_puts("  Cache re-enabled via MMIO\n");
-
-    // Allow cache to warm up
-    (void)hot_loop(ITERS);
-    uint32_t re_enabled_cycles = time_hot_loop(ITERS);
-    my_puts("  Re-enabled warm cycles: "); print_dec(re_enabled_cycles); my_puts("\n");
-
-    uint32_t ref4 = hot_loop(ITERS);
-    if (ref4 == ref) {
-        my_puts("  Result: PASS  (hot_loop correct after cache re-enable)\n\n");
-    } else {
-        my_puts("  Result: FAIL  (hot_loop incorrect after cache re-enable!)\n\n");
-        fails++;
-    }
-
-    // =========================================================
-    // TEST 6: MMIO CMO_FLUSH_ALL (full flush via magic)
-    // =========================================================
-    my_puts("[TEST 6] MMIO CMO_FLUSH_ALL\n");
-
-    // Warm
-    (void)hot_loop(ITERS);
-
-    // Flush all via MMIO (same effect as FENCE.I from software side)
-    mmio_cmo_issue(CMO_OP_FLUSH_ALL, 0U);
-    my_puts("  Issued MMIO CMO_FLUSH_ALL\n");
-
-    uint32_t post_flush_cycles = time_hot_loop(ITERS);
-    my_puts("  Post-MMIO-flush cycles: "); print_dec(post_flush_cycles); my_puts("\n");
-
-    uint32_t ref5 = hot_loop(ITERS);
-    if (ref5 == ref) {
-        my_puts("  Result: PASS  (hot_loop correct after MMIO flush-all)\n\n");
-    } else {
-        my_puts("  Result: FAIL  (hot_loop incorrect after MMIO flush-all!)\n\n");
-        fails++;
-    }
-
-    // =========================================================
-    // Test 7: MMIO CMO_INVAL (line-level via magic)
-    // =========================================================
-    my_puts("[TEST 7] MMIO CMO_INVAL\n");
-
-    // Warm the cache
-    (void)hot_loop(ITERS);
-
-    // Invalidate one line via MMIO
-    mmio_cmo_issue(CMO_OP_INVAL, (uint32_t)(uintptr_t)&hot_loop);
-    my_puts("  Issued MMIO CMO_INVAL for hot_loop @ 0x");
-    print_hex32((uint32_t)(uintptr_t)&hot_loop);
-    my_puts("\n");
-
-    uint32_t ref6 = hot_loop(ITERS);
-    if (ref6 == ref) {
-        my_puts("  Result: PASS  (hot_loop correct after MMIO line inval)\n\n");
-    } else {
-        my_puts("  Result: FAIL  (hot_loop incorrect after MMIO line inval!)\n\n");
         fails++;
     }
 

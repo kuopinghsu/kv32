@@ -20,6 +20,7 @@ endif
 # Project directories
 RTL_DIR = rtl
 CORE_DIR = $(RTL_DIR)/core
+MEM_DIR  = $(RTL_DIR)/memories
 TB_DIR = testbench
 SIM_DIR = sim
 SW_DIR = sw
@@ -74,6 +75,7 @@ VERILATOR_FLAGS += -sv --timing
 VERILATOR_FLAGS += --top-module tb_rv32_soc
 VERILATOR_FLAGS += -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNUSEDSIGNAL
 VERILATOR_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM
+VERILATOR_FLAGS += -I$(MEM_DIR)
 
 # Assertion control (ASSERT=1 enables, ASSERT=0 disables)
 ifndef ASSERT
@@ -115,15 +117,35 @@ ifdef FAST_DIV
   VERILATOR_FLAGS += -pvalue+FAST_DIV=$(FAST_DIV)
 endif
 
+# I-cache: ICACHE_EN=0 disables the cache (uses mem_axi_ro bypass), default=1
+ifdef ICACHE_EN
+  VERILATOR_FLAGS += -pvalue+ICACHE_EN=$(ICACHE_EN)
+endif
+ifdef ICACHE_SIZE
+  VERILATOR_FLAGS += -pvalue+ICACHE_SIZE=$(ICACHE_SIZE)
+endif
+ifdef ICACHE_LINE_SIZE
+  VERILATOR_FLAGS += -pvalue+ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE)
+endif
+ifdef ICACHE_WAYS
+  VERILATOR_FLAGS += -pvalue+ICACHE_WAYS=$(ICACHE_WAYS)
+endif
+
 # Stamp file to detect compile-time parameter changes and force rebuild of rv32soc.
 # Each variable that is passed to Verilator at elaboration time must be listed here.
 # When any value differs from the previous build the stamp file is updated, which
 # makes rv32soc appear out-of-date and triggers a fresh Verilator elaboration.
 FAST_MUL     ?= 1
 FAST_DIV     ?= 1
+ICACHE_EN    ?= 1
+ICACHE_SIZE  ?= 4096
+ICACHE_LINE_SIZE ?= 64
+ICACHE_WAYS  ?= 2
 COVERAGE     ?= 0
 DEBUG        ?=
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ASSERT=$(ASSERT) DEBUG=$(DEBUG) COVERAGE=$(COVERAGE)
+# Pass ICACHE_EN value to C++ testbench so it can gate icache stats printing
+VERILATOR_FLAGS += -CFLAGS "-DICACHE_EN=$(ICACHE_EN)"
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) COVERAGE=$(COVERAGE)
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
 
 # RTL source files
@@ -133,6 +155,7 @@ RTL_SOURCES = \
 	$(RTL_DIR)/axi_pkg.sv \
 	$(filter-out $(CORE_DIR)/rv32_pkg.sv, $(wildcard $(CORE_DIR)/*.sv)) \
 	$(filter-out $(RTL_DIR)/axi_pkg.sv, $(wildcard $(RTL_DIR)/*.sv)) \
+	$(wildcard $(MEM_DIR)/*.sv) \
 	$(TB_DIR)/axi_memory.sv \
 	$(TB_DIR)/axi_monitor.sv \
 	$(TB_DIR)/uart_loopback.sv \
@@ -148,10 +171,8 @@ BUILD_TARGET = $(BUILD_DIR)/rv32soc
 
 .PHONY: all build-rtl build-sim rtl-build sim-build clean clean-tests run waves help info rtl-% sim-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
-# Default target - run all RTL tests
-all: rtl-all
-
-all-sim: sim-all
+# Default target - run all tests
+all: rtl-all sim-all compare-all freertos-compare-simple arch-test-all arch-test-sim
 
 # Build RTL with Verilator
 build-rtl: $(BUILD_TARGET)

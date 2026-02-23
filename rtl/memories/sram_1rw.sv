@@ -33,8 +33,6 @@
 //                           example templates are provided in the comments.
 // =============================================================================
 
-`timescale 1ns/1ps
-
 module sram_1rw #(
     parameter int DEPTH = 256,  // number of words
     parameter int WIDTH = 32    // bits per word

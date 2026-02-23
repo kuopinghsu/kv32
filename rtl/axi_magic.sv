@@ -193,8 +193,8 @@ module axi_magic (
 
                     if (axi_arvalid && axi_arready) begin
                         axi_arready <= 1'b0;
-                        axi_rdata <= 32'h0;  // Always return 0
-                        axi_rresp <= 2'b00;  // OKAY
+                        axi_rdata  <= 32'h0;
+                        axi_rresp  <= 2'b00;  // OKAY
                         axi_rvalid <= 1'b1;
                         read_state <= READ_RESP;
                     end

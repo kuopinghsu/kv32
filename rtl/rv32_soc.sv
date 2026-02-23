@@ -41,12 +41,16 @@
 // ============================================================================
 
 module rv32_soc #(
-    parameter CLK_FREQ = 100_000_000,    // System clock frequency in Hz
-    parameter BAUD_RATE = 25_000_000,    // UART baud rate (max = CLK_FREQ/4)
-    parameter IB_DEPTH = 4,              // Instruction buffer depth (outstanding fetches); must be power-of-2 >= effective_latency+1
-    parameter SB_DEPTH = 2,              // Store buffer depth (buffered stores)
-    parameter FAST_MUL = 1,              // Multiply mode: 1=combinatorial, 0=serial
-    parameter FAST_DIV = 1               // Division mode: 1=combinatorial, 0=serial
+    parameter CLK_FREQ          = 100_000_000,      // System clock frequency in Hz
+    parameter BAUD_RATE         = 25_000_000,       // UART baud rate (max = CLK_FREQ/4)
+    parameter IB_DEPTH          = 4,                // Instruction buffer depth (outstanding fetches); must be power-of-2 >= effective_latency+1
+    parameter SB_DEPTH          = 2,                // Store buffer depth (buffered stores)
+    parameter FAST_MUL          = 1,                // Multiply mode: 1=combinatorial, 0=serial
+    parameter FAST_DIV          = 1,                // Division mode: 1=combinatorial, 0=serial
+    parameter ICACHE_EN         = 1,                // Instruction cache: 1=enabled, 0=bypass (uses mem_axi_ro)
+    parameter ICACHE_SIZE       = 4096,             // I-cache total bytes
+    parameter ICACHE_LINE_SIZE  = 64,               // Cache line size in bytes
+    parameter ICACHE_WAYS       = 2                 // Cache associativity (number of ways)
 )(
     input  logic clk,
     input  logic rst_n,
@@ -86,11 +90,15 @@ module rv32_soc #(
     output logic [31:0] m_axi_araddr,
     output logic        m_axi_arvalid,
     input  logic        m_axi_arready,
+    output logic [7:0]  m_axi_arlen,     // Burst length (icache cache-line fills)
+    output logic [2:0]  m_axi_arsize,    // Burst size
+    output logic [1:0]  m_axi_arburst,   // Burst type (INCR/WRAP)
 
     input  logic [31:0] m_axi_rdata,
     input  logic [1:0]  m_axi_rresp,
     input  logic        m_axi_rvalid,
     output logic        m_axi_rready,
+    input  logic        m_axi_rlast,     // Last beat of burst (from axi_memory)
 
     // Performance counters
     output logic [63:0] cycle_count,
@@ -104,7 +112,14 @@ module rv32_soc #(
     // Trace-compare mode: when asserted by the testbench (+TRACE), cycle/time
     // CSR reads in the core return minstret instead of mcycle so that the
     // cycle counter is pipeline-stall-independent and matches the software sim.
-    input  logic        trace_mode
+    input  logic        trace_mode,
+    // I-cache performance counters (zero when ICACHE_EN=0)
+    output logic [31:0] icache_perf_req_cnt,
+    output logic [31:0] icache_perf_hit_cnt,
+    output logic [31:0] icache_perf_miss_cnt,
+    output logic [31:0] icache_perf_bypass_cnt,
+    output logic [31:0] icache_perf_fill_cnt,
+    output logic [31:0] icache_perf_cmo_cnt
 `endif
 );
 
@@ -147,6 +162,10 @@ module rv32_soc #(
     logic [axi_pkg::AXI_ID_WIDTH-1:0] imem_axi_rid;       // Read data ID
     logic                     imem_axi_rvalid;     // Read data valid
     logic                     imem_axi_rready;     // Read data ready
+    logic [7:0]               imem_axi_arlen;      // Burst length (icache only)
+    logic [2:0]               imem_axi_arsize;     // Burst size
+    logic [1:0]               imem_axi_arburst;    // Burst type (INCR/WRAP)
+    logic                     imem_axi_rlast;      // Last beat of burst (icache only)
 
     // ========================================================================
     // Data Memory AXI Bridge Signals (Read/Write)
@@ -194,11 +213,15 @@ module rv32_soc #(
     logic [axi_pkg::AXI_ID_WIDTH-1:0] arb_axi_arid;       // Read address ID
     logic                     arb_axi_arvalid;
     logic                     arb_axi_arready;
+    logic [7:0]               arb_axi_arlen;       // Burst length (from arbiter to xbar)
+    logic [2:0]               arb_axi_arsize;      // Burst size
+    logic [1:0]               arb_axi_arburst;     // Burst type
     logic [31:0]              arb_axi_rdata;
     logic [1:0]               arb_axi_rresp;
     logic [axi_pkg::AXI_ID_WIDTH-1:0] arb_axi_rid;        // Read data ID
     logic                     arb_axi_rvalid;
     logic                     arb_axi_rready;
+    logic                     arb_axi_rlast;       // Last beat of burst
 
     // ========================================================================
     // AXI Interconnect <-> CLINT Signals
@@ -315,6 +338,12 @@ module rv32_soc #(
     logic        magic_axi_rvalid;
     logic        magic_axi_rready;
 
+    // CMO sideband from CPU core (FENCE.I / cbo.inval instructions)
+    logic        core_cmo_valid;     // Core CMO request valid
+    logic [1:0]  core_cmo_op;        // Core CMO operation
+    logic [31:0] core_cmo_addr;      // Core CMO target address
+    logic        core_cmo_ready;     // Acknowledge back to core
+
     // ========================================================================
     // Interrupt Signals
     // ========================================================================
@@ -375,7 +404,12 @@ module rv32_soc #(
         .instret_count(instret_count),
         .stall_count(stall_count),
         .first_retire_cycle(first_retire_cycle),
-        .last_retire_cycle(last_retire_cycle)
+        .last_retire_cycle(last_retire_cycle),
+
+        .icache_cmo_valid(core_cmo_valid),
+        .icache_cmo_op(core_cmo_op),
+        .icache_cmo_addr(core_cmo_addr),
+        .icache_cmo_ready(core_cmo_ready)
 
 `ifndef SYNTHESIS
         ,.timeout_error(timeout_error)
@@ -389,37 +423,121 @@ module rv32_soc #(
     );
 
     // ========================================================================
-    // Instruction Memory to AXI Bridge (Read-Only)
+    // Instruction Memory Interface: I-Cache or Simple AXI Bridge
     // ========================================================================
-    // Converts core's simple read request/response to AXI4 AR/R channels with ID support
-    // Only implements read path since instruction fetches are read-only
-    mem_axi_ro #(
-        .BRIDGE_NAME("IMEM_BRIDGE"),
-        .OUTSTANDING_DEPTH(IB_DEPTH)  // Match instruction buffer depth (conservative limit)
-    ) imem_bridge (
-        .clk(clk),
-        .rst_n(rst_n),
+    // ICACHE_EN=1: rv32_icache (AXI4 burst master, WPL=LINE_SIZE/4 beats)
+    // ICACHE_EN=0: mem_axi_ro  (single-beat AXI4-Lite bridge, legacy path)
+    generate
+        if (ICACHE_EN) begin : g_icache
 
-        .mem_req_valid(imem_req_valid),
-        .mem_req_addr(imem_req_addr),
-        .mem_req_ready(imem_req_ready),
+            // CMO interface: connect core directly to icache.
+            logic        icache_cmo_ready_w;
 
-        .mem_resp_valid(imem_resp_valid),
-        .mem_resp_data(imem_resp_data),
-        .mem_resp_error(imem_resp_error),
-        .mem_resp_ready(imem_resp_ready),
+            assign core_cmo_ready = icache_cmo_ready_w;
 
-        .axi_araddr(imem_axi_araddr),
-        .axi_arid(imem_axi_arid),
-        .axi_arvalid(imem_axi_arvalid),
-        .axi_arready(imem_axi_arready),
+            rv32_icache #(
+                .CACHE_SIZE     (ICACHE_SIZE),
+                .CACHE_LINE_SIZE(ICACHE_LINE_SIZE),
+                .CACHE_WAYS     (ICACHE_WAYS)
+            ) icache (
+                .clk    (clk),
+                .rst_n  (rst_n),
 
-        .axi_rdata(imem_axi_rdata),
-        .axi_rresp(imem_axi_rresp),
-        .axi_rid(imem_axi_rid),
-        .axi_rvalid(imem_axi_rvalid),
-        .axi_rready(imem_axi_rready)
-    );
+                // CPU side
+                .imem_req_valid (imem_req_valid),
+                .imem_req_addr  (imem_req_addr),
+                .imem_req_ready (imem_req_ready),
+                .imem_resp_valid(imem_resp_valid),
+                .imem_resp_data (imem_resp_data),
+                .imem_resp_error(imem_resp_error),
+                .imem_resp_ready(imem_resp_ready),
+
+                // AXI4 burst master side
+                .axi_araddr  (imem_axi_araddr),
+                .axi_arvalid (imem_axi_arvalid),
+                .axi_arready (imem_axi_arready),
+                .axi_arlen   (imem_axi_arlen),
+                .axi_arsize  (imem_axi_arsize),
+                .axi_arburst (imem_axi_arburst),
+                /* verilator lint_off PINCONNECTEMPTY */
+                .axi_arcache (/* unused */),
+                .axi_arprot  (/* unused */),
+                /* verilator lint_on PINCONNECTEMPTY */
+                .axi_rdata   (imem_axi_rdata),
+                .axi_rresp   (imem_axi_rresp),
+                .axi_rvalid  (imem_axi_rvalid),
+                .axi_rlast   (imem_axi_rlast),
+                .axi_rready  (imem_axi_rready),
+
+                // CMO interface (core only)
+                .cmo_valid  (core_cmo_valid),
+                .cmo_addr   (core_cmo_addr),
+                .cmo_op     (core_cmo_op),
+                .cmo_ready  (icache_cmo_ready_w)
+`ifndef SYNTHESIS
+                ,.perf_req_cnt    (icache_perf_req_cnt)
+                ,.perf_hit_cnt    (icache_perf_hit_cnt)
+                ,.perf_miss_cnt   (icache_perf_miss_cnt)
+                ,.perf_bypass_cnt (icache_perf_bypass_cnt)
+                ,.perf_fill_cnt   (icache_perf_fill_cnt)
+                ,.perf_cmo_cnt    (icache_perf_cmo_cnt)
+`endif
+            );
+
+            // I-cache has no transaction-ID support; drive ID=0 on AR channel.
+            // imem_axi_rid is an arbiter output — icache does not use it.
+            assign imem_axi_arid = '0;
+
+        end else begin : g_no_icache
+
+            // Simple read-only AXI bridge (original behaviour)
+            mem_axi_ro #(
+                .BRIDGE_NAME("IMEM_BRIDGE"),
+                .OUTSTANDING_DEPTH(IB_DEPTH)
+            ) imem_bridge (
+                .clk(clk),
+                .rst_n(rst_n),
+
+                .mem_req_valid(imem_req_valid),
+                .mem_req_addr (imem_req_addr),
+                .mem_req_ready(imem_req_ready),
+
+                .mem_resp_valid(imem_resp_valid),
+                .mem_resp_data (imem_resp_data),
+                .mem_resp_error(imem_resp_error),
+                .mem_resp_ready(imem_resp_ready),
+
+                .axi_araddr (imem_axi_araddr),
+                .axi_arid   (imem_axi_arid),
+                .axi_arvalid(imem_axi_arvalid),
+                .axi_arready(imem_axi_arready),
+
+                .axi_rdata  (imem_axi_rdata),
+                .axi_rresp  (imem_axi_rresp),
+                .axi_rid    (imem_axi_rid),
+                .axi_rvalid (imem_axi_rvalid),
+                .axi_rready (imem_axi_rready)
+            );
+
+            // mem_axi_ro issues single-beat reads; provide fixed burst fields
+            assign imem_axi_arlen   = 8'h00;
+            assign imem_axi_arsize  = 3'b010;  // 4 bytes
+            assign imem_axi_arburst = 2'b01;   // INCR
+            // imem_axi_rlast is driven by the arbiter (m0_axi_rlast); no local assign needed
+
+            // No icache: CMO requests have nowhere to go; ack immediately
+            assign core_cmo_ready  = 1'b1;
+`ifndef SYNTHESIS
+            assign icache_perf_req_cnt    = '0;
+            assign icache_perf_hit_cnt    = '0;
+            assign icache_perf_miss_cnt   = '0;
+            assign icache_perf_bypass_cnt = '0;
+            assign icache_perf_fill_cnt   = '0;
+            assign icache_perf_cmo_cnt    = '0;
+`endif
+
+        end
+    endgenerate
 
     // ========================================================================
     // Data Memory to AXI Bridge (Read/Write)
@@ -486,15 +604,19 @@ module rv32_soc #(
         .rst_n(rst_n),
 
         // Master 0: Instruction memory (Read-Only) with ID
-        .m0_axi_araddr(imem_axi_araddr),
-        .m0_axi_arid(imem_axi_arid),
-        .m0_axi_arvalid(imem_axi_arvalid),
-        .m0_axi_arready(imem_axi_arready),
-        .m0_axi_rdata(imem_axi_rdata),
-        .m0_axi_rresp(imem_axi_rresp),
-        .m0_axi_rid(imem_axi_rid),
-        .m0_axi_rvalid(imem_axi_rvalid),
-        .m0_axi_rready(imem_axi_rready),
+        .m0_axi_araddr  (imem_axi_araddr),
+        .m0_axi_arid    (imem_axi_arid),
+        .m0_axi_arvalid (imem_axi_arvalid),
+        .m0_axi_arready (imem_axi_arready),
+        .m0_axi_arlen   (imem_axi_arlen),
+        .m0_axi_arsize  (imem_axi_arsize),
+        .m0_axi_arburst (imem_axi_arburst),
+        .m0_axi_rdata   (imem_axi_rdata),
+        .m0_axi_rresp   (imem_axi_rresp),
+        .m0_axi_rid     (imem_axi_rid),
+        .m0_axi_rvalid  (imem_axi_rvalid),
+        .m0_axi_rready  (imem_axi_rready),
+        .m0_axi_rlast   (imem_axi_rlast),
 
         // Master 1: Data memory (Read/Write) with ID
         .m1_axi_awaddr(dmem_axi_awaddr),
@@ -532,15 +654,19 @@ module rv32_soc #(
         .s_axi_bid(arb_axi_bid),
         .s_axi_bvalid(arb_axi_bvalid),
         .s_axi_bready(arb_axi_bready),
-        .s_axi_araddr(arb_axi_araddr),
-        .s_axi_arid(arb_axi_arid),
-        .s_axi_arvalid(arb_axi_arvalid),
-        .s_axi_arready(arb_axi_arready),
-        .s_axi_rdata(arb_axi_rdata),
-        .s_axi_rresp(arb_axi_rresp),
-        .s_axi_rid(arb_axi_rid),
-        .s_axi_rvalid(arb_axi_rvalid),
-        .s_axi_rready(arb_axi_rready)
+        .s_axi_araddr  (arb_axi_araddr),
+        .s_axi_arid    (arb_axi_arid),
+        .s_axi_arvalid (arb_axi_arvalid),
+        .s_axi_arready (arb_axi_arready),
+        .s_axi_arlen   (arb_axi_arlen),
+        .s_axi_arsize  (arb_axi_arsize),
+        .s_axi_arburst (arb_axi_arburst),
+        .s_axi_rdata   (arb_axi_rdata),
+        .s_axi_rresp   (arb_axi_rresp),
+        .s_axi_rid     (arb_axi_rid),
+        .s_axi_rvalid  (arb_axi_rvalid),
+        .s_axi_rready  (arb_axi_rready),
+        .s_axi_rlast   (arb_axi_rlast)
     );
 
     // ========================================================================
@@ -574,39 +700,47 @@ module rv32_soc #(
         .m_axi_bvalid(arb_axi_bvalid),
         .m_axi_bready(arb_axi_bready),
 
-        .m_axi_araddr(arb_axi_araddr),
-        .m_axi_arid(arb_axi_arid),
-        .m_axi_arvalid(arb_axi_arvalid),
-        .m_axi_arready(arb_axi_arready),
+        .m_axi_araddr  (arb_axi_araddr),
+        .m_axi_arid    (arb_axi_arid),
+        .m_axi_arvalid (arb_axi_arvalid),
+        .m_axi_arready (arb_axi_arready),
+        .m_axi_arlen   (arb_axi_arlen),
+        .m_axi_arsize  (arb_axi_arsize),
+        .m_axi_arburst (arb_axi_arburst),
 
-        .m_axi_rdata(arb_axi_rdata),
-        .m_axi_rresp(arb_axi_rresp),
-        .m_axi_rid(arb_axi_rid),
-        .m_axi_rvalid(arb_axi_rvalid),
-        .m_axi_rready(arb_axi_rready),
+        .m_axi_rdata   (arb_axi_rdata),
+        .m_axi_rresp   (arb_axi_rresp),
+        .m_axi_rid     (arb_axi_rid),
+        .m_axi_rvalid  (arb_axi_rvalid),
+        .m_axi_rready  (arb_axi_rready),
+        .m_axi_rlast   (arb_axi_rlast),
 
         // Slave 0: External RAM
-        .s0_axi_awaddr(m_axi_awaddr),
+        .s0_axi_awaddr (m_axi_awaddr),
         .s0_axi_awvalid(m_axi_awvalid),
         .s0_axi_awready(m_axi_awready),
 
-        .s0_axi_wdata(m_axi_wdata),
-        .s0_axi_wstrb(m_axi_wstrb),
-        .s0_axi_wvalid(m_axi_wvalid),
-        .s0_axi_wready(m_axi_wready),
+        .s0_axi_wdata  (m_axi_wdata),
+        .s0_axi_wstrb  (m_axi_wstrb),
+        .s0_axi_wvalid (m_axi_wvalid),
+        .s0_axi_wready (m_axi_wready),
 
-        .s0_axi_bresp(m_axi_bresp),
-        .s0_axi_bvalid(m_axi_bvalid),
-        .s0_axi_bready(m_axi_bready),
+        .s0_axi_bresp  (m_axi_bresp),
+        .s0_axi_bvalid (m_axi_bvalid),
+        .s0_axi_bready (m_axi_bready),
 
-        .s0_axi_araddr(m_axi_araddr),
+        .s0_axi_araddr (m_axi_araddr),
         .s0_axi_arvalid(m_axi_arvalid),
         .s0_axi_arready(m_axi_arready),
+        .s0_axi_arlen  (m_axi_arlen),
+        .s0_axi_arsize (m_axi_arsize),
+        .s0_axi_arburst(m_axi_arburst),
 
-        .s0_axi_rdata(m_axi_rdata),
-        .s0_axi_rresp(m_axi_rresp),
-        .s0_axi_rvalid(m_axi_rvalid),
-        .s0_axi_rready(m_axi_rready),
+        .s0_axi_rdata  (m_axi_rdata),
+        .s0_axi_rresp  (m_axi_rresp),
+        .s0_axi_rvalid (m_axi_rvalid),
+        .s0_axi_rready (m_axi_rready),
+        .s0_axi_rlast  (m_axi_rlast),
 
         // Slave 1: CLINT
         .s1_axi_awaddr(clint_axi_awaddr),
@@ -925,10 +1059,10 @@ module rv32_soc #(
         .axi_arvalid(magic_axi_arvalid),
         .axi_arready(magic_axi_arready),
 
-        .axi_rdata(magic_axi_rdata),
-        .axi_rresp(magic_axi_rresp),
-        .axi_rvalid(magic_axi_rvalid),
-        .axi_rready(magic_axi_rready)
+        .axi_rdata  (magic_axi_rdata),
+        .axi_rresp  (magic_axi_rresp),
+        .axi_rvalid (magic_axi_rvalid),
+        .axi_rready (magic_axi_rready)
     );
 
     // ========================================================================

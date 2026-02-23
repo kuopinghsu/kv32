@@ -1057,8 +1057,53 @@ void RV32Simulator::step() {
         }
         break;
     }
-    case 0x0F: { // FENCE
-        // NOP for simulation
+    case 0x0F: { // MISC-MEM (FENCE / FENCE.I / Zicbom CBO)
+        if (funct3 == 0x0) {
+            // FENCE — orders memory accesses.
+            // The simulator has no store buffer or write-combining, so this is a
+            // no-op.  All writes take effect immediately.
+        } else if (funct3 == 0x1) {
+            // FENCE.I — synchronise instruction and data streams.
+            // In hardware this flushes the I-cache.  The simulator has no cache,
+            // so all instruction fetches already see the latest memory state.
+            // No-op.
+        } else if (funct3 == 0x2) {
+            // Zicbom CBO instruction — cache block operation.
+            // The particular operation is encoded in imm[11:0] (bits[31:20]).
+            // rs1 holds the effective address of the cache block to operate on.
+            uint32_t cbo_op = (inst >> 20) & 0xFFF;
+            (void)rs1; // base address — not needed in sim (no cache)
+            switch (cbo_op) {
+                case 0x000:
+                    // cbo.inval rs1 — invalidate the cache line containing *rs1.
+                    // No-op: simulator has no I-cache.
+                    break;
+                case 0x001:
+                    // cbo.clean rs1 — write dirty data to memory for *rs1 line.
+                    // No-op: simulator writes through immediately.
+                    break;
+                case 0x002:
+                    // cbo.flush rs1 — write dirty data and invalidate *rs1 line.
+                    // No-op: simulator writes through and has no cache.
+                    break;
+                default:
+                    // Unknown CBO sub-operation — treat as illegal instruction.
+                    std::cerr << "Unknown CBO op 0x" << std::hex << cbo_op
+                              << " at PC 0x" << pc << std::endl;
+                    take_trap(CAUSE_ILLEGAL_INSTRUCTION, inst);
+                    untick_slaves();
+                    inst_count--; csr_mcycle--; csr_minstret--;
+                    return;
+            }
+        } else {
+            // Unknown MISC-MEM funct3 — illegal instruction.
+            std::cerr << "Unknown MISC-MEM funct3=0x" << std::hex << funct3
+                      << " at PC 0x" << pc << std::endl;
+            take_trap(CAUSE_ILLEGAL_INSTRUCTION, inst);
+            untick_slaves();
+            inst_count--; csr_mcycle--; csr_minstret--;
+            return;
+        }
         break;
     }
     case 0x73: { // System

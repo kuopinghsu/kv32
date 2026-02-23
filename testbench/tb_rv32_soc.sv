@@ -10,8 +10,12 @@
 
 /* verilator lint_off SYNCASYNCNET */
 module tb_rv32_soc #(
-    parameter int FAST_MUL = 1,  // Multiply mode: 1=combinatorial, 0=serial
-    parameter int FAST_DIV = 1   // Division mode: 1=combinatorial, 0=serial
+    parameter int FAST_MUL         = 1,     // Multiply mode: 1=combinatorial, 0=serial
+    parameter int FAST_DIV         = 1,     // Division mode: 1=combinatorial, 0=serial
+    parameter int ICACHE_EN        = 1,     // I-cache: 1=enabled, 0=bypass
+    parameter int ICACHE_SIZE      = 4096,  // I-cache total bytes
+    parameter int ICACHE_LINE_SIZE = 64,    // Cache line size in bytes
+    parameter int ICACHE_WAYS      = 2      // Cache associativity
 ) (
     input wire clk,
     input wire rst_n,
@@ -38,6 +42,13 @@ module tb_rv32_soc #(
     // the core return minstret instead of mcycle, making them pipeline-stall-
     // independent and matching what the software simulator returns.
     ,input  logic trace_mode
+    // I-cache performance counters (always present but zero when ICACHE_EN=0)
+    ,output logic [31:0] icache_perf_req_cnt
+    ,output logic [31:0] icache_perf_hit_cnt
+    ,output logic [31:0] icache_perf_miss_cnt
+    ,output logic [31:0] icache_perf_bypass_cnt
+    ,output logic [31:0] icache_perf_fill_cnt
+    ,output logic [31:0] icache_perf_cmo_cnt
 `endif
 );
 
@@ -55,10 +66,14 @@ module tb_rv32_soc #(
     logic [31:0] axi_araddr;
     logic        axi_arvalid;
     logic        axi_arready;
+    logic [7:0]  axi_arlen;    // Burst length
+    logic [2:0]  axi_arsize;   // Burst size
+    logic [1:0]  axi_arburst;  // Burst type
     logic [31:0] axi_rdata;
     logic [1:0]  axi_rresp;
     logic        axi_rvalid;
     logic        axi_rready;
+    logic        axi_rlast;    // Last beat of burst
 
     // Internal signals for testbench peripherals
     logic uart_tx_internal;     // SoC UART TX output
@@ -73,8 +88,12 @@ module tb_rv32_soc #(
 
     // Instantiate RISC-V SoC
     rv32_soc #(
-        .FAST_MUL(FAST_MUL),
-        .FAST_DIV(FAST_DIV)
+        .FAST_MUL       (FAST_MUL),
+        .FAST_DIV       (FAST_DIV),
+        .ICACHE_EN      (ICACHE_EN),
+        .ICACHE_SIZE    (ICACHE_SIZE),
+        .ICACHE_LINE_SIZE(ICACHE_LINE_SIZE),
+        .ICACHE_WAYS    (ICACHE_WAYS)
     ) dut (
         .clk(clk),
         .rst_n(rst_n),
@@ -103,13 +122,17 @@ module tb_rv32_soc #(
         .m_axi_bresp(axi_bresp),
         .m_axi_bvalid(axi_bvalid),
         .m_axi_bready(axi_bready),
-        .m_axi_araddr(axi_araddr),
-        .m_axi_arvalid(axi_arvalid),
-        .m_axi_arready(axi_arready),
-        .m_axi_rdata(axi_rdata),
-        .m_axi_rresp(axi_rresp),
-        .m_axi_rvalid(axi_rvalid),
-        .m_axi_rready(axi_rready),
+        .m_axi_araddr  (axi_araddr),
+        .m_axi_arvalid (axi_arvalid),
+        .m_axi_arready (axi_arready),
+        .m_axi_arlen   (axi_arlen),
+        .m_axi_arsize  (axi_arsize),
+        .m_axi_arburst (axi_arburst),
+        .m_axi_rdata   (axi_rdata),
+        .m_axi_rresp   (axi_rresp),
+        .m_axi_rvalid  (axi_rvalid),
+        .m_axi_rready  (axi_rready),
+        .m_axi_rlast   (axi_rlast),
         .cycle_count(cycle_count),
         .instret_count(instret_count),
         .stall_count(stall_count),
@@ -118,6 +141,12 @@ module tb_rv32_soc #(
 `ifndef SYNTHESIS
         ,.timeout_error(timeout_error)
         ,.trace_mode(trace_mode)
+        ,.icache_perf_req_cnt   (icache_perf_req_cnt)
+        ,.icache_perf_hit_cnt   (icache_perf_hit_cnt)
+        ,.icache_perf_miss_cnt  (icache_perf_miss_cnt)
+        ,.icache_perf_bypass_cnt(icache_perf_bypass_cnt)
+        ,.icache_perf_fill_cnt  (icache_perf_fill_cnt)
+        ,.icache_perf_cmo_cnt   (icache_perf_cmo_cnt)
 `endif
     );
 
@@ -163,13 +192,17 @@ module tb_rv32_soc #(
         .axi_bresp(axi_bresp),
         .axi_bvalid(axi_bvalid),
         .axi_bready(axi_bready),
-        .axi_araddr(axi_araddr),
+        .axi_araddr (axi_araddr),
         .axi_arvalid(axi_arvalid),
         .axi_arready(axi_arready),
-        .axi_rdata(axi_rdata),
-        .axi_rresp(axi_rresp),
-        .axi_rvalid(axi_rvalid),
-        .axi_rready(axi_rready)
+        .axi_arlen  (axi_arlen),
+        .axi_arsize (axi_arsize),
+        .axi_arburst(axi_arburst),
+        .axi_rdata  (axi_rdata),
+        .axi_rresp  (axi_rresp),
+        .axi_rvalid (axi_rvalid),
+        .axi_rready (axi_rready),
+        .axi_rlast  (axi_rlast)
     );
 
     // ========================================================================
