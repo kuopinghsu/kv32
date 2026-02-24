@@ -1,4 +1,4 @@
-// I2C Hardware Test - Tests I2C master controller at 0x02030000
+// I2C Hardware Test - Tests I2C master controller at 0x20010000
 // Tests I2C communication with 24C02-style EEPROM slave at address 0x50
 // EEPROM has 256 bytes initialized with pattern 0xA0 + address
 
@@ -10,7 +10,7 @@
 #define I2C_FENCE() __asm__ volatile ("fence" ::: "memory")
 
 // I2C peripheral registers
-#define I2C_BASE     0x02030000
+#define I2C_BASE     0x20010000
 #define I2C_CTRL     (*((volatile uint32_t*)(I2C_BASE + 0x00)))
 #define I2C_DIV      (*((volatile uint32_t*)(I2C_BASE + 0x04)))
 #define I2C_TX       (*((volatile uint32_t*)(I2C_BASE + 0x08)))

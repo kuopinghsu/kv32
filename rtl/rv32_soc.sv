@@ -6,7 +6,7 @@
 // Integrates all major components of the RISC-V SoC:
 //   - RV32IMA processor core (5-stage pipeline)
 //   - External 2MB RAM via AXI4-Lite
-//   - Memory-mapped peripherals (CLINT, UART, SPI, I2C, Magic)
+//   - Memory-mapped peripherals (CLINT, PLIC, UART, SPI, I2C, Magic)
 //   - AXI4-Lite interconnect infrastructure
 //
 // This is the top-level module that should be instantiated in testbenches
@@ -17,18 +17,20 @@
 //   - Separate instruction and data memory interfaces
 //   - AXI arbiter for read channel arbitration
 //   - Standard RISC-V CLINT timer with mtime/mtimecmp
+//   - PLIC (Platform-Level Interrupt Controller) placeholder
 //   - High-speed UART for serial I/O (up to 25 Mbaud)
 //   - SPI master controller for peripheral interfacing
 //   - I2C master controller for sensor interfacing
 //   - Magic addresses for simulation control
-//   - AXI4-Lite system bus with 1-to-6 interconnect
+//   - AXI4-Lite system bus with 1-to-7 interconnect
 //
 // Memory Map:
 //   0x8000_0000 - 0x801F_FFFF: RAM (2MB)
-//   0x0200_0000 - 0x0200_FFFF: CLINT
-//   0x0201_0000 - 0x0201_00FF: UART
-//   0x0202_0000 - 0x0202_00FF: SPI
-//   0x0203_0000 - 0x0203_00FF: I2C
+//   0x0200_0000 - 0x020B_FFFF: CLINT
+//   0x0C00_0000 - 0x0FFF_FFFF: PLIC
+//   0x2000_0000 - 0x2000_FFFF: UART
+//   0x2001_0000 - 0x2001_FFFF: I2C
+//   0x2002_0000 - 0x2002_FFFF: SPI
 //   0xFFFF_0000 - 0xFFFF_FFFF: Magic addresses
 //
 // Default Configuration:
@@ -68,10 +70,10 @@ module rv32_soc #(
     // I2C pins
     output logic        i2c_scl_o,
     input  logic        i2c_scl_i,
-    output logic        i2c_scl_t,
+    output logic        i2c_scl_oe,
     output logic        i2c_sda_o,
     input  logic        i2c_sda_i,
-    output logic        i2c_sda_t,
+    output logic        i2c_sda_oe,
 
     // External AXI4-Lite RAM interface (2MB)
     output logic [31:0] m_axi_awaddr,
@@ -253,10 +255,33 @@ module rv32_soc #(
     logic        clint_axi_rready;
 
     // ========================================================================
+    // AXI Interconnect <-> PLIC Signals
+    // ========================================================================
+    // Platform-Level Interrupt Controller (placeholder)
+    // Base address: 0x0C00_0000
+    logic [31:0] plic_axi_awaddr;
+    logic        plic_axi_awvalid;
+    logic        plic_axi_awready;
+    logic [31:0] plic_axi_wdata;
+    logic [3:0]  plic_axi_wstrb;
+    logic        plic_axi_wvalid;
+    logic        plic_axi_wready;
+    logic [1:0]  plic_axi_bresp;
+    logic        plic_axi_bvalid;
+    logic        plic_axi_bready;
+    logic [31:0] plic_axi_araddr;
+    logic        plic_axi_arvalid;
+    logic        plic_axi_arready;
+    logic [31:0] plic_axi_rdata;
+    logic [1:0]  plic_axi_rresp;
+    logic        plic_axi_rvalid;
+    logic        plic_axi_rready;
+
+    // ========================================================================
     // AXI Interconnect <-> UART Signals
     // ========================================================================
     // Memory-mapped access to UART TX/RX data and status registers
-    // Base address: 0x0201_0000
+    // Base address: 0x2000_0000
     logic [31:0] uart_axi_awaddr;
     logic        uart_axi_awvalid;
     logic        uart_axi_awready;
@@ -279,7 +304,7 @@ module rv32_soc #(
     // AXI Interconnect <-> SPI Signals
     // ========================================================================
     // Memory-mapped access to SPI control, data, and status registers
-    // Base address: 0x0202_0000
+    // Base address: 0x2002_0000
     logic [31:0] spi_axi_awaddr;
     logic        spi_axi_awvalid;
     logic        spi_axi_awready;
@@ -302,7 +327,7 @@ module rv32_soc #(
     // AXI Interconnect <-> I2C Peripheral Signals
     // ========================================================================
     // Memory-mapped I2C master controller for sensor interfacing
-    // Base address: 0x0203_0000
+    // Base address: 0x2001_0000
     logic [31:0] i2c_axi_awaddr;
     logic        i2c_axi_awvalid;
     logic        i2c_axi_awready;
@@ -355,7 +380,10 @@ module rv32_soc #(
     // ========================================================================
     logic        timer_irq;           // Timer interrupt from CLINT
     logic        software_irq;        // Software interrupt from CLINT
-    logic        external_irq;        // External interrupt (unused)
+    logic        external_irq;        // External interrupt from PLIC
+    logic        uart_irq;            // UART FIFO interrupt → PLIC source 1
+    logic        spi_irq;             // SPI  FIFO interrupt → PLIC source 2
+    logic        i2c_irq;             // I2C  FIFO interrupt → PLIC source 3
 
 `ifndef SYNTHESIS
     logic        core_retire_instr;   // Instruction retirement pulse for trace-mode mtime
@@ -365,8 +393,8 @@ module rv32_soc #(
     logic [3:0]  core_wb_store_strb;  // Store byte enables
 `endif
 
-    // External interrupts not implemented in this SoC configuration
-    assign external_irq = 1'b0;
+    // external_irq is driven by the PLIC instance below
+    // uart_irq / spi_irq / i2c_irq are connected to PLIC sources 1/2/3
 
     // ========================================================================
     // RV32IMA Processor Core Instance
@@ -680,15 +708,16 @@ module rv32_soc #(
     );
 
     // ========================================================================
-    // AXI4 Interconnect (1-to-6 Crossbar)
+    // AXI4 Interconnect (1-to-7 Crossbar)
     // ========================================================================
-    // Routes transactions from arbiter to 6 slave devices based on address with ID tracking:
+    // Routes transactions from arbiter to 7 slave devices based on address with ID tracking:
     //   Slave 0 (0x8000_0000): External 2MB RAM
     //   Slave 1 (0x0200_0000): CLINT timer peripheral
-    //   Slave 2 (0x0201_0000): UART peripheral
-    //   Slave 3 (0x0202_0000): SPI peripheral
-    //   Slave 4 (0x0203_0000): I2C peripheral
-    //   Slave 5 (0xFFFF_0000): Magic addresses for simulation
+    //   Slave 2 (0x0C00_0000): PLIC interrupt controller
+    //   Slave 3 (0x2000_0000): UART peripheral
+    //   Slave 4 (0x2001_0000): I2C peripheral
+    //   Slave 5 (0x2002_0000): SPI peripheral
+    //   Slave 6 (0xFFFF_0000): Magic addresses for simulation
     // Returns DECERR response for unmapped addresses
     axi_xbar axi_intercon (
         .clk(clk),
@@ -775,51 +804,51 @@ module rv32_soc #(
         .s1_axi_rvalid(clint_axi_rvalid),
         .s1_axi_rready(clint_axi_rready),
 
-        // Slave 2: UART
-        .s2_axi_awaddr(uart_axi_awaddr),
-        .s2_axi_awvalid(uart_axi_awvalid),
-        .s2_axi_awready(uart_axi_awready),
+        // Slave 2: PLIC
+        .s2_axi_awaddr(plic_axi_awaddr),
+        .s2_axi_awvalid(plic_axi_awvalid),
+        .s2_axi_awready(plic_axi_awready),
 
-        .s2_axi_wdata(uart_axi_wdata),
-        .s2_axi_wstrb(uart_axi_wstrb),
-        .s2_axi_wvalid(uart_axi_wvalid),
-        .s2_axi_wready(uart_axi_wready),
+        .s2_axi_wdata(plic_axi_wdata),
+        .s2_axi_wstrb(plic_axi_wstrb),
+        .s2_axi_wvalid(plic_axi_wvalid),
+        .s2_axi_wready(plic_axi_wready),
 
-        .s2_axi_bresp(uart_axi_bresp),
-        .s2_axi_bvalid(uart_axi_bvalid),
-        .s2_axi_bready(uart_axi_bready),
+        .s2_axi_bresp(plic_axi_bresp),
+        .s2_axi_bvalid(plic_axi_bvalid),
+        .s2_axi_bready(plic_axi_bready),
 
-        .s2_axi_araddr(uart_axi_araddr),
-        .s2_axi_arvalid(uart_axi_arvalid),
-        .s2_axi_arready(uart_axi_arready),
+        .s2_axi_araddr(plic_axi_araddr),
+        .s2_axi_arvalid(plic_axi_arvalid),
+        .s2_axi_arready(plic_axi_arready),
 
-        .s2_axi_rdata(uart_axi_rdata),
-        .s2_axi_rresp(uart_axi_rresp),
-        .s2_axi_rvalid(uart_axi_rvalid),
-        .s2_axi_rready(uart_axi_rready),
+        .s2_axi_rdata(plic_axi_rdata),
+        .s2_axi_rresp(plic_axi_rresp),
+        .s2_axi_rvalid(plic_axi_rvalid),
+        .s2_axi_rready(plic_axi_rready),
 
-        // Slave 3: SPI
-        .s3_axi_awaddr(spi_axi_awaddr),
-        .s3_axi_awvalid(spi_axi_awvalid),
-        .s3_axi_awready(spi_axi_awready),
+        // Slave 3: UART
+        .s3_axi_awaddr(uart_axi_awaddr),
+        .s3_axi_awvalid(uart_axi_awvalid),
+        .s3_axi_awready(uart_axi_awready),
 
-        .s3_axi_wdata(spi_axi_wdata),
-        .s3_axi_wstrb(spi_axi_wstrb),
-        .s3_axi_wvalid(spi_axi_wvalid),
-        .s3_axi_wready(spi_axi_wready),
+        .s3_axi_wdata(uart_axi_wdata),
+        .s3_axi_wstrb(uart_axi_wstrb),
+        .s3_axi_wvalid(uart_axi_wvalid),
+        .s3_axi_wready(uart_axi_wready),
 
-        .s3_axi_bresp(spi_axi_bresp),
-        .s3_axi_bvalid(spi_axi_bvalid),
-        .s3_axi_bready(spi_axi_bready),
+        .s3_axi_bresp(uart_axi_bresp),
+        .s3_axi_bvalid(uart_axi_bvalid),
+        .s3_axi_bready(uart_axi_bready),
 
-        .s3_axi_araddr(spi_axi_araddr),
-        .s3_axi_arvalid(spi_axi_arvalid),
-        .s3_axi_arready(spi_axi_arready),
+        .s3_axi_araddr(uart_axi_araddr),
+        .s3_axi_arvalid(uart_axi_arvalid),
+        .s3_axi_arready(uart_axi_arready),
 
-        .s3_axi_rdata(spi_axi_rdata),
-        .s3_axi_rresp(spi_axi_rresp),
-        .s3_axi_rvalid(spi_axi_rvalid),
-        .s3_axi_rready(spi_axi_rready),
+        .s3_axi_rdata(uart_axi_rdata),
+        .s3_axi_rresp(uart_axi_rresp),
+        .s3_axi_rvalid(uart_axi_rvalid),
+        .s3_axi_rready(uart_axi_rready),
 
         // Slave 4: I2C
         .s4_axi_awaddr(i2c_axi_awaddr),
@@ -844,28 +873,51 @@ module rv32_soc #(
         .s4_axi_rvalid(i2c_axi_rvalid),
         .s4_axi_rready(i2c_axi_rready),
 
-        // Slave 5: Magic
-        .s5_axi_awaddr(magic_axi_awaddr),
-        .s5_axi_awvalid(magic_axi_awvalid),
-        .s5_axi_awready(magic_axi_awready),
+        // Slave 5: SPI
+        .s5_axi_awaddr(spi_axi_awaddr),
+        .s5_axi_awvalid(spi_axi_awvalid),
+        .s5_axi_awready(spi_axi_awready),
 
-        .s5_axi_wdata(magic_axi_wdata),
-        .s5_axi_wstrb(magic_axi_wstrb),
-        .s5_axi_wvalid(magic_axi_wvalid),
-        .s5_axi_wready(magic_axi_wready),
+        .s5_axi_wdata(spi_axi_wdata),
+        .s5_axi_wstrb(spi_axi_wstrb),
+        .s5_axi_wvalid(spi_axi_wvalid),
+        .s5_axi_wready(spi_axi_wready),
 
-        .s5_axi_bresp(magic_axi_bresp),
-        .s5_axi_bvalid(magic_axi_bvalid),
-        .s5_axi_bready(magic_axi_bready),
+        .s5_axi_bresp(spi_axi_bresp),
+        .s5_axi_bvalid(spi_axi_bvalid),
+        .s5_axi_bready(spi_axi_bready),
 
-        .s5_axi_araddr(magic_axi_araddr),
-        .s5_axi_arvalid(magic_axi_arvalid),
-        .s5_axi_arready(magic_axi_arready),
+        .s5_axi_araddr(spi_axi_araddr),
+        .s5_axi_arvalid(spi_axi_arvalid),
+        .s5_axi_arready(spi_axi_arready),
 
-        .s5_axi_rdata(magic_axi_rdata),
-        .s5_axi_rresp(magic_axi_rresp),
-        .s5_axi_rvalid(magic_axi_rvalid),
-        .s5_axi_rready(magic_axi_rready)
+        .s5_axi_rdata(spi_axi_rdata),
+        .s5_axi_rresp(spi_axi_rresp),
+        .s5_axi_rvalid(spi_axi_rvalid),
+        .s5_axi_rready(spi_axi_rready),
+
+        // Slave 6: Magic
+        .s6_axi_awaddr(magic_axi_awaddr),
+        .s6_axi_awvalid(magic_axi_awvalid),
+        .s6_axi_awready(magic_axi_awready),
+
+        .s6_axi_wdata(magic_axi_wdata),
+        .s6_axi_wstrb(magic_axi_wstrb),
+        .s6_axi_wvalid(magic_axi_wvalid),
+        .s6_axi_wready(magic_axi_wready),
+
+        .s6_axi_bresp(magic_axi_bresp),
+        .s6_axi_bvalid(magic_axi_bvalid),
+        .s6_axi_bready(magic_axi_bready),
+
+        .s6_axi_araddr(magic_axi_araddr),
+        .s6_axi_arvalid(magic_axi_arvalid),
+        .s6_axi_arready(magic_axi_arready),
+
+        .s6_axi_rdata(magic_axi_rdata),
+        .s6_axi_rresp(magic_axi_rresp),
+        .s6_axi_rvalid(magic_axi_rvalid),
+        .s6_axi_rready(magic_axi_rready)
     );
 
     // ========================================================================
@@ -873,7 +925,7 @@ module rv32_soc #(
     // ========================================================================
     // Provides timer (mtime) and timer comparator (mtimecmp) for timer interrupts
     // Also provides software interrupt control via memory-mapped registers
-    // Memory map: 0x0200_0000 (standard RISC-V CLINT base address)
+    // Memory map: 0x0200_0000 - 0x020B_FFFF (standard RISC-V CLINT base address)
     axi_clint clint (
         .clk(clk),
         .rst_n(rst_n),
@@ -911,7 +963,8 @@ module rv32_soc #(
         // very cycle the store retires, matching SW-sim timing.
         // Only forward stores that target the CLINT address window.
         ,.trace_store_valid(core_wb_store &&
-                            (core_wb_store_addr[31:16] == 16'h0200))
+                            (core_wb_store_addr[31:20] == 12'h020) &&
+                            (core_wb_store_addr[19:18] != 2'b11))
         ,.trace_store_addr(core_wb_store_addr)
         ,.trace_store_data(core_wb_store_data)
         ,.trace_store_strb(core_wb_store_strb)
@@ -919,10 +972,54 @@ module rv32_soc #(
     );
 
     // ========================================================================
+    // PLIC - Platform-Level Interrupt Controller
+    // ========================================================================
+    // Base address: 0x0C00_0000 - 0x0FFF_FFFF
+    // Interrupt sources (1..NUM_IRQ) - extend when peripherals gain IRQ outputs
+    localparam PLIC_NUM_IRQ = 7;
+    logic [PLIC_NUM_IRQ:0] plic_irq_src;
+    // PLIC interrupt source assignment:
+    //   [1] = UART RX-not-empty / TX-empty
+    //   [2] = SPI  RX-not-empty / TX-empty
+    //   [3] = I2C  RX-not-empty / TX-empty / STOP-done
+    //   [7:4] = reserved (tied 0)
+    assign plic_irq_src[0]   = 1'b0;      // source 0 reserved
+    assign plic_irq_src[1]   = uart_irq;
+    assign plic_irq_src[2]   = spi_irq;
+    assign plic_irq_src[3]   = i2c_irq;
+    assign plic_irq_src[7:4] = 4'b0;
+
+    rv32_plic #(
+        .NUM_IRQ(PLIC_NUM_IRQ)
+    ) u_plic (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .axi_awaddr  (plic_axi_awaddr),
+        .axi_awvalid (plic_axi_awvalid),
+        .axi_awready (plic_axi_awready),
+        .axi_wdata   (plic_axi_wdata),
+        .axi_wstrb   (plic_axi_wstrb),
+        .axi_wvalid  (plic_axi_wvalid),
+        .axi_wready  (plic_axi_wready),
+        .axi_bresp   (plic_axi_bresp),
+        .axi_bvalid  (plic_axi_bvalid),
+        .axi_bready  (plic_axi_bready),
+        .axi_araddr  (plic_axi_araddr),
+        .axi_arvalid (plic_axi_arvalid),
+        .axi_arready (plic_axi_arready),
+        .axi_rdata   (plic_axi_rdata),
+        .axi_rresp   (plic_axi_rresp),
+        .axi_rvalid  (plic_axi_rvalid),
+        .axi_rready  (plic_axi_rready),
+        .irq_src     (plic_irq_src),
+        .irq         (external_irq)
+    );
+
+    // ========================================================================
     // UART - Universal Asynchronous Receiver/Transmitter
     // ========================================================================
-    // High-speed serial communication peripheral with integrated TX/RX
-    // Memory map: 0x0201_0000 (TX data, RX data, status registers)
+    // FIFO-based UART with TX/RX depths of 16.  IRQ goes to PLIC source 1.
+    // Memory map: 0x2000_0000 (DATA, STATUS, IE, IS, LEVEL registers)
     // Configuration: 8N1 format, configurable baud rate
     // Current: 100 MHz clock, 25 Mbaud (CLKS_PER_BIT=4, maximum rate)
     axi_uart #(
@@ -954,6 +1051,8 @@ module rv32_soc #(
         .axi_rvalid(uart_axi_rvalid),
         .axi_rready(uart_axi_rready),
 
+        .irq(uart_irq),
+
         .uart_rx(uart_rx),
         .uart_tx(uart_tx)
     );
@@ -961,8 +1060,8 @@ module rv32_soc #(
     // ========================================================================
     // SPI - Serial Peripheral Interface
     // ========================================================================
-    // SPI master controller for interfacing with external SPI devices
-    // Memory map: 0x0202_0000 (control, clock divider, data, status)
+    // FIFO-based SPI master.  IRQ goes to PLIC source 2.
+    // Memory map: 0x2002_0000 (CTRL, DIV, DATA, STATUS, IE, IS)
     // Features: Configurable CPOL/CPHA, clock divider, 4 chip selects
     axi_spi #(
         .CLK_FREQ(CLK_FREQ)
@@ -992,6 +1091,8 @@ module rv32_soc #(
         .axi_rvalid(spi_axi_rvalid),
         .axi_rready(spi_axi_rready),
 
+        .irq(spi_irq),
+
         .spi_sclk(spi_sclk),
         .spi_mosi(spi_mosi),
         .spi_miso(spi_miso),
@@ -1001,8 +1102,8 @@ module rv32_soc #(
     // ========================================================================
     // I2C - Inter-Integrated Circuit
     // ========================================================================
-    // I2C master controller for interfacing with sensors and other I2C devices
-    // Memory map: 0x0203_0000 (control, clock divider, data, status)
+    // FIFO-based I2C master.  IRQ goes to PLIC source 3.
+    // Memory map: 0x2001_0000 (CTRL, DIV, TX, RX, STATUS, IE, IS)
     // Features: Standard (100kHz) and Fast (400kHz) modes, 7-bit addressing
     axi_i2c #(
         .CLK_FREQ(CLK_FREQ)
@@ -1032,12 +1133,14 @@ module rv32_soc #(
         .axi_rvalid(i2c_axi_rvalid),
         .axi_rready(i2c_axi_rready),
 
+        .irq(i2c_irq),
+
         .i2c_scl_o(i2c_scl_o),
         .i2c_scl_i(i2c_scl_i),
-        .i2c_scl_t(i2c_scl_t),
+        .i2c_scl_oe(i2c_scl_oe),
         .i2c_sda_o(i2c_sda_o),
         .i2c_sda_i(i2c_sda_i),
-        .i2c_sda_t(i2c_sda_t)
+        .i2c_sda_oe(i2c_sda_oe)
     );
 
     // ========================================================================

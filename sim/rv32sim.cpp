@@ -158,10 +158,12 @@ RV32Simulator::RV32Simulator(uint32_t base, uint32_t size)
     spi = new SPIDevice();
     i2c = new I2CDevice();
     clint = new CLINTDevice();
+    plic = new PLICDevice();
 
     // Register universal slave interface windows
     register_device_slave(mem_base, mem_size, memory, "RAM");
     register_device_slave(CLINT_BASE, CLINT_SIZE, clint, "CLINT");
+    register_device_slave(PLIC_BASE, PLIC_SIZE, plic, "PLIC");
     register_device_slave(UART_BASE, UART_SIZE, uart, "UART");
     register_device_slave(SPI_BASE, SPI_SIZE, spi, "SPI");
     register_device_slave(I2C_BASE, I2C_SIZE, i2c, "I2C");
@@ -175,6 +177,7 @@ RV32Simulator::~RV32Simulator() {
     delete spi;
     delete i2c;
     delete clint;
+    delete plic;
     slaves.clear();
 
     delete memory;
@@ -514,28 +517,47 @@ void RV32Simulator::take_trap(uint32_t cause, uint32_t tval) {
 
 // Check for pending interrupts
 void RV32Simulator::check_interrupts() {
-    // Update MIP based on CLINT
+    // ── PLIC: update IRQ sources from peripherals ──────────────────────────
+    // Sources: [1]=UART, [2]=SPI, [3]=I2C  (matches rv32_soc.sv wiring)
+    uint32_t plic_src = 0;
+    if (uart->get_irq()) plic_src |= (1u << 1);
+    if (spi->get_irq())  plic_src |= (1u << 2);
+    if (i2c->get_irq())  plic_src |= (1u << 3);
+    plic->update_irq_sources(plic_src);
+
+    // ── Update MIP bits ───────────────────────────────────────────────────
+    // MTIP (bit 7) from CLINT
     if (clint->get_timer_interrupt()) {
-        csr_mip |= (1 << 7); // MTIP
+        csr_mip |= (1 << 7);
     } else {
         csr_mip &= ~(1 << 7);
     }
 
+    // MSIP (bit 3) from CLINT
     if (clint->get_software_interrupt()) {
-        csr_mip |= (1 << 3); // MSIP
+        csr_mip |= (1 << 3);
     } else {
         csr_mip &= ~(1 << 3);
     }
 
-    // Check if interrupts are enabled
+    // MEIP (bit 11) from PLIC
+    if (plic->get_external_interrupt()) {
+        csr_mip |= (1 << 11);
+    } else {
+        csr_mip &= ~(1 << 11);
+    }
+
+    // Check if machine interrupts are globally enabled
     uint32_t mie_bit = (csr_mstatus >> 3) & 1;
     if (!mie_bit)
         return;
 
-    // Check for pending and enabled interrupts
+    // Dispatch highest-priority pending+enabled interrupt
     uint32_t pending = csr_mip & csr_mie;
 
-    if (pending & (1 << 7)) { // Timer interrupt
+    if (pending & (1 << 11)) {       // External interrupt (PLIC)
+        take_trap(CAUSE_MACHINE_EXTERNAL_INT, 0);
+    } else if (pending & (1 << 7)) { // Timer interrupt
         take_trap(CAUSE_MACHINE_TIMER_INT, 0);
     } else if (pending & (1 << 3)) { // Software interrupt
         take_trap(CAUSE_MACHINE_SOFTWARE_INT, 0);

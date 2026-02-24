@@ -119,8 +119,9 @@ struct Elf32_Sym {
 #define CAUSE_MISALIGNED_STORE    6
 #define CAUSE_STORE_ACCESS        7
 #define CAUSE_ECALL_FROM_M        11
-#define CAUSE_MACHINE_TIMER_INT   0x80000007
+#define CAUSE_MACHINE_TIMER_INT    0x80000007
 #define CAUSE_MACHINE_SOFTWARE_INT 0x80000003
+#define CAUSE_MACHINE_EXTERNAL_INT 0x8000000B  // MEIP (bit 11)
 
 // RV32IMAC CPU simulator
 class RV32Simulator {
@@ -146,6 +147,7 @@ public:
     SPIDevice* spi;
     I2CDevice* i2c;
     CLINTDevice* clint;
+    PLICDevice* plic;
 
     uint32_t tohost_addr;
     std::ofstream trace_file;

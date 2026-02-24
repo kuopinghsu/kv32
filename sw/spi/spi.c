@@ -1,4 +1,4 @@
-// SPI Hardware Test - Tests SPI master controller at 0x02020000
+// SPI Hardware Test - Tests SPI master controller at 0x20020000
 // Tests SPI communication with simulated flash memory devices
 // 4 flash memories (one per CS line), each 4KB initialized with pattern 0xF0 + CS number
 
@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 // SPI peripheral registers
-#define SPI_BASE     0x02020000
+#define SPI_BASE     0x20020000
 #define SPI_CTRL     (*((volatile uint32_t*)(SPI_BASE + 0x00)))
 #define SPI_DIV      (*((volatile uint32_t*)(SPI_BASE + 0x04)))
 #define SPI_TX       (*((volatile uint32_t*)(SPI_BASE + 0x08)))

@@ -1,18 +1,28 @@
 // ============================================================================
 // File: axi_uart.sv
 // Project: RV32 RISC-V Processor
-// Description: AXI4-Lite UART Peripheral with integrated TX/RX logic
+// Description: AXI4-Lite UART Peripheral with TX/RX FIFOs and IRQ
 //
 // Memory-mapped UART with AXI4-Lite interface. Provides serial communication
 // with configurable baud rate and 8N1 format (8 data bits, no parity, 1 stop).
+// TX and RX paths each have a FIFO_DEPTH-entry FIFO.  An interrupt is raised
+// whenever an enabled FIFO condition is true.
 //
-// Register Map:
-//   0x00: TX Data Register (write), RX Data Register (read)
-//   0x04: Status Register (bit 0: TX ready, bit 1: RX valid)
+// Register Map (relative to base 0x2000_0000):
+//   0x00: DATA   - write: push to TX FIFO; read: pop from RX FIFO
+//   0x04: STATUS - [0]=tx_full (busy: 1=can't-write, 0=ready), [1]=tx_full (full flag),
+//                   [2]=rx_not_empty (rx_ready), [3]=rx_full (overrun flag)
+//                  [2]=tx_empty, [3]=rx_full
+//   0x08: IE     - Interrupt Enable: [0]=rx_not_empty_ie, [1]=tx_empty_ie
+//   0x0C: IS     - Interrupt Status (read-only, level): [0]=rx_not_empty, [1]=tx_empty
+//   0x10: LEVEL  - [3:0]=rx_count, [11:8]=tx_count
+//
+// Interrupt (irq): asserted when (IE & IS) != 0
 //
 // Features:
 //   - Configurable clock frequency and baud rate
-//   - Status flags for polling-based I/O
+//   - Parameterised TX/RX FIFOs (default depth 16)
+//   - PLIC-compatible IRQ output
 //   - Integrated UART TX and RX state machines
 //
 // Clock Requirements:
@@ -49,8 +59,9 @@
 // ============================================================================
 
 module axi_uart #(
-    parameter CLK_FREQ = 100_000_000,
-    parameter BAUD_RATE = 25_000_000
+    parameter CLK_FREQ   = 100_000_000,
+    parameter BAUD_RATE  = 25_000_000,
+    parameter FIFO_DEPTH = 16           // Must be a power of 2
 )(
     input  logic        clk,
     input  logic        rst_n,
@@ -78,28 +89,101 @@ module axi_uart #(
     output logic        axi_rvalid,
     input  logic        axi_rready,
 
+    // Interrupt output
+    output logic        irq,
+
     // UART pins
     input  logic        uart_rx,
     output logic        uart_tx
 );
 
     localparam CLKS_PER_BIT = CLK_FREQ / BAUD_RATE;
+    localparam FIFO_BITS    = $clog2(FIFO_DEPTH);
 
-    // UART memory map (relative to base 0x0201_0000)
-    // 0x00: TX data register
-    // 0x04: RX data register
-    // 0x08: Status register (bit 0: tx_ready, bit 1: rx_valid)
+    // ========================================================================
+    // TX FIFO
+    // ========================================================================
+    logic [7:0]           txf_mem  [0:FIFO_DEPTH-1];
+    logic [FIFO_BITS-1:0] txf_wr_ptr, txf_rd_ptr;
+    logic [FIFO_BITS:0]   txf_count;
+    logic txf_empty, txf_full;
+    assign txf_empty = (txf_count == '0);
+    assign txf_full  = (txf_count == FIFO_DEPTH);
 
-    // TX signals
-    logic [7:0]  tx_data;
-    logic        tx_valid;
-    logic        tx_ready;
+    // TX FIFO pop: feed TX state machine when it is ready and FIFO has data
+    logic txf_push, txf_pop;
 
-    // RX signals
-    logic [7:0]  rx_data;
-    logic        rx_valid;
-    logic [7:0]  rx_data_reg;
-    logic        rx_data_valid;
+    // TX state machine signals (driven from TX FIFO)
+    logic [7:0] tx_data;
+    logic       tx_valid;
+    logic       tx_ready;
+
+    assign txf_pop  = tx_ready && !txf_empty;
+    assign tx_valid = txf_pop;
+    assign tx_data  = txf_mem[txf_rd_ptr];
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            txf_wr_ptr <= '0;
+            txf_rd_ptr <= '0;
+            txf_count  <= '0;
+        end else begin
+            if (txf_push && !txf_pop)
+                txf_count <= txf_count + 1;
+            else if (!txf_push && txf_pop)
+                txf_count <= txf_count - 1;
+            if (txf_push) begin
+                txf_mem[txf_wr_ptr] <= axi_wdata[7:0];
+                txf_wr_ptr          <= txf_wr_ptr + 1;
+            end
+            if (txf_pop)
+                txf_rd_ptr <= txf_rd_ptr + 1;
+        end
+    end
+
+    // ========================================================================
+    // RX FIFO
+    // ========================================================================
+    logic [7:0]           rxf_mem  [0:FIFO_DEPTH-1];
+    logic [FIFO_BITS-1:0] rxf_wr_ptr, rxf_rd_ptr;
+    logic [FIFO_BITS:0]   rxf_count;
+    logic rxf_empty, rxf_full;
+    assign rxf_empty = (rxf_count == '0);
+    assign rxf_full  = (rxf_count == FIFO_DEPTH);
+
+    logic rxf_push, rxf_pop;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            rxf_wr_ptr <= '0;
+            rxf_rd_ptr <= '0;
+            rxf_count  <= '0;
+        end else begin
+            if (rxf_push && !rxf_pop)
+                rxf_count <= rxf_count + 1;
+            else if (!rxf_push && rxf_pop)
+                rxf_count <= rxf_count - 1;
+            if (rxf_push) begin
+                rxf_mem[rxf_wr_ptr] <= rx_data;
+                rxf_wr_ptr          <= rxf_wr_ptr + 1;
+            end
+            if (rxf_pop)
+                rxf_rd_ptr <= rxf_rd_ptr + 1;
+        end
+    end
+
+    // ========================================================================
+    // Interrupt
+    // ========================================================================
+    logic [1:0] ie_r;
+    logic [1:0] is_wire;
+    assign is_wire[0] = !rxf_empty;   // RX not empty
+    assign is_wire[1] = txf_empty;    // TX FIFO drained
+    assign irq = |(ie_r & is_wire);
+
+    // RX state machine output signals
+    logic [7:0] rx_data;
+    logic       rx_valid;
 
     // ========================================================================
     // UART TX State Machine
@@ -169,12 +253,11 @@ module axi_uart #(
 
                 TX_STOP_BIT: begin
                     uart_tx <= 1'b1;
-
-                    if (tx_clk_count < CLKS_PER_BIT - 1) begin
+                    if (tx_clk_count < CLKS_PER_BIT - 1)
                         tx_clk_count <= tx_clk_count + 1;
-                    end else begin
-                        tx_ready     <= 1'b1;
-                        tx_state     <= TX_IDLE;
+                    else begin
+                        tx_ready <= 1'b1;
+                        tx_state <= TX_IDLE;
                     end
                 end
 
@@ -262,9 +345,9 @@ module axi_uart #(
                 end
 
                 RX_STOP_BIT: begin
-                    if (rx_clk_count < CLKS_PER_BIT - 1) begin
+                    if (rx_clk_count < CLKS_PER_BIT - 1)
                         rx_clk_count <= rx_clk_count + 1;
-                    end else begin
+                    else begin
                         rx_data  <= rx_data_buf;
                         rx_valid <= 1'b1;
                         rx_state <= RX_IDLE;
@@ -276,96 +359,69 @@ module axi_uart #(
         end
     end
 
-    // ========================================================================
-    // RX Data Register
-    // ========================================================================
-    logic [31:0] araddr_offset;
+    // RX FIFO push: one-cycle rx_valid pulse; drop byte silently if FIFO full
+    assign rxf_push = rx_valid && !rxf_full;
 
-    always_comb begin
-        araddr_offset = axi_araddr - 32'h0201_0000;
-    end
+    // ========================================================================
+    // AXI4-Lite Interface
+    // ========================================================================
+    // Always-ready channels (single-cycle); TX FIFO push/RX FIFO pop are combinational
+    assign axi_awready = 1'b1;
+    assign axi_wready  = 1'b1;
+    assign axi_arready = 1'b1;
 
+    // TX FIFO push: AXI write to offset 0x00 (drop if FIFO full)
+    assign txf_push = axi_awvalid && axi_wvalid && (axi_awaddr[7:0] == 8'h00) && !txf_full;
+
+    // RX FIFO pop: AXI read of offset 0x00 (advance pointer)
+    assign rxf_pop = axi_arvalid && (axi_araddr[7:0] == 8'h00) && !rxf_empty;
+
+    // ── Write Response + IE register ─────────────────────────────────────────
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            rx_data_reg   <= 8'd0;
-            rx_data_valid <= 1'b0;
+            axi_bvalid <= 1'b0;
+            axi_bresp  <= 2'b00;
+            ie_r       <= 2'b00;
         end else begin
-            if (rx_valid) begin
-                rx_data_reg   <= rx_data;
-                rx_data_valid <= 1'b1;
-            end else if (axi_arvalid && (araddr_offset[7:0] == 8'h04)) begin
-                rx_data_valid <= 1'b0;
+            if (axi_bvalid && axi_bready)
+                axi_bvalid <= 1'b0;
+
+            if (axi_awvalid && axi_wvalid && axi_awready && axi_wready) begin
+                if (axi_awaddr[7:0] == 8'h08)
+                    ie_r <= axi_wdata[1:0];
+                axi_bvalid <= 1'b1;
+                axi_bresp  <= 2'b00;
             end
         end
     end
 
-    // ========================================================================
-    // AXI4-Lite State Machine
-    // ========================================================================
-    // AXI4-Lite Interface - Simple register access (always ready)
-    // ========================================================================
-    // Like CLINT, keep ready signals always high for truly independent R/W channels
-    assign axi_awready = 1'b1;  // Always ready to accept write address
-    assign axi_wready  = 1'b1;  // Always ready to accept write data
-    assign axi_arready = 1'b1;  // Always ready to accept read address
-
-    // Combinational read data mux
+    // ── Read Response ─────────────────────────────────────────────────────────
     logic [31:0] read_data;
     always_comb begin
         case (axi_araddr[7:0])
-            8'h00:   read_data = {24'd0, rx_data_reg};  // RX data
-            8'h04:   read_data = {29'd0, rx_data_valid, 1'b0, !tx_ready};  // STATUS: bit0=tx_busy, bit2=rx_ready
-            default: read_data = 32'd0;
+            8'h00: read_data = {24'h0, rxf_mem[rxf_rd_ptr]};    // RX pop
+            8'h04: read_data = {28'h0,
+                                rxf_full,                        // [3] RX_OVERRUN
+                                !rxf_empty,                      // [2] RX_READY
+                                txf_full,                        // [1] TX_FULL
+                                txf_full};                       // [0] TX_BUSY (full=can't write)
+            8'h08: read_data = {30'h0, ie_r};                    // IE
+            8'h0C: read_data = {30'h0, is_wire};                 // IS (level)
+            8'h10: read_data = {4'h0, txf_count,
+                                4'h0, rxf_count};                // LEVEL
+            default: read_data = 32'h0;
         endcase
     end
 
-    // ========================================================================
-    // Write Channel (AW + W → B)
-    // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            axi_bresp   <= 2'b00;
-            axi_bvalid  <= 1'b0;
-            tx_data     <= 8'd0;
-            tx_valid    <= 1'b0;
+            axi_rdata  <= 32'h0;
+            axi_rresp  <= 2'b00;
+            axi_rvalid <= 1'b0;
         end else begin
-            tx_valid <= 1'b0;
-
-            // Handle write response
-            if (axi_bvalid && axi_bready) begin
-                axi_bvalid <= 1'b0;
-            end
-
-            // Accept write when both AW and W channels are valid
-            if (axi_awvalid && axi_wvalid && axi_awready && axi_wready) begin
-                // Write to UART TX register
-                if (axi_awaddr[7:0] == 8'h00) begin
-                    tx_data  <= axi_wdata[7:0];
-                    tx_valid <= 1'b1;
-                end
-
-                // Generate write response
-                axi_bresp  <= 2'b00;
-                axi_bvalid <= 1'b1;
-            end
-        end
-    end
-
-    // ========================================================================
-    // Read Channel (AR → R)
-    // ========================================================================
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            axi_rdata   <= 32'h0;
-            axi_rresp   <= 2'b00;
-            axi_rvalid  <= 1'b0;
-        end else begin
-            // Handle read response
-            if (axi_rvalid && axi_rready) begin
+            if (axi_rvalid && axi_rready)
                 axi_rvalid <= 1'b0;
-            end
 
-            // Accept read when AR channel is valid
             if (axi_arvalid && axi_arready) begin
                 axi_rdata  <= read_data;
                 axi_rresp  <= 2'b00;

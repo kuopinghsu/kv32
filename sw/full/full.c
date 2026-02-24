@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 // Memory-mapped I/O addresses
-#define UART_BASE    0x02010000
+#define UART_BASE    0x20000000
 #define UART_TX      (*(volatile uint32_t*)(UART_BASE + 0x00))
 #define UART_STATUS  (*(volatile uint32_t*)(UART_BASE + 0x04))
 

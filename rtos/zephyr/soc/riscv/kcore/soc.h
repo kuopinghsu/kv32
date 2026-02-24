@@ -16,7 +16,7 @@
 #define RAM_BASE_ADDR      0x80000000
 #define RAM_SIZE           (2 * 1024 * 1024)  /* 2MB */
 
-#define UART_BASE_ADDR     0x10000000
+#define UART_BASE_ADDR     0x20000000
 #define CLINT_BASE_ADDR    0x02000000
 
 /* UART registers */

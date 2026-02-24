@@ -27,10 +27,10 @@ module tb_rv32_soc #(
     output wire [3:0] spi_cs_n,
     output wire i2c_scl_i,
     output wire i2c_scl_o,
-    output wire i2c_scl_t,
+    output wire i2c_scl_oe,
     output wire i2c_sda_i,
     output wire i2c_sda_o,
-    output wire i2c_sda_t,
+    output wire i2c_sda_oe,
     output logic [63:0] cycle_count,
     output logic [63:0] instret_count,
     output logic [63:0] stall_count,
@@ -81,8 +81,8 @@ module tb_rv32_soc #(
     logic spi_mosi_internal;    // SoC SPI MOSI output
     logic [3:0] spi_cs_n_internal; // SoC SPI CS outputs
     logic spi_miso_internal;    // SPI slave MISO output
-    logic i2c_scl_o_internal, i2c_scl_t_internal; // SoC I2C SCL outputs
-    logic i2c_sda_o_internal, i2c_sda_t_internal; // SoC I2C SDA outputs
+    logic i2c_scl_o_internal, i2c_scl_oe_internal; // SoC I2C SCL outputs
+    logic i2c_sda_o_internal, i2c_sda_oe_internal; // SoC I2C SDA outputs
     logic i2c_scl_wire, i2c_sda_wire;
     logic i2c_slave_sda_out, i2c_slave_sda_oe;
 
@@ -107,10 +107,10 @@ module tb_rv32_soc #(
         // I2C pins
         .i2c_scl_o(i2c_scl_o_internal),
         .i2c_scl_i(i2c_scl_wire),
-        .i2c_scl_t(i2c_scl_t_internal),
+        .i2c_scl_oe(i2c_scl_oe_internal),
         .i2c_sda_o(i2c_sda_o_internal),
         .i2c_sda_i(i2c_sda_wire),
-        .i2c_sda_t(i2c_sda_t_internal),
+        .i2c_sda_oe(i2c_sda_oe_internal),
         // External AXI master port
         .m_axi_awaddr(axi_awaddr),
         .m_axi_awvalid(axi_awvalid),
@@ -269,8 +269,8 @@ module tb_rv32_soc #(
 
     // I2C Slave EEPROM - 256-byte EEPROM at address 0x50
     // I2C bidirectional bus handling (wired-AND)
-    assign i2c_scl_wire = (i2c_scl_t_internal ? 1'b1 : i2c_scl_o_internal);
-    assign i2c_sda_wire = (i2c_sda_t_internal ? 1'b1 : i2c_sda_o_internal) &
+    assign i2c_scl_wire = (i2c_scl_oe_internal ? 1'b1 : i2c_scl_o_internal);
+    assign i2c_sda_wire = (i2c_sda_oe_internal ? 1'b1 : i2c_sda_o_internal) &
                           (i2c_slave_sda_oe ? i2c_slave_sda_out : 1'b1);
 
     i2c_slave_eeprom #(
@@ -287,10 +287,10 @@ module tb_rv32_soc #(
     // Drive testbench output ports from internal signals
     assign i2c_scl_i = i2c_scl_wire;
     assign i2c_scl_o = i2c_scl_o_internal;
-    assign i2c_scl_t = i2c_scl_t_internal;
+    assign i2c_scl_oe = i2c_scl_oe_internal;
     assign i2c_sda_i = i2c_sda_wire;
     assign i2c_sda_o = i2c_sda_o_internal;
-    assign i2c_sda_t = i2c_sda_t_internal;
+    assign i2c_sda_oe = i2c_sda_oe_internal;
 
     // ========================================================================
     // DPI functions for trace generation
