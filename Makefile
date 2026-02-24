@@ -174,7 +174,9 @@ BUILD_TARGET = $(BUILD_DIR)/rv32soc
 .PHONY: all build-rtl build-sim rtl-build sim-build clean clean-tests run waves help info rtl-% sim-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
 # Default target - run all tests
-all: rtl-all sim-all compare-all freertos-compare-simple arch-test-all arch-test-sim
+all: rtl-all sim-all compare-all freertos-compare-simple
+	@make -f Makefile TRACE=1 arch-test-all
+	@make -f Makefile TRACE=1 arch-test-sim
 
 # Build RTL with Verilator
 build-rtl: $(BUILD_TARGET)

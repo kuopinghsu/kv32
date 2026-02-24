@@ -53,6 +53,10 @@ module rv32_core #(
     output logic        imem_req_valid,
     output logic [31:0] imem_req_addr,
     input  logic        imem_req_ready,
+    // Loop-free version of imem_req_addr for icache fill-pending checks.
+    // Uses dedup_consumed (not dedup_consuming) so it does not combinationally
+    // depend on imem_req_ready, breaking the UNOPTFLAT loop.
+    output logic [31:0] imem_req_addr_fill,
 
     input  logic        imem_resp_valid,
     input  logic [31:0] imem_resp_data,
@@ -544,6 +548,17 @@ module rv32_core #(
 
     assign imem_req_valid = imem_req_valid_comb;
     assign imem_req_addr  = imem_req_addr_comb;
+
+    // imem_req_addr_fill: same mux as imem_req_addr_comb but uses dedup_consumed
+    // instead of dedup_consuming so it does not depend on imem_req_ready.  This
+    // is used by the icache's fill-pending logic to break the combinational loop.
+    // Semantics: when dedup_consumed=1 and imem_req_ready=0, imem_req_addr stays
+    // at pc_if while imem_req_addr_fill advances to pc_next.  The two values give
+    // identical fill_same_line / fill_pend_burst_comb results because pc_if and
+    // pc_next are always in the same 32-byte cache line during sequential fetches.
+    assign imem_req_addr_fill = (branch_taken && !branch_flushed) ? branch_target :
+                                dedup_consumed                    ? pc_next :
+                                                                   pc_if;
 
     // ====== Fetch Request Lifecycle Debug Tracing ======
     `ifdef DEBUG

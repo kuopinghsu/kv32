@@ -132,13 +132,10 @@ module rv32_soc #(
     // Simple request/response protocol used by the processor core
     logic        imem_req_valid;      // Core has instruction fetch request
     logic [31:0] imem_req_addr;       // Instruction address to fetch
-    // imem_req_ready has a benign combinational loop through the icache's
-    // fill-pending optimisation (fill_pend_can_accept → imem_req_ready →
-    // dedup_consuming → imem_req_addr → fill_pend_burst_comb → fill_pend_can_accept).
-    // The loop is self-consistent: both branches converge to the same value.
-    /* verilator lint_off UNOPTFLAT */
     logic        imem_req_ready;      // Memory system ready for new request
-    /* verilator lint_on UNOPTFLAT */
+    // Loop-free version of imem_req_addr for icache fill-pending logic;
+    // uses dedup_consumed (without imem_req_ready) to break the UNOPTFLAT loop.
+    logic [31:0] imem_req_addr_fill;
     logic        imem_resp_valid;     // Instruction data available
     logic [31:0] imem_resp_data;      // Fetched instruction word
     logic        imem_resp_error;     // Access error (e.g., unmapped address)
@@ -414,6 +411,7 @@ module rv32_soc #(
         .imem_req_valid(imem_req_valid),
         .imem_req_addr(imem_req_addr),
         .imem_req_ready(imem_req_ready),
+        .imem_req_addr_fill(imem_req_addr_fill),
         .imem_resp_valid(imem_resp_valid),
         .imem_resp_data(imem_resp_data),
         .imem_resp_error(imem_resp_error),
@@ -481,6 +479,7 @@ module rv32_soc #(
                 .imem_req_valid (imem_req_valid),
                 .imem_req_addr  (imem_req_addr),
                 .imem_req_ready (imem_req_ready),
+                .imem_req_addr_fill (imem_req_addr_fill),
                 .imem_resp_valid(imem_resp_valid),
                 .imem_resp_data (imem_resp_data),
                 .imem_resp_error(imem_resp_error),

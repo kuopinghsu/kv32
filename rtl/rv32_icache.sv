@@ -49,6 +49,9 @@ module rv32_icache #(
     input  logic        imem_req_valid,
     input  logic [31:0] imem_req_addr,
     output logic        imem_req_ready,
+    // Loop-free version of imem_req_addr for fill-pending address checks
+    // (uses dedup_consumed, not dedup_consuming, so no imem_req_ready feedback).
+    input  logic [31:0] imem_req_addr_fill,
 
     output logic        imem_resp_valid,
     output logic [31:0] imem_resp_data,
@@ -265,12 +268,12 @@ module rv32_icache #(
     // request targeting the same cache line.  Overflow wraps naturally.
     logic [WORD_OFFSET_BITS-1:0] fill_pend_burst_comb;
     assign fill_pend_burst_comb = WORD_OFFSET_BITS'(
-        imem_req_addr[BYTE_OFFSET_BITS-1:2] - req_word_off);
+        imem_req_addr_fill[BYTE_OFFSET_BITS-1:2] - req_word_off);
 
     // Incoming address targets the same cache line currently being filled.
     logic fill_same_line;
     assign fill_same_line = cache_enable && fill_active_r &&
-        (imem_req_addr[31:BYTE_OFFSET_BITS] == req_addr_r[31:BYTE_OFFSET_BITS]);
+        (imem_req_addr_fill[31:BYTE_OFFSET_BITS] == req_addr_r[31:BYTE_OFFSET_BITS]);
 
     // The AXI beat for the incoming (not-yet-accepted) request is on the bus now.
     logic fill_pend_beat_now;
@@ -855,16 +858,10 @@ module rv32_icache #(
     //   S_LOOKUP (hit+ready) – zero-stall fast path: pipeline back-to-back hits
     //                          (fill_active_r is always 0 in S_LOOKUP)
     //
-    // Note: fill_pend_can_accept uses imem_req_addr (to check fill_same_line and
-    // fill_pend_burst_comb), and imem_req_addr in the core is driven by pc_if or
-    // pc_next = pc_if+4 depending on dedup_consuming = dedup_consumed &&
-    // imem_req_ready.  This creates a combinational loop that Verilator flags as
-    // UNOPTFLAT.  The loop is self-consistent: pc_if and pc_next+4 are always in
-    // the same 32-byte cache line during sequential fetches, so fill_same_line
-    // and fill_pend_burst_comb evaluate identically for both values.  Verilator
-    // converges in one iteration.  For synthesis this loop would need to be
-    // broken (e.g., by registering imem_req_addr or exporting pc_if directly).
-    /* verilator lint_off UNOPTFLAT */
+    // fill_pend_can_accept uses imem_req_addr_fill (not imem_req_addr) for the
+    // fill_same_line and fill_pend_burst_comb checks.  imem_req_addr_fill is
+    // computed in the core using dedup_consumed (without imem_req_ready), so it
+    // does not feed back into imem_req_ready and there is no combinational loop.
     assign imem_req_ready  = (state == S_IDLE) ||
                              (state == S_RESP && imem_resp_ready &&
                               !cmo_valid && !fill_active_r) ||
@@ -876,7 +873,6 @@ module rv32_icache #(
                              (state == S_FILL_REST && fill_pend_can_accept) ||
                              (state == S_LOOKUP && cache_enable && cache_hit &&
                               imem_resp_ready && !cmo_valid);
-    /* verilator lint_on UNOPTFLAT */
     // In the zero-stall hit path the response is valid directly in S_LOOKUP,
     // driven combinatorially from the SRAM read-data (no S_RESP register needed).
     // In S_FILL_REST, a fill-pending response is served from fill_pend_data_r
