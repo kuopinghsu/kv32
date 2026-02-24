@@ -255,6 +255,18 @@ module rv32_decoder (
                     end else begin
                         csr_op = funct3;
                         reg_we = 1'b1;
+                        // RISC-V Zicsr spec: CSR address bits[11:10]='11' means
+                        // read-only.  Any instruction that would write such a CSR
+                        // raises Illegal Instruction.
+                        // Write is attempted when:
+                        //   funct3[1:0]==01  → CSRRW/CSRRWI (always write)
+                        //   funct3[1:0]!=01  → CSRRS/CSRRC/CSRRSI/CSRRCI only
+                        //                       when rs1_addr (or zimm) ≠ 0
+                        if (instr[31:30] == 2'b11) begin
+                            if (funct3[1:0] == 2'b01 || rs1_addr != 5'd0) begin
+                                illegal = 1'b1;
+                            end
+                        end
                     end
                 end
 

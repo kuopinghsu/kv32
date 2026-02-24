@@ -270,9 +270,9 @@ __build-test:
 		exit 1; \
 	fi
 	@echo "Generating disassembly..."
-	$(OBJDUMP) -d $(OUT) > $(DIS_OUT)
+	@$(OBJDUMP) -d $(OUT) > $(DIS_OUT)
 	@echo "Generating readelf info..."
-	$(READELF) -a $(OUT) > $(READELF_OUT)
+	@$(READELF) -a $(OUT) > $(READELF_OUT)
 	@echo "Build complete: $(OUT)"
 	@echo ""
 

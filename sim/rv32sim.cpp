@@ -1142,35 +1142,36 @@ void RV32Simulator::step() {
             }
         } else {
             // CSR instructions (Zicsr extension)
+            //
+            // Determine do_write BEFORE reading the CSR so we can raise
+            // Illegal Instruction (no side-effects) if the CSR is read-only.
+            bool do_write;
+            switch (funct3) {
+                case 0x1: case 0x5:  do_write = true;         break; // CSRRW, CSRRWI
+                case 0x2: case 0x3:  do_write = (rs1 != 0);   break; // CSRRS, CSRRC
+                case 0x6: case 0x7:  do_write = (zimm != 0);  break; // CSRRSI, CSRRCI
+                default:             do_write = false;         break;
+            }
+
+            // Per RISC-V spec: CSR addr bits[11:10] == 2'b11 means read-only.
+            // Any write attempt to such a CSR raises an Illegal Instruction exception.
+            if (do_write && (csr_addr & 0xC00) == 0xC00) {
+                take_trap(CAUSE_ILLEGAL_INSTRUCTION, inst);
+                untick_slaves(); // Undo the slave tick — instruction not retired
+                inst_count--; csr_mcycle--; csr_minstret--;
+                return;
+            }
+
             uint32_t csr_val = read_csr(csr_addr);
             uint32_t write_val = 0;
-            bool do_write = false;
 
             switch (funct3) {
-                case 0x1: // CSRRW
-                    write_val = regs[rs1];
-                    do_write = true;
-                    break;
-                case 0x2: // CSRRS
-                    write_val = csr_val | regs[rs1];
-                    do_write = (rs1 != 0);
-                    break;
-                case 0x3: // CSRRC
-                    write_val = csr_val & ~regs[rs1];
-                    do_write = (rs1 != 0);
-                    break;
-                case 0x5: // CSRRWI
-                    write_val = zimm;
-                    do_write = true;
-                    break;
-                case 0x6: // CSRRSI
-                    write_val = csr_val | zimm;
-                    do_write = (zimm != 0);
-                    break;
-                case 0x7: // CSRRCI
-                    write_val = csr_val & ~zimm;
-                    do_write = (zimm != 0);
-                    break;
+                case 0x1: write_val = regs[rs1];          break; // CSRRW
+                case 0x2: write_val = csr_val | regs[rs1]; break; // CSRRS
+                case 0x3: write_val = csr_val & ~regs[rs1]; break; // CSRRC
+                case 0x5: write_val = zimm;               break; // CSRRWI
+                case 0x6: write_val = csr_val | zimm;     break; // CSRRSI
+                case 0x7: write_val = csr_val & ~zimm;    break; // CSRRCI
             }
 
             if (rd != 0) {

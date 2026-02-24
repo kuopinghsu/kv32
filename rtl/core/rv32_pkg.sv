@@ -139,7 +139,12 @@ package rv32_pkg;
         CSR_INSTRET    = 12'hC02,
         CSR_CYCLEH     = 12'hC80,
         CSR_TIMEH      = 12'hC81,
-        CSR_INSTRETH   = 12'hC82
+        CSR_INSTRETH   = 12'hC82,
+        // Machine information registers (read-only)
+        CSR_MVENDORID  = 12'hF11,
+        CSR_MARCHID    = 12'hF12,
+        CSR_MIMPID     = 12'hF13,
+        CSR_MHARTID    = 12'hF14
     } csr_addr_e;
 
 endpackage

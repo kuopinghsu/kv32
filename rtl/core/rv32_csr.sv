@@ -99,16 +99,14 @@ module rv32_csr (
     //   - csr_minstret is incremented at the *start* of every instruction.
     //   - So when the Nth instruction (csrrs cycle) executes, csr_minstret == N.
     //
-    // RTL correction formula (universally correct with or without WB bubble):
-    //   minstret (registered, old)
-    //   + retire_instr  -- WB instruction retiring this edge but not yet in
-    //                      minstret (0 if WB is a bubble or wb_exception)
-    //   + 1             -- the csrrs instruction itself (in MEM now)
+    // RTL correction formula:
+    //   minstret (registered, old)          -- instructions retired before this cycle
+    //   + retire_instr                       -- instruction in WB retiring this cycle
+    //   + 1                                  -- the csrrs instruction itself (in MEM)
     //   = N  (matches software simulator)
     //
-    // Note: retire_instr = wb_valid && !wb_exception, so WB exceptions are
-    // already excluded.  EX-stage exception is NOT used here to avoid a
-    // circular combinational path: exception→csr_rdata→fwd→ALU→exception.
+    // minstret increments on retire_instr (without !exception gate) so it
+    // tracks exactly the same count as the software simulator trace line number.
 `ifndef SYNTHESIS
     logic [63:0] cycle_csr_src;
     assign cycle_csr_src = trace_mode
@@ -220,6 +218,11 @@ module rv32_csr (
             CSR_INSTRETH:  csr_rdata = instret_csr_src[63:32];
             CSR_TIME:      csr_rdata = cycle_csr_src[31:0];   // TIME aliases to CYCLE
             CSR_TIMEH:     csr_rdata = cycle_csr_src[63:32];
+            // Machine information registers (read-only, always return fixed values)
+            CSR_MVENDORID: csr_rdata = 32'd0;
+            CSR_MARCHID:   csr_rdata = 32'd0;
+            CSR_MIMPID:    csr_rdata = 32'd0;
+            CSR_MHARTID:   csr_rdata = 32'd0;
             default: begin
                 csr_rdata   = 32'd0;
                 csr_illegal = (csr_op != 3'b0);
@@ -259,7 +262,7 @@ module rv32_csr (
             mcycle <= mcycle + 64'd1;
 
             // Instruction retired counter
-            if (retire_instr && !exception) begin
+            if (retire_instr) begin
                 minstret <= minstret + 64'd1;
             end
 

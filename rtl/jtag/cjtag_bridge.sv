@@ -157,27 +157,20 @@ module cjtag_bridge (
                 tckc_is_high <= 1'b1;
                 tmsc_toggle_count <= 5'd0;  // Reset counter on TCKC rising edge
 
-                `ifdef VERBOSE
-                $display("[%0t] TCKC POSEDGE detected! Resetting toggle count", $time);
-                `endif
+                `DBG2(("[%0t] TCKC POSEDGE detected! Resetting toggle count", $time));
             end
             // Track TCKC going low (escape sequence ends)
             else if (tckc_negedge) begin
                 tckc_is_high <= 1'b0;
 
-                `ifdef VERBOSE
-                $display("[%0t] TCKC NEGEDGE detected! Toggle count was %0d", $time, tmsc_toggle_count);
-                `endif
+                `DBG2(("[%0t] TCKC NEGEDGE detected! Toggle count was %0d", $time, tmsc_toggle_count));
             end
             // TCKC is held high - monitor TMSC toggles
             else if (tckc_is_high && tckc_s && tmsc_edge) begin
                 // Count TMSC toggles while TCKC is high
                 tmsc_toggle_count <= tmsc_toggle_count + 5'd1;
 
-                `ifdef VERBOSE
-                $display("[%0t] Escape: TMSC toggle #%0d detected",
-                         $time, tmsc_toggle_count + 5'd1);
-                `endif
+                `DBG2(("[%0t] Escape: TMSC toggle #%0d detected", $time, tmsc_toggle_count + 5'd1));
             end
         end
     end
@@ -200,10 +193,8 @@ module cjtag_bridge (
                 ST_OFFLINE: begin
                     // Check for escape sequence completion on TCKC falling edge
                     if (tckc_negedge) begin
-                        `ifdef VERBOSE
-                        $display("[%0t] OFFLINE (state=%0d): Escape sequence ended, toggles=%0d",
-                                 $time, state, tmsc_toggle_count);
-                        `endif
+                        `DBG2(("[%0t] OFFLINE (state=%0d): Escape sequence ended, toggles=%0d",
+                               $time, state, tmsc_toggle_count));
 
                         // Evaluate escape sequence based on toggle count
                         if (tmsc_toggle_count >= 5'd6 && tmsc_toggle_count <= 5'd7) begin
@@ -212,23 +203,17 @@ module cjtag_bridge (
                             activation_shift <= 11'd0;
                             activation_count <= 4'd0;
 
-                            `ifdef VERBOSE
-                            $display("[%0t] OFFLINE -> ONLINE_ACT (%0d toggles)",
-                                     $time, tmsc_toggle_count);
-                            `endif
+                            `DBG2(("[%0t] OFFLINE -> ONLINE_ACT (%0d toggles)",
+                                   $time, tmsc_toggle_count));
                         `ifndef SYNTHESIS
                         end else if (tmsc_toggle_count >= 5'd8) begin
                             // Reset escape (8+ toggles) - stay in OFFLINE
-                            `ifdef VERBOSE
-                            $display("[%0t] OFFLINE: Reset escape detected (%0d toggles), staying OFFLINE",
-                                     $time, tmsc_toggle_count);
-                            `endif
+                            `DBG2(("[%0t] OFFLINE: Reset escape detected (%0d toggles), staying OFFLINE",
+                                   $time, tmsc_toggle_count));
                         end else begin
                             // 4-5 toggles (deselection) stays in OFFLINE
-                            `ifdef VERBOSE
-                            $display("[%0t] OFFLINE: Reset escape detected (%0d toggles), staying OFFLINE",
-                                     $time, tmsc_toggle_count);
-                            `endif
+                            `DBG2(("[%0t] OFFLINE: Reset escape detected (%0d toggles), staying OFFLINE",
+                                   $time, tmsc_toggle_count));
                         `endif // SYNTHESIS
                         end
                     end
@@ -239,11 +224,11 @@ module cjtag_bridge (
                 // OAC = 0xB (1011 binary, LSB first: 1,1,0,1)
                 // =============================================================
                 ST_ONLINE_ACT: begin
-                    `ifdef VERBOSE
+                    `ifdef DEBUG
                     // Debug every clock cycle in ONLINE_ACT
                     if (tckc_negedge || tckc_posedge) begin
-                        $display("[%0t] ONLINE_ACT: tckc_negedge=%b tckc_posedge=%b activation_count=%0d tckc_s=%b tmsc_s=%b",
-                                 $time, tckc_negedge, tckc_posedge, activation_count, tckc_s, tmsc_s);
+                        `DBG2(("[%0t] ONLINE_ACT: tckc_negedge=%b tckc_posedge=%b activation_count=%0d tckc_s=%b tmsc_s=%b",
+                               $time, tckc_negedge, tckc_posedge, activation_count, tckc_s, tmsc_s));
                     end
                     `endif
 
@@ -253,19 +238,17 @@ module cjtag_bridge (
                         activation_shift <= 11'd0;
                         activation_count <= 4'd0;
 
-                        `ifdef VERBOSE
-                        $display("[%0t] ONLINE_ACT -> OFFLINE (reset escape: %0d toggles)",
-                                 $time, tmsc_toggle_count);
+                        `ifdef DEBUG
+                        `DBG2(("[%0t] ONLINE_ACT -> OFFLINE (reset escape: %0d toggles)",
+                               $time, tmsc_toggle_count));
                         `endif
                     end
                     // Sample TMSC on TCKC falling edge (normal activation packet reception)
                     else if (tckc_negedge) begin
                         activation_shift <= {tmsc_s, activation_shift[10:1]};
 
-                        `ifdef VERBOSE
-                        $display("[%0t] ONLINE_ACT: bit %0d, tmsc_s=%b",
-                                 $time, activation_count, tmsc_s);
-                        `endif
+                        `DBG2(("[%0t] ONLINE_ACT: bit %0d, tmsc_s=%b",
+                               $time, activation_count, tmsc_s));
 
                         // After 12 bits (count 0-11), check the full activation packet
                         // Format: OAC (4 bits) + EC (4 bits) + CP (4 bits) - all LSB first
@@ -275,16 +258,16 @@ module cjtag_bridge (
                             // Packet: {tmsc_s, activation_shift[10:0]}
                             // OAC: bits [3:0], EC: bits [7:4], CP: bits [11:8]
 
-                            `ifdef VERBOSE
-                            $display("[%0t] Checking activation packet:", $time);
-                            $display("    Full packet: %b", {tmsc_s, activation_shift[10:0]});
-                            $display("    OAC=%b (expected=1100), EC=%b (expected=1000), CP=%b",
-                                     {tmsc_s, activation_shift[10:0]}[3:0],
-                                     {tmsc_s, activation_shift[10:0]}[7:4],
-                                     {tmsc_s, activation_shift[10:0]}[11:8]);
-                            $display("    Calculated CP=%b, CP valid=%b",
-                                     {tmsc_s, activation_shift[10:0]}[3:0] ^ {tmsc_s, activation_shift[10:0]}[7:4],
-                                     {tmsc_s, activation_shift[10:0]}[11:8] == ({tmsc_s, activation_shift[10:0]}[3:0] ^ {tmsc_s, activation_shift[10:0]}[7:4]));
+                            `ifdef DEBUG
+                            `DBG2(("[%0t] Checking activation packet:", $time));
+                            `DBG2(("    Full packet: %b", {tmsc_s, activation_shift[10:0]}));
+                            `DBG2(("    OAC=%b (expected=1100), EC=%b (expected=1000), CP=%b",
+                                   {tmsc_s, activation_shift[10:0]}[3:0],
+                                   {tmsc_s, activation_shift[10:0]}[7:4],
+                                   {tmsc_s, activation_shift[10:0]}[11:8]));
+                            `DBG2(("    Calculated CP=%b, CP valid=%b",
+                                   {tmsc_s, activation_shift[10:0]}[3:0] ^ {tmsc_s, activation_shift[10:0]}[7:4],
+                                   {tmsc_s, activation_shift[10:0]}[11:8] == ({tmsc_s, activation_shift[10:0]}[3:0] ^ {tmsc_s, activation_shift[10:0]}[7:4])));
                             `endif
 
                             // Validate: OAC=1100, EC=1000, CP matches calculated value
@@ -297,22 +280,22 @@ module cjtag_bridge (
                                 state <= ST_OSCAN1;
                                 bit_pos <= 2'd0;
 
-                                `ifdef VERBOSE
-                                $display("[%0t] ONLINE_ACT -> OSCAN1 (activation packet valid!)", $time);
-                                `endif
+                                `DBG2(("[%0t] ONLINE_ACT -> OSCAN1 (activation packet valid!)", $time));
                             end else begin
                                 state <= ST_OFFLINE;
 
-                                `ifdef VERBOSE
+                                `ifdef DEBUG
                                 if ({tmsc_s, activation_shift[10:0]}[11:8] != ({tmsc_s, activation_shift[10:0]}[3:0] ^ {tmsc_s, activation_shift[10:0]}[7:4])) begin
-                                    $display("[%0t] ONLINE_ACT -> OFFLINE (CP parity error: rx=%b calc=%b)",
-                                             $time,
-                                             {tmsc_s, activation_shift[10:0]}[11:8],
-                                             {tmsc_s, activation_shift[10:0]}[3:0] ^ {tmsc_s, activation_shift[10:0]}[7:4]);
+                                    `DBG2(("[%0t] ONLINE_ACT -> OFFLINE (CP parity error: rx=%b calc=%b)",
+                                           $time,
+                                           {tmsc_s, activation_shift[10:0]}[11:8],
+                                           {tmsc_s, activation_shift[10:0]}[3:0] ^ {tmsc_s, activation_shift[10:0]}[7:4]));
                                 end else if ({tmsc_s, activation_shift[10:0]}[3:0] != 4'b1100) begin
-                                    $display("[%0t] ONLINE_ACT -> OFFLINE (invalid OAC: %b)", $time, {tmsc_s, activation_shift[10:0]}[3:0]);
+                                    `DBG2(("[%0t] ONLINE_ACT -> OFFLINE (invalid OAC: %b)",
+                                           $time, {tmsc_s, activation_shift[10:0]}[3:0]));
                                 end else begin
-                                    $display("[%0t] ONLINE_ACT -> OFFLINE (invalid EC: %b)", $time, {tmsc_s, activation_shift[10:0]}[7:4]);
+                                    `DBG2(("[%0t] ONLINE_ACT -> OFFLINE (invalid EC: %b)",
+                                           $time, {tmsc_s, activation_shift[10:0]}[7:4]));
                                 end
                                 `endif
                             end
@@ -328,23 +311,21 @@ module cjtag_bridge (
                 // OSCAN1: Active mode with 3-bit scan packets
                 // =============================================================
                 ST_OSCAN1: begin
-                    `ifdef VERBOSE
+                    `ifdef DEBUG
                     if (tckc_negedge)
-                        $display("[%0t] OSCAN1 negedge: toggles=%0d, bit_pos=%0d",
-                                 $time, tmsc_toggle_count, bit_pos);
+                        `DBG2(("[%0t] OSCAN1 negedge: toggles=%0d, bit_pos=%0d",
+                               $time, tmsc_toggle_count, bit_pos));
                     if (tckc_posedge)
-                        $display("[%0t] OSCAN1 posedge: toggles=%0d, bit_pos=%0d",
-                                 $time, tmsc_toggle_count, bit_pos);
+                        `DBG2(("[%0t] OSCAN1 posedge: toggles=%0d, bit_pos=%0d",
+                               $time, tmsc_toggle_count, bit_pos));
                     `endif
 
                     // Sample on TCKC falling edge
                     if (tckc_negedge) begin
                         // Check for deselection escape (4-5 toggles while TCKC was high)
                         if (tmsc_toggle_count >= 5'd4 && tmsc_toggle_count <= 5'd5) begin
-                            `ifdef VERBOSE
-                            $display("[%0t] *** OSCAN1 -> OFFLINE *** (deselection escape detected, toggles=%0d)",
-                                     $time, tmsc_toggle_count);
-                            `endif
+                            `DBG2(("[%0t] *** OSCAN1 -> OFFLINE *** (deselection escape detected, toggles=%0d)",
+                                   $time, tmsc_toggle_count));
 
                             state <= ST_OFFLINE;
                             activation_shift <= 11'd0;
@@ -353,10 +334,8 @@ module cjtag_bridge (
                         end
                         // Check for reset escape (8+ toggles while TCKC was high)
                         else if (tmsc_toggle_count >= 5'd8) begin
-                            `ifdef VERBOSE
-                            $display("[%0t] *** OSCAN1 -> OFFLINE *** (reset escape detected, toggles=%0d >= 8)",
-                                     $time, tmsc_toggle_count);
-                            `endif
+                            `DBG2(("[%0t] *** OSCAN1 -> OFFLINE *** (reset escape detected, toggles=%0d >= 8)",
+                                   $time, tmsc_toggle_count));
 
                             state <= ST_OFFLINE;
                             activation_shift <= 11'd0;
@@ -375,10 +354,8 @@ module cjtag_bridge (
                                 default: bit_pos <= 2'd0;
                             endcase
 
-                            `ifdef VERBOSE
-                            $display("[%0t] OSCAN1 negedge: bit_pos=%0d, tmsc_s=%b",
-                                     $time, bit_pos, tmsc_s);
-                            `endif
+                            `DBG2(("[%0t] OSCAN1 negedge: bit_pos=%0d, tmsc_s=%b",
+                                   $time, bit_pos, tmsc_s));
                         end
                     end
                 end
@@ -432,10 +409,8 @@ module cjtag_bridge (
                                 tdi_int <= ~tmsc_sampled;
                                 tmsc_oen_int <= 1'b1;  // Input mode for TMS
 
-                                `ifdef VERBOSE
-                                $display("[%0t] OSCAN1 posedge: bit_pos=1, tdi_int=%b (inverted from %b)",
-                                         $time, ~tmsc_sampled, tmsc_sampled);
-                                `endif
+                                `DBG2(("[%0t] OSCAN1 posedge: bit_pos=1, tdi_int=%b (inverted from %b)",
+                                       $time, ~tmsc_sampled, tmsc_sampled));
                             end
 
                             2'd2: begin
@@ -445,10 +420,8 @@ module cjtag_bridge (
                                 tmsc_oen_int <= 1'b0;  // Output mode for TDO
                                 // TDO will be sampled on next clock cycle after TCK rises
 
-                                `ifdef VERBOSE
-                                $display("[%0t] OSCAN1 posedge: bit_pos=2, TCK high, tms_int=%b, driving TDO=%b",
-                                         $time, tmsc_sampled, tdo_i);
-                                `endif
+                                `DBG2(("[%0t] OSCAN1 posedge: bit_pos=2, TCK high, tms_int=%b, driving TDO=%b",
+                                       $time, tmsc_sampled, tdo_i));
                             end
 
                             default: begin
@@ -461,9 +434,7 @@ module cjtag_bridge (
                     if (tckc_negedge && bit_pos == 2'd2) begin
                         tck_int <= 1'b0;  // End TCK pulse
 
-                        `ifdef VERBOSE
-                        $display("[%0t] OSCAN1 negedge: bit_pos=2, TCK low", $time);
-                        `endif
+                        `DBG2(("[%0t] OSCAN1 negedge: bit_pos=2, TCK low", $time));
                     end
                 end
 
@@ -495,7 +466,7 @@ module cjtag_bridge (
     assign online_o = (state == ST_OSCAN1);
     assign nsp_o = (state != ST_OSCAN1);  // Standard Protocol active when not in OScan1
 
-    `ifdef VERBOSE
+    `ifdef DEBUG
     // Monitor state changes
     logic [2:0] prev_state;
     always_ff @(posedge clk_i or negedge ntrst_i) begin
@@ -503,7 +474,7 @@ module cjtag_bridge (
             prev_state <= 3'd0;  // ST_OFFLINE
         end else begin
             if (state != prev_state) begin
-                $display("[%0t] STATE CHANGE: %0d -> %0d", $time, prev_state, state);
+                `DBG2(("[%0t] STATE CHANGE: %0d -> %0d", $time, prev_state, state));
                 prev_state <= state;
             end
         end

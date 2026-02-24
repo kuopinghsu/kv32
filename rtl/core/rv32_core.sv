@@ -1395,16 +1395,23 @@ module rv32_core #(
     //   - Don't flush on EX exceptions (exception detected IN EX)
     //   - Don't flush on MRET (MRET is evaluated IN EX)
     //
-    // MEM flush: On all exceptions, interrupts, and MRET
-    //   - But not on branches (need PC+4 for JAL/JALR link register)
+    // MEM flush: Only on interrupts and WB-stage exceptions (see note below).
+    //   Synchronous EX exceptions must NOT flush MEM because the MEM instruction
+    //   is older in program order and must be allowed to retire.
     assign if_flush = (branch_taken && !branch_flushed) || exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush;
     assign id_flush = (branch_taken && !branch_flushed) || exception || irq_pending || is_mret_ex;
     assign ex_flush = irq_pending || wb_exception;
-    // Note: is_mret_ex is intentionally NOT included here. When mret is in EX stage,
-    // the instruction currently in MEM is a valid trap-handler epilogue instruction and
-    // should be allowed to retire.  mret itself passes through MEM/WB with no side effects
-    // (reg_we=0, mem_op=none, csr_op=0) so it retires cleanly and appears in the trace.
-    assign mem_flush = exception || irq_pending || wb_exception;
+    // MEM flush: Only on interrupts (must drain for re-execution after MRET) and
+    //   WB-stage exceptions (load/store access faults — WB is the oldest stage, so
+    //   flush everything in MEM/EX/ID/IF to squash newer instructions).
+    //
+    //   Synchronous EX-stage exceptions (illegal instruction, misaligned address,
+    //   ecall, ebreak, branch-misalignment) must NOT flush MEM: the instruction
+    //   in MEM is OLDER in program order than the exception-causing instruction
+    //   in EX; it was already issued and must be allowed to retire.  The faulting
+    //   EX instruction is prevented from advancing into MEM via the
+    //   `mem_valid <= ... && !exception` suppression term.
+    assign mem_flush = irq_pending || wb_exception;
 
     // ====== Flush Event Debug Tracing ======
     `ifdef DEBUG
@@ -1575,9 +1582,13 @@ module rv32_core #(
                 rs2_data_mem  <= rs2_forwarded;
                 rs1_addr_mem  <= rs1_addr_ex;
                 rd_addr_mem   <= rd_addr_ex;
-                reg_we_mem    <= reg_we_ex;
-                mem_read_mem  <= mem_read_ex;
-                mem_write_mem <= mem_write_ex;
+                // Gate side-effect signals with the same condition as mem_valid.
+                // When the EX instruction cannot proceed (exception / irq / wb_fault),
+                // mem_valid is 0 and these must also be 0; otherwise reg_we_wb can
+                // become 1 in an invalid WB stage, violating the pipeline invariant.
+                reg_we_mem    <= reg_we_ex    && !exception && !irq_pending && !wb_exception;
+                mem_read_mem  <= mem_read_ex  && !exception && !irq_pending && !wb_exception;
+                mem_write_mem <= mem_write_ex && !exception && !irq_pending && !wb_exception;
                 mem_op_mem    <= mem_op_ex;
                 system_mem    <= system_ex;
                 csr_op_mem    <= csr_op_ex;
