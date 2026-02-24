@@ -143,7 +143,7 @@ module axi_arbiter #(
                     // Count AR handshakes from M0
                     if (m0_axi_arvalid && m0_axi_arready) begin
                         m0_ar_count <= m0_ar_count + 1'b1;
-                        `DBG2(("AR Arbiter: M0 AR complete count=%0d", m0_ar_count + 1));
+                        `DEBUG2(("AR Arbiter: M0 AR complete count=%0d", m0_ar_count + 1));
                     end
 
                     // Switch conditions:
@@ -154,7 +154,7 @@ module axi_arbiter #(
                             (m0_axi_arvalid && m0_axi_arready && m0_ar_count + 1'b1 >= MAX_CONSECUTIVE_AR)) begin
                             ar_state <= AR_MASTER1;
                             m0_ar_count <= '0;  // Reset M0 count
-                            `DBG2(("AR Arbiter: M0 -> M1 (count=%0d)", m0_ar_count));
+                            `DEBUG2(("AR Arbiter: M0 -> M1 (count=%0d)", m0_ar_count));
                         end
                     end
                 end
@@ -163,7 +163,7 @@ module axi_arbiter #(
                     // Count AR handshakes from M1
                     if (m1_axi_arvalid && m1_axi_arready) begin
                         m1_ar_count <= m1_ar_count + 1'b1;
-                        `DBG2(("AR Arbiter: M1 AR complete count=%0d", m1_ar_count + 1));
+                        `DEBUG2(("AR Arbiter: M1 AR complete count=%0d", m1_ar_count + 1));
                     end
 
                     // Switch conditions:
@@ -174,7 +174,7 @@ module axi_arbiter #(
                             (m1_axi_arvalid && m1_axi_arready && m1_ar_count + 1'b1 >= MAX_CONSECUTIVE_AR)) begin
                             ar_state <= AR_MASTER0;
                             m1_ar_count <= '0;  // Reset M1 count
-                            `DBG2(("AR Arbiter: M1 -> M0 (count=%0d)", m1_ar_count));
+                            `DEBUG2(("AR Arbiter: M1 -> M0 (count=%0d)", m1_ar_count));
                         end
                     end
                 end
@@ -255,13 +255,13 @@ module axi_arbiter #(
 
                 read_master_fifo[read_fifo_wr_ptr[$clog2(OUTSTANDING_DEPTH*2)-1:0]] <= entry;
                 read_fifo_wr_ptr <= read_fifo_wr_ptr + 1;
-                `DBG2(("Arbiter: AR FIFO push master=%0d id=%0d", entry.master_id, entry.transaction_id));
+                `DEBUG2(("Arbiter: AR FIFO push master=%0d id=%0d", entry.master_id, entry.transaction_id));
             end
 
             // Pop from FIFO when R handshake completes
             if (s_axi_rvalid && s_axi_rready) begin
                 read_fifo_rd_ptr <= read_fifo_rd_ptr + 1;
-                `DBG2(("Arbiter: R FIFO pop id=%0d", s_axi_rid));
+                `DEBUG2(("Arbiter: R FIFO pop id=%0d", s_axi_rid));
             end
         end
     end

@@ -103,12 +103,12 @@ module i2c_slave_eeprom #(
                 bit_count     <= 3'h0;
                 rd_addr_acked <= 1'b0;
                 sda_oe        <= 1'b0;
-                `DBG2(("[I2C_SLAVE] START condition detected"));
+                `DEBUG2(("[I2C_SLAVE] START condition detected"));
             end else if (stop_cond) begin
                 state         <= IDLE;
                 rd_addr_acked <= 1'b0;
                 sda_oe        <= 1'b0;
-                `DBG2(("[I2C_SLAVE] STOP condition detected"));
+                `DEBUG2(("[I2C_SLAVE] STOP condition detected"));
             end else begin
                 case (state)
 
@@ -131,7 +131,7 @@ module i2c_slave_eeprom #(
                                 rw_bit     <= sda_in;
                                 state      <= ACK_ADDR;
                                 bit_count  <= 3'h0;
-                                `DBG2(("[I2C_SLAVE] Address received: 0x%02h, match=%b (expected=0x%02h)",
+                                `DEBUG2(("[I2C_SLAVE] Address received: 0x%02h, match=%b (expected=0x%02h)",
                                          {shift_reg[6:0], sda_in}, (shift_reg[6:0] == DEVICE_ADDR), DEVICE_ADDR));
                             end
                         end
@@ -153,7 +153,7 @@ module i2c_slave_eeprom #(
                                     // First scl_falling: drive ACK (SDA low)
                                     sda_out <= 1'b0;
                                     sda_oe  <= 1'b1;
-                                    `DBG2(("[I2C_SLAVE] ACK_ADDR: driving ACK, rw=%b, mem_addr=0x%02h", rw_bit, mem_addr));
+                                    `DEBUG2(("[I2C_SLAVE] ACK_ADDR: driving ACK, rw=%b, mem_addr=0x%02h", rw_bit, mem_addr));
                                 end else begin
                                     // Second scl_falling (read only): drive MSB, enter READ_DATA
                                     sda_out       <= shift_reg[7];
@@ -161,12 +161,12 @@ module i2c_slave_eeprom #(
                                     rd_addr_acked <= 1'b0;
                                     state         <= READ_DATA;
                                     bit_count     <= 3'h0;
-                                    `DBG2(("[I2C_SLAVE] ACK_ADDR: first data bit=%b, entering READ_DATA (mem_addr=0x%02h, data=0x%02h)", shift_reg[7], mem_addr, shift_reg));
+                                    `DEBUG2(("[I2C_SLAVE] ACK_ADDR: first data bit=%b, entering READ_DATA (mem_addr=0x%02h, data=0x%02h)", shift_reg[7], mem_addr, shift_reg));
                                 end
                             end else begin
                                 sda_oe <= 1'b0;   // Release = NACK
                                 state  <= IDLE;
-                                `DBG2(("[I2C_SLAVE] ACK_ADDR: NACK (no addr match), addr_match=%b", addr_match));
+                                `DEBUG2(("[I2C_SLAVE] ACK_ADDR: NACK (no addr match), addr_match=%b", addr_match));
                             end
                         end else if (scl_rising) begin
                             // ACK bit sampled by master
@@ -179,7 +179,7 @@ module i2c_slave_eeprom #(
                                     // Read: load shift_reg, set flag, wait for next scl_falling
                                     shift_reg     <= memory[mem_addr];
                                     rd_addr_acked <= 1'b1;
-                                    `DBG2(("[I2C_SLAVE] ACK_ADDR rising (read): mem_addr=0x%02h, data=0x%02h, waiting for scl_falling", mem_addr, memory[mem_addr]));
+                                    `DEBUG2(("[I2C_SLAVE] ACK_ADDR rising (read): mem_addr=0x%02h, data=0x%02h, waiting for scl_falling", mem_addr, memory[mem_addr]));
                                 end
                             end
                         end
@@ -228,7 +228,7 @@ module i2c_slave_eeprom #(
                                 mem_addr  <= mem_addr + 1;
                                 bit_count <= 3'h0;
                                 state     <= ACK_WRITE;
-                                `DBG2(("[I2C_SLAVE] Wrote 0x%02h to addr 0x%02h",
+                                `DEBUG2(("[I2C_SLAVE] Wrote 0x%02h to addr 0x%02h",
                                         {shift_reg[6:0], sda_in}, mem_addr));
                             end
                         end
@@ -258,14 +258,14 @@ module i2c_slave_eeprom #(
                         if (scl_falling) begin
                             if (bit_count < 3'd7) begin
                                 // Drive next bit: shift_reg[6] = bit N+1 before shift
-                                `DBG2(("[I2C_SLAVE] READ_DATA: bit_count=%0d, next_sda=%b (shift_reg=0x%02h)", bit_count, shift_reg[6], shift_reg));
+                                `DEBUG2(("[I2C_SLAVE] READ_DATA: bit_count=%0d, next_sda=%b (shift_reg=0x%02h)", bit_count, shift_reg[6], shift_reg));
                                 sda_out   <= shift_reg[6];
                                 sda_oe    <= 1'b1;
                                 shift_reg <= {shift_reg[6:0], 1'b0};
                                 bit_count <= bit_count + 1;
                             end else begin
                                 // bit_count == 7: all 8 bits sent, transition to ACK_READ
-                                `DBG2(("[I2C_SLAVE] READ_DATA: bit_count=7 done (shift_reg=0x%02h)", shift_reg));
+                                `DEBUG2(("[I2C_SLAVE] READ_DATA: bit_count=7 done (shift_reg=0x%02h)", shift_reg));
                                 bit_count <= 3'h0;
                                 state     <= ACK_READ;
                                 // ACK_READ will release sda_oe
@@ -290,7 +290,7 @@ module i2c_slave_eeprom #(
                                 rd_addr_acked <= 1'b0;
                                 state         <= READ_DATA;
                                 bit_count     <= 3'h0;
-                                `DBG2(("[I2C_SLAVE] ACK_READ: driving next MSB=%b, entering READ_DATA", shift_reg[7]));
+                                `DEBUG2(("[I2C_SLAVE] ACK_READ: driving next MSB=%b, entering READ_DATA", shift_reg[7]));
                             end
                         end else if (scl_rising) begin
                             if (sda_in == 1'b0) begin
@@ -298,11 +298,11 @@ module i2c_slave_eeprom #(
                                 mem_addr      <= mem_addr + 1;
                                 shift_reg     <= memory[mem_addr + 1];
                                 rd_addr_acked <= 1'b1;
-                                `DBG2(("[I2C_SLAVE] ACK_READ: master ACK, loading next byte mem_addr+1=0x%02h", mem_addr + 1));
+                                `DEBUG2(("[I2C_SLAVE] ACK_READ: master ACK, loading next byte mem_addr+1=0x%02h", mem_addr + 1));
                             end else begin
                                 // Master NACK: stop sending
                                 state <= IDLE;
-                                `DBG2(("[I2C_SLAVE] ACK_READ: master NACK, going IDLE"));
+                                `DEBUG2(("[I2C_SLAVE] ACK_READ: master NACK, going IDLE"));
                             end
                         end
                     end

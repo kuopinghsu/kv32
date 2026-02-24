@@ -14,22 +14,22 @@ package rv32_pkg;
     // Debug Display Macros
     // ========================================================================
     // Usage:
-    //   `DBG1(("[INFO] Critical event: value=0x%h", value))
-    //   `DBG2(("[VERBOSE] Internal state: x=%d y=%d", x, y))
+    //   `DEBUG1(("[INFO] Critical event: value=0x%h", value))
+    //   `DEBUG2(("[VERBOSE] Internal state: x=%d y=%d", x, y))
     //
     // Note: Use double parentheses for arguments to handle variable arg lists
     // ========================================================================
 
 `ifdef DEBUG_LEVEL_1
-    `define DBG1(msg) $display("[DEBUG] ", $sformatf msg)
+    `define DEBUG1(msg) $display("[DEBUG] ", $sformatf msg)
 `else
-    `define DBG1(msg)
+    `define DEBUG1(msg)
 `endif
 
 `ifdef DEBUG_LEVEL_2
-    `define DBG2(msg) $display("[DEBUG] ", $sformatf msg)
+    `define DEBUG2(msg) $display("[DEBUG] ", $sformatf msg)
 `else
-    `define DBG2(msg)
+    `define DEBUG2(msg)
 `endif
 
     // Opcodes

@@ -110,9 +110,9 @@ module mem_axi_ro #(
             ar_buf_valid <= ar_buf_valid_next;
             ar_buf_addr  <= ar_buf_addr_next;
             if (ar_buf_valid_next && !ar_buf_valid)
-                `DBG2(("%s: AR buffered addr=0x%h", BRIDGE_NAME, ar_buf_addr_next));
+                `DEBUG2(("%s: AR buffered addr=0x%h", BRIDGE_NAME, ar_buf_addr_next));
             if (ar_buf_valid && !ar_buf_valid_next)
-                `DBG2(("%s: AR buffer drained", BRIDGE_NAME));
+                `DEBUG2(("%s: AR buffer drained", BRIDGE_NAME));
         end
     end
 
@@ -207,14 +207,14 @@ module mem_axi_ro #(
                 fifo_data [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= axi_rdata;
                 fifo_error[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= (axi_rresp != 2'b00);
                 resp_wr_ptr <= resp_wr_ptr + 1'b1;
-                `DBG2(("%s: R FIFO push data=0x%h resp=%0d count=%0d", BRIDGE_NAME, axi_rdata, axi_rresp, resp_count + 1));
+                `DEBUG2(("%s: R FIFO push data=0x%h resp=%0d count=%0d", BRIDGE_NAME, axi_rdata, axi_rresp, resp_count + 1));
             end
             if (resp_pop) begin
                 resp_rd_ptr <= resp_rd_ptr + 1'b1;
-                `DBG2(("%s: mem_resp FIFO consumed count=%0d", BRIDGE_NAME, resp_count - 1));
+                `DEBUG2(("%s: mem_resp FIFO consumed count=%0d", BRIDGE_NAME, resp_count - 1));
             end
             if (resp_bypass)
-                `DBG2(("%s: mem_resp BYPASS data=0x%h", BRIDGE_NAME, axi_rdata));
+                `DEBUG2(("%s: mem_resp BYPASS data=0x%h", BRIDGE_NAME, axi_rdata));
 
             case ({resp_push, resp_pop})
                 2'b10: resp_count <= resp_count + 1'b1;

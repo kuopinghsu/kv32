@@ -112,11 +112,11 @@ module mem_axi #(
                 axi_arvalid <= 1'b1;
                 axi_araddr  <= mem_req_addr;
                 axi_arid    <= CONST_ID;
-                `DBG2(("%s: AR launch addr=0x%h id=%0d", BRIDGE_NAME, mem_req_addr, CONST_ID));
+                `DEBUG2(("%s: AR launch addr=0x%h id=%0d", BRIDGE_NAME, mem_req_addr, CONST_ID));
             end else if (axi_arvalid && axi_arready) begin
                 // AR handshake complete
                 axi_arvalid <= 1'b0;
-                `DBG2(("%s: AR accepted", BRIDGE_NAME));
+                `DEBUG2(("%s: AR accepted", BRIDGE_NAME));
             end
         end
     end
@@ -173,11 +173,11 @@ module mem_axi #(
                 axi_awvalid <= 1'b1;
                 axi_awaddr  <= mem_req_addr;
                 axi_awid    <= CONST_ID;
-                `DBG2(("%s: AW launch addr=0x%h id=%0d", BRIDGE_NAME, mem_req_addr, CONST_ID));
+                `DEBUG2(("%s: AW launch addr=0x%h id=%0d", BRIDGE_NAME, mem_req_addr, CONST_ID));
             end else if (axi_awvalid && axi_awready) begin
                 // AW handshake complete
                 axi_awvalid <= 1'b0;
-                `DBG2(("%s: AW accepted", BRIDGE_NAME));
+                `DEBUG2(("%s: AW accepted", BRIDGE_NAME));
             end
         end
     end
@@ -210,13 +210,13 @@ module mem_axi #(
                 axi_wvalid <= 1'b1;
                 axi_wdata  <= mem_req_wdata;
                 axi_wstrb  <= mem_req_we;
-                `DBG2(("%s: W launch data=0x%h strb=0x%h", BRIDGE_NAME, mem_req_wdata, mem_req_we));
+                `DEBUG2(("%s: W launch data=0x%h strb=0x%h", BRIDGE_NAME, mem_req_wdata, mem_req_we));
             end else if (axi_wvalid && axi_wready) begin
                 // W handshake complete
                 axi_wvalid <= 1'b0;
-                `DBG2(("%s: W accepted", BRIDGE_NAME));
+                `DEBUG2(("%s: W accepted", BRIDGE_NAME));
             end else if (axi_wvalid && !axi_wready) begin
-                `DBG2(("%s: W waiting for wready", BRIDGE_NAME));
+                `DEBUG2(("%s: W waiting for wready", BRIDGE_NAME));
             end
         end
     end
@@ -235,7 +235,7 @@ module mem_axi #(
 
     always @(posedge clk) begin
         if (mem_req_valid && !mem_req_ready) begin
-            `DBG2(("%s: mem_req BLOCKED arvalid=%b awvalid=%b wvalid=%b rd_full=%b wr_full=%b",
+            `DEBUG2(("%s: mem_req BLOCKED arvalid=%b awvalid=%b wvalid=%b rd_full=%b wr_full=%b",
                    BRIDGE_NAME, axi_arvalid, axi_awvalid, axi_wvalid, read_fifo_full, write_fifo_full));
         end
     end
@@ -261,7 +261,7 @@ module mem_axi #(
                 fifo_error   [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= (axi_rresp != 2'b00);
                 fifo_is_write[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= 1'b0;
                 resp_wr_ptr <= resp_wr_ptr + 1'b1;
-                `DBG2(("%s: R response FIFO push data=0x%h resp=%0d count=%0d", BRIDGE_NAME, axi_rdata, axi_rresp, resp_count + 1));
+                `DEBUG2(("%s: R response FIFO push data=0x%h resp=%0d count=%0d", BRIDGE_NAME, axi_rdata, axi_rresp, resp_count + 1));
             end
             // Push: AXI B channel response (write)
             else if (resp_push_b) begin
@@ -269,13 +269,13 @@ module mem_axi #(
                 fifo_error   [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= (axi_bresp != 2'b00);
                 fifo_is_write[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= 1'b1;
                 resp_wr_ptr <= resp_wr_ptr + 1'b1;
-                `DBG2(("%s: B response FIFO push bresp=%0d count=%0d", BRIDGE_NAME, axi_bresp, resp_count + 1));
+                `DEBUG2(("%s: B response FIFO push bresp=%0d count=%0d", BRIDGE_NAME, axi_bresp, resp_count + 1));
             end
 
             // Pop: Core consumes response
             if (resp_pop) begin
                 resp_rd_ptr <= resp_rd_ptr + 1'b1;
-                `DBG2(("%s: mem_resp consumed count=%0d", BRIDGE_NAME, resp_count - 1));
+                `DEBUG2(("%s: mem_resp consumed count=%0d", BRIDGE_NAME, resp_count - 1));
             end
 
             case ({resp_push_r || resp_push_b, resp_pop})

@@ -193,10 +193,10 @@ module axi_memory #(
                 write_addr_reg <= axi_awaddr;
                 write_addr_valid <= 1'b1;
                 stat_aw_requests <= stat_aw_requests + 1;
-                `DBG2(("AXI_MEM: Write addr accepted addr=0x%h", axi_awaddr));
+                `DEBUG2(("AXI_MEM: Write addr accepted addr=0x%h", axi_awaddr));
             end else if (write_addr_valid && axi_wvalid && write_can_accept) begin
                 write_addr_valid <= 1'b0;  // Clear after data arrives and pipeline accepts
-                `DBG2(("AXI_MEM: Write data accepted data=0x%h strb=0x%h", axi_wdata, axi_wstrb));
+                `DEBUG2(("AXI_MEM: Write data accepted data=0x%h strb=0x%h", axi_wdata, axi_wstrb));
             end
 
             // Handle simultaneous AW and B
@@ -268,7 +268,7 @@ module axi_memory #(
             static int prev_write_addr_valid = 0;
             static int prev_write_pipe0_valid = 0;
             if (write_addr_valid != prev_write_addr_valid || write_pipe[0].valid != prev_write_pipe0_valid) begin
-                `DBG2(("[DEBUG] AXI_MEM: write_addr_valid=%b write_pipe[0].valid=%b axi_bvalid=%b axi_bready=%b",
+                `DEBUG2(("[DEBUG] AXI_MEM: write_addr_valid=%b write_pipe[0].valid=%b axi_bvalid=%b axi_bready=%b",
                     write_addr_valid, write_pipe[0].valid, axi_bvalid, axi_bready));
                 prev_write_addr_valid = write_addr_valid;
                 prev_write_pipe0_valid = write_pipe[0].valid;

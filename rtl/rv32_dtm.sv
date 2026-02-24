@@ -133,7 +133,7 @@ module rv32_dtm #(
             case (ir_i)
                 IR_IDCODE: begin
                     idcode_shift <= IDCODE;
-                    `DBG2(("[%0t] DTM: CAPTURE_DR IDCODE, loading %h", $time, IDCODE));
+                    `DEBUG2(("[%0t] DTM: CAPTURE_DR IDCODE, loading %h", $time, IDCODE));
                 end
                 IR_DTMCS:   dtmcs_shift  <= DTMCS_VALUE;
                 IR_DMI: begin
@@ -154,7 +154,7 @@ module rv32_dtm #(
             case (ir_i)
                 IR_IDCODE: begin
                     idcode_shift  <= {tdi_i, idcode_shift[31:1]};
-                    `DBG2(("[%0t] DTM: SHIFT_DR IDCODE, tdo=%b, idcode_shift=%h -> %h",
+                    `DEBUG2(("[%0t] DTM: SHIFT_DR IDCODE, tdo=%b, idcode_shift=%h -> %h",
                            $time, idcode_shift[0], idcode_shift, {tdi_i, idcode_shift[31:1]}));
                 end
                 IR_DTMCS:   dtmcs_shift   <= {tdi_i, dtmcs_shift[31:1]};

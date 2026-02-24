@@ -191,15 +191,15 @@ module rv32_core #(
                     timeout_error_reg <= 1'b1;
                     // Do not handle the timeout here; delegate it to the testbench.
                     //$error("TIMEOUT: No instructions retired for %0d cycles", STALL_TIMEOUT);
-                    `DBG1(("TIMEOUT ERROR: PC=0x%h, outstanding_reqs=%0d, if_valid=%b",
+                    `DEBUG1(("TIMEOUT ERROR: PC=0x%h, outstanding_reqs=%0d, if_valid=%b",
                            pc_if, ib_outstanding, if_valid));
-                    `DBG1(("  FETCH STATE: imem_req_valid=%b imem_req_ready=%b imem_resp_valid=%b",
+                    `DEBUG1(("  FETCH STATE: imem_req_valid=%b imem_req_ready=%b imem_resp_valid=%b",
                            imem_req_valid, imem_req_ready, imem_resp_valid));
-                    `DBG1(("  DEDUP STATE: last_issued_valid=%b last_issued_pc=0x%h ib_resp_discard=%b",
+                    `DEBUG1(("  DEDUP STATE: last_issued_valid=%b last_issued_pc=0x%h ib_resp_discard=%b",
                            last_issued_valid, last_issued_fetch_pc, ib_resp_discard));
-                    `DBG1(("  PIPELINE: if_id_stall=%b non_branch_flush=%b if_flush=%b",
+                    `DEBUG1(("  PIPELINE: if_id_stall=%b non_branch_flush=%b if_flush=%b",
                            if_id_stall, non_branch_flush, if_flush));
-                    `DBG1(("  IMEM: req_addr=0x%h resp_pc=0x%h fetch_issued_for_effective_pc=%b",
+                    `DEBUG1(("  IMEM: req_addr=0x%h resp_pc=0x%h fetch_issued_for_effective_pc=%b",
                            imem_req_addr, ib_resp_pc, fetch_issued_for_effective_pc));
                 end
             end
@@ -566,28 +566,28 @@ module rv32_core #(
         if (rst_n) begin
             // Track fetch request issuance
             if (imem_req_valid && imem_req_ready) begin
-                `DBG2(("[FETCH_REQ] Issued: pc=0x%h, outstanding=%0d->%0d, can_accept=%b",
+                `DEBUG2(("[FETCH_REQ] Issued: pc=0x%h, outstanding=%0d->%0d, can_accept=%b",
                        imem_req_addr, ib_outstanding, ib_outstanding + 1'b1, ib_can_accept));
             end else if (imem_req_valid && !imem_req_ready) begin
-                `DBG2(("[FETCH_REQ] Blocked: pc=0x%h, outstanding=%0d, can_accept=%b, imem_req_ready=%b",
+                `DEBUG2(("[FETCH_REQ] Blocked: pc=0x%h, outstanding=%0d, can_accept=%b, imem_req_ready=%b",
                        imem_req_addr, ib_outstanding, ib_can_accept, imem_req_ready));
             end else if (!imem_req_valid && ib_can_accept && !non_branch_flush) begin
-                `DBG2(("[FETCH_REQ] Suppressed: pc=0x%h already fetched (last=0x%h valid=%b)",
+                `DEBUG2(("[FETCH_REQ] Suppressed: pc=0x%h already fetched (last=0x%h valid=%b)",
                        imem_req_addr, last_issued_fetch_pc, last_issued_valid));
             end else if (!imem_req_valid && !ib_can_accept) begin
-                `DBG2(("[FETCH_REQ] IB Full: pc=0x%h, outstanding=%0d, can_accept=%b",
+                `DEBUG2(("[FETCH_REQ] IB Full: pc=0x%h, outstanding=%0d, can_accept=%b",
                        imem_req_addr, ib_outstanding, ib_can_accept));
             end else if (!imem_req_valid && non_branch_flush) begin
-                `DBG2(("[FETCH_REQ] Flushed(exc/irq): pc=0x%h, non_branch_flush=%b", pc_if, non_branch_flush));
+                `DEBUG2(("[FETCH_REQ] Flushed(exc/irq): pc=0x%h, non_branch_flush=%b", pc_if, non_branch_flush));
             end
 
             // Track fetch response arrival
             if (imem_resp_valid) begin
                 if (ib_resp_discard) begin
-                    `DBG2(("[FETCH_RESP] Arrived (DISCARD): pc=0x%h, data=0x%h, error=%b, outstanding=%0d",
+                    `DEBUG2(("[FETCH_RESP] Arrived (DISCARD): pc=0x%h, data=0x%h, error=%b, outstanding=%0d",
                            ib_resp_pc, imem_resp_data, imem_resp_error, ib_outstanding));
                 end else begin
-                    `DBG2(("[FETCH_RESP] Arrived (VALID): pc=0x%h, data=0x%h, error=%b, outstanding=%0d",
+                    `DEBUG2(("[FETCH_RESP] Arrived (VALID): pc=0x%h, data=0x%h, error=%b, outstanding=%0d",
                            ib_resp_pc, imem_resp_data, imem_resp_error, ib_outstanding));
                 end
             end
@@ -595,23 +595,23 @@ module rv32_core #(
             // Track fetch response consumption
             if (imem_resp_valid && imem_resp_ready) begin
                 if (ib_resp_discard) begin
-                    `DBG2(("[FETCH_CONSUME] Discarded: pc=0x%h, if_flush=%b, ib_resp_discard=%b",
+                    `DEBUG2(("[FETCH_CONSUME] Discarded: pc=0x%h, if_flush=%b, ib_resp_discard=%b",
                            ib_resp_pc, if_flush, ib_resp_discard));
                 end else if (!if_id_stall) begin
-                    `DBG2(("[FETCH_CONSUME] Consumed: pc=0x%h, instr=0x%h, advancing to ID",
+                    `DEBUG2(("[FETCH_CONSUME] Consumed: pc=0x%h, instr=0x%h, advancing to ID",
                            ib_resp_pc, imem_resp_data));
                 end else begin
-                    `DBG2(("[FETCH_CONSUME] Stalled: pc=0x%h, if_id_stall=%b",
+                    `DEBUG2(("[FETCH_CONSUME] Stalled: pc=0x%h, if_id_stall=%b",
                            ib_resp_pc, if_id_stall));
                 end
             end else if (imem_resp_valid && !imem_resp_ready) begin
-                `DBG2(("[FETCH_CONSUME] Held: pc=0x%h, if_id_stall=%b, resp_ready=%b",
+                `DEBUG2(("[FETCH_CONSUME] Held: pc=0x%h, if_id_stall=%b, resp_ready=%b",
                        ib_resp_pc, if_id_stall, imem_resp_ready));
             end
 
             // Track IF stage state
             if (if_valid && !if_id_stall) begin
-                `DBG2(("[FETCH_IF] Valid instruction ready: pc=0x%h, instr=0x%h, outstanding=%0d",
+                `DEBUG2(("[FETCH_IF] Valid instruction ready: pc=0x%h, instr=0x%h, outstanding=%0d",
                        ib_resp_pc, instr_if, ib_outstanding));
             end
         end
@@ -632,14 +632,14 @@ module rv32_core #(
             // on cycle N+1 when pc_if settles to branch_target.
             last_issued_fetch_pc <= imem_req_addr;
             last_issued_valid    <= 1'b1;
-            `DBG2(("[FETCH_PC] Issued for pc=0x%h (branch_early=%b)",
+            `DEBUG2(("[FETCH_PC] Issued for pc=0x%h (branch_early=%b)",
                    imem_req_addr, branch_taken && !branch_flushed));
         end else if (if_flush || (ib_outstanding == '0 && !imem_resp_valid)) begin
             // Flush without a simultaneous new issue: allow re-fetch.
             // Also clear when IB is empty and no response is arriving — nothing
             // is in-flight, so last_issued_valid would permanently block fetches.
             last_issued_valid <= 1'b0;
-            `DBG2(("[FETCH_PC] Flush/empty: clearing issue-tracking, pc=0x%h flush=%b out=%0d",
+            `DEBUG2(("[FETCH_PC] Flush/empty: clearing issue-tracking, pc=0x%h flush=%b out=%0d",
                    pc_if, if_flush, ib_outstanding));
         end
         // No change otherwise: stall or sequential with pending response.
@@ -678,18 +678,18 @@ module rv32_core #(
             if (wb_exception || exception || irq_pending) begin
                 // Exception or interrupt: jump to trap handler
                 pc_if <= mtvec;
-                `DBG2(("[FETCH_PC] EXCEPTION/IRQ: pc=0x%h -> mtvec=0x%h (exc=%b wb_exc=%b irq=%b), outstanding=%0d",
+                `DEBUG2(("[FETCH_PC] EXCEPTION/IRQ: pc=0x%h -> mtvec=0x%h (exc=%b wb_exc=%b irq=%b), outstanding=%0d",
                        pc_if, mtvec, exception, wb_exception, irq_pending, ib_outstanding));
             end else if (is_mret_ex) begin
                 // Return from trap: jump to saved exception PC
                 pc_if <= mepc;
-                `DBG2(("[FETCH_PC] MRET: pc=0x%h -> mepc=0x%h, outstanding=%0d", pc_if, mepc, ib_outstanding));
+                `DEBUG2(("[FETCH_PC] MRET: pc=0x%h -> mepc=0x%h, outstanding=%0d", pc_if, mepc, ib_outstanding));
             end else if (branch_taken && !branch_flushed) begin
                 // Branch/jump taken: update to target address.
                 // Guard with !branch_flushed to avoid re-redirecting on stall cycles
                 // (branch_flushed prevents duplicate flushes when branch stays in EX).
                 pc_if <= branch_target;
-                `DBG2(("[FETCH_PC] BRANCH: pc=0x%h -> target=0x%h, outstanding=%0d",
+                `DEBUG2(("[FETCH_PC] BRANCH: pc=0x%h -> target=0x%h, outstanding=%0d",
                        pc_if, branch_target, ib_outstanding));
             end else if (fence_i_committing || cbo_committing) begin
                 // FENCE.I / CBO.INVAL commits: reset fetch pointer to instr+4.
@@ -697,7 +697,7 @@ module rv32_core #(
                 // were discarded by the flush.  Without this correction the CPU would
                 // resume from the drifted pc_if, silently skipping those instructions.
                 pc_if <= pc_mem + 32'd4;
-                `DBG1(("[CMO] Commit: resetting pc_if 0x%h -> 0x%h",
+                `DEBUG1(("[CMO] Commit: resetting pc_if 0x%h -> 0x%h",
                        pc_if, pc_mem + 32'd4));
             end else begin
                 if (imem_req_ready && imem_req_valid) begin
@@ -706,7 +706,7 @@ module rv32_core #(
                     // In the dedup_consuming case imem_req_addr==pc_next (pc_if+4),
                     // so we advance by 8 (next after the issued address).
                     pc_if <= imem_req_addr + 32'd4;
-                    `DBG2(("[FETCH_PC] Sequential: pc=0x%h -> 0x%h (issued=0x%h), outstanding=%0d",
+                    `DEBUG2(("[FETCH_PC] Sequential: pc=0x%h -> 0x%h (issued=0x%h), outstanding=%0d",
                            pc_if, imem_req_addr + 32'd4, imem_req_addr, ib_outstanding));
                 end else if (!imem_req_valid && dedup_consumed) begin
                     // Response for pc_if was consumed but no new fetch was issued.
@@ -726,11 +726,11 @@ module rv32_core #(
                     // the next cycle via the normal imem_req_ready && imem_req_valid
                     // path when the bus becomes free.
                     pc_if <= pc_next;
-                    `DBG2(("[FETCH_PC] Consumed(no-issue): pc=0x%h -> 0x%h, outstanding=%0d (imem_ready=%b)",
+                    `DEBUG2(("[FETCH_PC] Consumed(no-issue): pc=0x%h -> 0x%h, outstanding=%0d (imem_ready=%b)",
                            pc_if, pc_next, ib_outstanding, imem_req_ready));
                 end else if (imem_req_valid && !imem_req_ready) begin
                     // PC update blocked by memory system backpressure
-                    `DBG2(("[FETCH_PC] BLOCKED: pc=0x%h (imem ready=0), outstanding=%0d",
+                    `DEBUG2(("[FETCH_PC] BLOCKED: pc=0x%h (imem ready=0), outstanding=%0d",
                            pc_if, ib_outstanding));
                 end
             end
@@ -759,7 +759,7 @@ module rv32_core #(
             id_valid  <= 1'b0;
             instr_access_fault_id <= 1'b0;
             if (if_flush || id_flush) begin
-                `DBG2(("[FETCH_PIPE] IF/ID flush - if_flush=%b id_flush=%b", if_flush, id_flush));
+                `DEBUG2(("[FETCH_PIPE] IF/ID flush - if_flush=%b id_flush=%b", if_flush, id_flush));
             end
         end else if (!if_id_stall && if_valid) begin
             // Only update when pipeline advances AND we have a valid instruction
@@ -767,15 +767,15 @@ module rv32_core #(
             instr_id  <= instr_if;
             id_valid  <= 1'b1;
             instr_access_fault_id <= imem_resp_valid && imem_resp_error;
-            `DBG2(("[FETCH_PIPE] IF->ID: pc=0x%h instr=0x%h error=%b outstanding=%0d",
+            `DEBUG2(("[FETCH_PIPE] IF->ID: pc=0x%h instr=0x%h error=%b outstanding=%0d",
                    ib_resp_pc, instr_if, imem_resp_error, ib_outstanding));
         end else if (!if_id_stall && !if_valid) begin
             // Pipeline advances but no valid instruction, insert bubble
             id_valid <= 1'b0;
-            `DBG2(("[FETCH_PIPE] IF->ID: BUBBLE (no valid instruction), outstanding=%0d", ib_outstanding));
+            `DEBUG2(("[FETCH_PIPE] IF->ID: BUBBLE (no valid instruction), outstanding=%0d", ib_outstanding));
         end else if (if_id_stall && if_valid) begin
             // Valid instruction but pipeline stalled
-            `DBG2(("[FETCH_PIPE] IF/ID STALL: pc=0x%h instr=0x%h, outstanding=%0d",
+            `DEBUG2(("[FETCH_PIPE] IF/ID STALL: pc=0x%h instr=0x%h, outstanding=%0d",
                    ib_resp_pc, instr_if, ib_outstanding));
         end
     end
@@ -852,23 +852,23 @@ module rv32_core #(
     `ifdef DEBUG
     always_ff @(posedge clk) begin
         if (rst_n && reg_we_wb && retire_instr && (rd_addr_wb != 5'd0)) begin
-            `DBG2(("[REG_WRITE] PC=0x%h instr=0x%h rd=x%0d we=%b retire=%b data=0x%h (from %s)",
+            `DEBUG2(("[REG_WRITE] PC=0x%h instr=0x%h rd=x%0d we=%b retire=%b data=0x%h (from %s)",
                    pc_wb, instr_wb, rd_addr_wb, reg_we_wb, retire_instr,
                    wb_write_data,
                    mem_read_wb ? "mem" : (csr_op_wb != 3'd0 ? "csr" : "alu")));
         end
         if (rst_n && wb_valid && reg_we_wb && !retire_instr && (rd_addr_wb != 5'd0)) begin
-            `DBG2(("[REG_WRITE_BLOCKED] PC=0x%h instr=0x%h rd=x%0d: we=%b but retire=%b (reg not written)",
+            `DEBUG2(("[REG_WRITE_BLOCKED] PC=0x%h instr=0x%h rd=x%0d: we=%b but retire=%b (reg not written)",
                    pc_wb, instr_wb, rd_addr_wb, reg_we_wb, retire_instr));
-            `DBG2(("[REG_WRITE_BLOCKED]   retire_base=%b wb_valid=%b wb_except=%b pc_match=%b instr_match=%b",
+            `DEBUG2(("[REG_WRITE_BLOCKED]   retire_base=%b wb_valid=%b wb_except=%b pc_match=%b instr_match=%b",
                    wb_valid && !wb_exception, wb_valid, wb_exception,
                    pc_wb == last_retired_pc, instr_wb == last_retired_instr));
-            `DBG2(("[REG_WRITE_BLOCKED]   Value would be 0x%h (from %s), but available for forwarding",
+            `DEBUG2(("[REG_WRITE_BLOCKED]   Value would be 0x%h (from %s), but available for forwarding",
                      wb_write_data,
                      mem_read_wb ? "mem" : (csr_op_wb != 3'd0 ? "csr" : "alu")));
         end
         if (rst_n && wb_valid && (rd_addr_wb != 5'd0) && !reg_we_wb) begin
-            `DBG2(("[REG_NO_WRITE] PC=0x%h instr=0x%h rd=x%0d we=%b valid=%b mem_read=%b fault=%b",
+            `DEBUG2(("[REG_NO_WRITE] PC=0x%h instr=0x%h rd=x%0d we=%b valid=%b mem_read=%b fault=%b",
                    pc_wb, instr_wb, rd_addr_wb, reg_we_wb, wb_valid, mem_read_wb, data_access_fault_wb));
         end
     end
@@ -966,24 +966,24 @@ module rv32_core #(
         if (rst_n && id_valid && !id_ex_stall && !id_flush) begin
             // MEM->ID forwarding fired for rs1
             if (reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs1_addr == rd_addr_mem)) begin
-                `DBG2(("[ID_FWD_MEM->rs1] PC=0x%h rs1=x%0d rd_mem=x%0d wb_write_data_next=0x%h csr_op_mem=%0d mem_read_mem=%b alu_result_mem=0x%h",
+                `DEBUG2(("[ID_FWD_MEM->rs1] PC=0x%h rs1=x%0d rd_mem=x%0d wb_write_data_next=0x%h csr_op_mem=%0d mem_read_mem=%b alu_result_mem=0x%h",
                        pc_id, rs1_addr, rd_addr_mem, wb_write_data_next, csr_op_mem, mem_read_mem, alu_result_mem));
             end
             // WB->ID forwarding fired for rs1 (only when MEM doesn't match)
             if (reg_we_wb && (rd_addr_wb != 5'd0) && (rs1_addr == rd_addr_wb) &&
                 !(reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs1_addr == rd_addr_mem))) begin
-                `DBG2(("[ID_FWD_WB->rs1] PC=0x%h rs1=x%0d rd_wb=x%0d wb_write_data=0x%h",
+                `DEBUG2(("[ID_FWD_WB->rs1] PC=0x%h rs1=x%0d rd_wb=x%0d wb_write_data=0x%h",
                        pc_id, rs1_addr, rd_addr_wb, wb_write_data));
             end
             // MEM->ID forwarding fired for rs2
             if (reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs2_addr == rd_addr_mem)) begin
-                `DBG2(("[ID_FWD_MEM->rs2] PC=0x%h rs2=x%0d rd_mem=x%0d wb_write_data_next=0x%h csr_op_mem=%0d mem_read_mem=%b alu_result_mem=0x%h",
+                `DEBUG2(("[ID_FWD_MEM->rs2] PC=0x%h rs2=x%0d rd_mem=x%0d wb_write_data_next=0x%h csr_op_mem=%0d mem_read_mem=%b alu_result_mem=0x%h",
                        pc_id, rs2_addr, rd_addr_mem, wb_write_data_next, csr_op_mem, mem_read_mem, alu_result_mem));
             end
             // WB->ID forwarding fired for rs2 (only when MEM doesn't match)
             if (reg_we_wb && (rd_addr_wb != 5'd0) && (rs2_addr == rd_addr_wb) &&
                 !(reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs2_addr == rd_addr_mem))) begin
-                `DBG2(("[ID_FWD_WB->rs2] PC=0x%h rs2=x%0d rd_wb=x%0d wb_write_data=0x%h",
+                `DEBUG2(("[ID_FWD_WB->rs2] PC=0x%h rs2=x%0d rd_wb=x%0d wb_write_data=0x%h",
                        pc_id, rs2_addr, rd_addr_wb, wb_write_data));
             end
         end
@@ -1019,7 +1019,7 @@ module rv32_core #(
     // Debug stall signals
     always @(posedge clk) begin
         if (if_id_stall || id_ex_stall || ex_mem_stall || mem_wb_stall) begin
-            `DBG2(("STALL: if_id=%b id_ex=%b ex_mem=%b mem_wb=%b | load_use=%b alu_ready=%b ex_valid=%b",
+            `DEBUG2(("STALL: if_id=%b id_ex=%b ex_mem=%b mem_wb=%b | load_use=%b alu_ready=%b ex_valid=%b",
                    if_id_stall, id_ex_stall, ex_mem_stall, mem_wb_stall, load_use_hazard, alu_ready, ex_valid));
         end
     end
@@ -1078,7 +1078,7 @@ module rv32_core #(
             jalr_ex      <= 1'b0;
             system_ex    <= 1'b0;
             ex_valid     <= 1'b0;  // Mark as invalid
-            `DBG2(("Cycle %0t: ID/EX flush - ex_flush=%b, blocking PC=0x%h instr=0x%h", $time, ex_flush, pc_id, instr_id));
+            `DEBUG2(("Cycle %0t: ID/EX flush - ex_flush=%b, blocking PC=0x%h instr=0x%h", $time, ex_flush, pc_id, instr_id));
         end else if (if_id_stall && !downstream_stall) begin
             // IF/ID stalled (e.g., load-use hazard) but EX can advance: inject bubble
             // ID is not advancing, but EX will move to MEM, so we need a NOP in EX
@@ -1164,7 +1164,7 @@ module rv32_core #(
             is_cbo_ex     <= is_cbo_id;
             ex_valid      <= id_valid;
             if (id_valid) begin
-                `DBG2(("Cycle %0t: ID->EX pc=0x%h instr=0x%h rd=%0d mem_w=%b mem_r=%b id_valid=%b ex_valid_next=%b",
+                `DEBUG2(("Cycle %0t: ID->EX pc=0x%h instr=0x%h rd=%0d mem_w=%b mem_r=%b id_valid=%b ex_valid_next=%b",
                        $time, pc_id, instr_id, rd_addr_id, mem_write_id, mem_read_id, id_valid, id_valid));
             end
         end
@@ -1234,14 +1234,14 @@ module rv32_core #(
 
     always_ff @(posedge clk) begin
         if (rst_n && ex_valid && (forward_a != 2'd0) && (rs1_addr_ex != 5'd0)) begin
-            `DBG2(("[REG_FORWARD] PC=0x%h rs1=%0d forward_a=%0d rs1_data_ex=0x%h alu_result_mem=0x%h alu_result_wb=0x%h",
+            `DEBUG2(("[REG_FORWARD] PC=0x%h rs1=%0d forward_a=%0d rs1_data_ex=0x%h alu_result_mem=0x%h alu_result_wb=0x%h",
                  pc_ex, rs1_addr_ex, forward_a, rs1_data_ex, alu_result_mem, alu_result_wb));
-            `DBG2(("[REG_FORWARD] MEM: pc=0x%h rd=%0d we=%b | WB: pc=0x%h rd=%0d we=%b retire=%b",
+            `DEBUG2(("[REG_FORWARD] MEM: pc=0x%h rd=%0d we=%b | WB: pc=0x%h rd=%0d we=%b retire=%b",
                  pc_mem, rd_addr_mem, reg_we_mem, pc_wb, rd_addr_wb, reg_we_wb, retire_instr));
         end
         // Debug: log operand values when no forwarding fires (forward_a=0), filtered for rs1=x15
         if (rst_n && ex_valid && (forward_a == 2'd0) && (rs1_addr_ex == 5'd15)) begin
-            `DBG2(("[EX_NOFWD] PC=0x%h rs1=x15 rs1_data_ex=0x%h rs2_addr=%0d rs2_data_ex=0x%h | MEM: pc=0x%h rd=%0d | WB: pc=0x%h rd=%0d",
+            `DEBUG2(("[EX_NOFWD] PC=0x%h rs1=x15 rs1_data_ex=0x%h rs2_addr=%0d rs2_data_ex=0x%h | MEM: pc=0x%h rd=%0d | WB: pc=0x%h rd=%0d",
                  pc_ex, rs1_data_ex, rs2_addr_ex, rs2_data_ex, pc_mem, rd_addr_mem, pc_wb, rd_addr_wb));
         end
     end
@@ -1276,7 +1276,7 @@ module rv32_core #(
 
     always_ff @(posedge clk) begin
         if (rst_n && ex_valid && (rd_addr_ex != 5'd0)) begin
-            `DBG2(("[ALU_OPERANDS] PC=0x%h instr=0x%h rd=%0d alu_op=%0d operand_a=0x%h operand_b=0x%h rs1_fwd=0x%h imm=0x%h ready=%b",
+            `DEBUG2(("[ALU_OPERANDS] PC=0x%h instr=0x%h rd=%0d alu_op=%0d operand_a=0x%h operand_b=0x%h rs1_fwd=0x%h imm=0x%h ready=%b",
                    pc_ex, instr_ex, rd_addr_ex, alu_op_ex, alu_operand_a, alu_operand_b, rs1_forwarded, imm_ex, alu_ready));
         end
     end
@@ -1319,7 +1319,7 @@ module rv32_core #(
     // Debug: Log branch decisions
     always @(posedge clk) begin
         if (branch_ex && ex_valid) begin
-            `DBG2(("Branch @ PC=0x%h: rs1=0x%h rs2=0x%h op=%0d cond=%b taken=%b fwd_a=%0d fwd_b=%0d",
+            `DEBUG2(("Branch @ PC=0x%h: rs1=0x%h rs2=0x%h op=%0d cond=%b taken=%b fwd_a=%0d fwd_b=%0d",
                    pc_ex, rs1_forwarded, rs2_forwarded, branch_op_ex, branch_cond, branch_taken, forward_a, forward_b));
         end
     end
@@ -1337,11 +1337,11 @@ module rv32_core #(
         end else begin
             branch_taken_prev <= branch_taken;
             if (branch_taken && !branch_taken_prev) begin
-                `DBG2(("[BRANCH] Branch taken: pc_ex=0x%h instr_ex=0x%h target=0x%h (br=%b cond=%b jal=%b jalr=%b) ex_valid=%b",
+                `DEBUG2(("[BRANCH] Branch taken: pc_ex=0x%h instr_ex=0x%h target=0x%h (br=%b cond=%b jal=%b jalr=%b) ex_valid=%b",
                        pc_ex, instr_ex, branch_target, branch_ex, branch_cond, jal_ex, jalr_ex, ex_valid));
             end
             if (!branch_taken && branch_taken_prev) begin
-                `DBG2(("[BRANCH] Branch cleared: pc_ex=0x%h instr_ex=0x%h ex_valid=%b branch_flushed=%b",
+                `DEBUG2(("[BRANCH] Branch cleared: pc_ex=0x%h instr_ex=0x%h ex_valid=%b branch_flushed=%b",
                        pc_ex, instr_ex, ex_valid, branch_flushed));
             end
         end
@@ -1360,13 +1360,13 @@ module rv32_core #(
             // branch_flushed=1 is actually committed on the same cycle
             // the branch fires (not clobbered by the else-if reset).
             branch_flushed <= 1'b1;
-            `DBG2(("[BRANCH_FLUSH] Setting branch_flushed for pc_ex=0x%h target=0x%h",
+            `DEBUG2(("[BRANCH_FLUSH] Setting branch_flushed for pc_ex=0x%h target=0x%h",
                    pc_ex, branch_target));
         end else if (!id_ex_stall && !downstream_stall && !load_use_hazard) begin
             // Priority 2: RESET when a new instruction enters EX.
             branch_flushed <= 1'b0;
             if (branch_flushed) begin
-                `DBG2(("[BRANCH_FLUSH] Resetting branch_flushed (new instr entering EX)"));
+                `DEBUG2(("[BRANCH_FLUSH] Resetting branch_flushed (new instr entering EX)"));
             end
         end
     end
@@ -1434,19 +1434,19 @@ module rv32_core #(
         if (rst_n) begin
             if (if_flush) begin
                 if (branch_taken && !branch_flushed) begin
-                    `DBG2(("[FETCH_FLUSH] Branch mispredict: pc_ex=0x%h target=0x%h, outstanding=%0d",
+                    `DEBUG2(("[FETCH_FLUSH] Branch mispredict: pc_ex=0x%h target=0x%h, outstanding=%0d",
                            pc_ex, branch_target, ib_outstanding));
                 end else if (exception) begin
-                    `DBG2(("[FETCH_FLUSH] Exception: pc_ex=0x%h cause=%0d, outstanding=%0d",
+                    `DEBUG2(("[FETCH_FLUSH] Exception: pc_ex=0x%h cause=%0d, outstanding=%0d",
                            pc_ex, exception_cause, ib_outstanding));
                 end
             end
             if (wb_exception) begin
-                `DBG2(("[FETCH_FLUSH] WB Exception: pc_wb=0x%h cause=%0d, outstanding=%0d",
+                `DEBUG2(("[FETCH_FLUSH] WB Exception: pc_wb=0x%h cause=%0d, outstanding=%0d",
                        pc_wb, wb_exception_cause, ib_outstanding));
             end
             if (irq_pending) begin
-                `DBG1(("[FETCH_FLUSH] Interrupt: cause=0x%h mem_valid=%b pc_mem=0x%h ex_valid=%b pc_ex=0x%h id_valid=%b pc_id=0x%h pc_if=0x%h interrupt_pc=0x%h outstanding=%0d wb_valid=%b pc_wb=0x%h retire_instr=%b mtime=%0d",
+                `DEBUG1(("[FETCH_FLUSH] Interrupt: cause=0x%h mem_valid=%b pc_mem=0x%h ex_valid=%b pc_ex=0x%h id_valid=%b pc_id=0x%h pc_if=0x%h interrupt_pc=0x%h outstanding=%0d wb_valid=%b pc_wb=0x%h retire_instr=%b mtime=%0d",
                        irq_cause, mem_valid, pc_mem, ex_valid, pc_ex, id_valid, pc_id, pc_if, interrupt_pc, ib_outstanding, wb_valid, pc_wb, retire_instr, $time));
             end
         end
@@ -1500,21 +1500,21 @@ module rv32_core #(
                 exception = 1'b1;
                 exception_cause = EXC_INSTR_ACCESS_FAULT;
                 exception_tval = pc_ex;  // Faulting address
-                `DBG1(("EXCEPTION: Instr access fault @ PC=0x%h", pc_ex));
+                `DEBUG1(("EXCEPTION: Instr access fault @ PC=0x%h", pc_ex));
             end else if (illegal_ex) begin
                 exception = 1'b1;
                 exception_cause = EXC_ILLEGAL_INSTR;
                 exception_tval = instr_ex;  // Illegal instruction word (for mtval)
-                `DBG1(("EXCEPTION: Illegal instruction @ PC=0x%h instr=0x%h", pc_ex, instr_ex));
+                `DEBUG1(("EXCEPTION: Illegal instruction @ PC=0x%h instr=0x%h", pc_ex, instr_ex));
             end else if (is_ecall_ex) begin
                 exception = 1'b1;
                 exception_cause = EXC_ECALL_MMODE;
-                `DBG1(("EXCEPTION: ECALL @ PC=0x%h", pc_ex));
+                `DEBUG1(("EXCEPTION: ECALL @ PC=0x%h", pc_ex));
             end else if (is_ebreak_ex) begin
                 exception = 1'b1;
                 exception_cause = EXC_BREAKPOINT;
                 exception_tval  = pc_ex;  // RISC-V spec: mtval = PC of ebreak instruction
-                `DBG1(("EXCEPTION: EBREAK @ PC=0x%h", pc_ex));
+                `DEBUG1(("EXCEPTION: EBREAK @ PC=0x%h", pc_ex));
             end else if (mem_read_ex && (
                 ((mem_op_ex == MEM_HALF || mem_op_ex == MEM_HALF_U) && alu_result_final[0]) ||
                 (mem_op_ex == MEM_WORD && alu_result_final[1:0] != 2'b00)
@@ -1522,7 +1522,7 @@ module rv32_core #(
                 exception       = 1'b1;
                 exception_cause = EXC_LOAD_ADDR_MISALIGNED;
                 exception_tval  = alu_result_final;
-                `DBG1(("EXCEPTION: Load addr misaligned @ PC=0x%h addr=0x%h", pc_ex, alu_result_final));
+                `DEBUG1(("EXCEPTION: Load addr misaligned @ PC=0x%h addr=0x%h", pc_ex, alu_result_final));
             end else if (mem_write_ex && (
                 ((mem_op_ex == MEM_HALF) && alu_result_final[0]) ||
                 (mem_op_ex == MEM_WORD && alu_result_final[1:0] != 2'b00)
@@ -1530,7 +1530,7 @@ module rv32_core #(
                 exception       = 1'b1;
                 exception_cause = EXC_STORE_ADDR_MISALIGNED;
                 exception_tval  = alu_result_final;
-                `DBG1(("EXCEPTION: Store addr misaligned @ PC=0x%h addr=0x%h", pc_ex, alu_result_final));
+                `DEBUG1(("EXCEPTION: Store addr misaligned @ PC=0x%h addr=0x%h", pc_ex, alu_result_final));
             end else if (branch_taken && (branch_target[1:0] != 2'b00)) begin
                 // Instruction-address-misaligned: branch/jump target is not
                 // 4-byte aligned (RISC-V spec section 2.5).
@@ -1538,7 +1538,7 @@ module rv32_core #(
                 exception       = 1'b1;
                 exception_cause = EXC_INSTR_ADDR_MISALIGNED;
                 exception_tval  = branch_target;  // faulting target address
-                `DBG1(("EXCEPTION: Instr addr misaligned @ PC=0x%h target=0x%h", pc_ex, branch_target));
+                `DEBUG1(("EXCEPTION: Instr addr misaligned @ PC=0x%h target=0x%h", pc_ex, branch_target));
             end
         end
     end
@@ -1590,7 +1590,7 @@ module rv32_core #(
                 // alu_result_final already contains PC+4 for JAL/JALR
                 alu_result_mem <= alu_result_final;
                 if ((jal_ex || jalr_ex) && ex_valid) begin
-                    `DBG2(("JAL/JALR @ PC=0x%h, return_addr=0x%h, rd=%0d",
+                    `DEBUG2(("JAL/JALR @ PC=0x%h, return_addr=0x%h, rd=%0d",
                            pc_ex, pc_ex + 32'd4, rd_addr_ex));
                 end
                 rs1_data_mem  <= rs1_forwarded;
@@ -1615,7 +1615,7 @@ module rv32_core #(
                 is_cbo_mem    <= is_cbo_ex;
                 mem_valid     <= ex_valid && !exception && !irq_pending && !wb_exception;
                 if (ex_valid) begin
-                    `DBG2(("Cycle %0t: EX->MEM pc=0x%h instr=0x%h ex_valid=%b mem_valid_next=%b",
+                    `DEBUG2(("Cycle %0t: EX->MEM pc=0x%h instr=0x%h ex_valid=%b mem_valid_next=%b",
                            $time, pc_ex, instr_ex, ex_valid, ex_valid && !exception && !irq_pending && !wb_exception));
                 end
                 // Capture data access error from buffered response for memory operations only
@@ -1735,11 +1735,11 @@ module rv32_core #(
     // Debug: Track store/load requests and store buffer state
     always_ff @(posedge clk) begin
         if (mem_write_mem && mem_valid) begin
-            `DBG2(("[SB_DEBUG] STORE in MEM: pc=0x%h valid=%b ready=%b accepted=%b pending=%b",
+            `DEBUG2(("[SB_DEBUG] STORE in MEM: pc=0x%h valid=%b ready=%b accepted=%b pending=%b",
                    pc_mem, store_req_valid, sb_cpu_ready, store_req_valid && sb_cpu_ready, sb_store_pending));
         end
         if (mem_read_mem && mem_valid) begin
-            `DBG2(("[SB_DEBUG] LOAD in MEM: pc=0x%h addr=0x%h addr_hit=%b load_req_valid=%b load_req_issued=%b",
+            `DEBUG2(("[SB_DEBUG] LOAD in MEM: pc=0x%h addr=0x%h addr_hit=%b load_req_valid=%b load_req_issued=%b",
                    pc_mem, alu_result_mem, sb_addr_hit, load_req_valid, load_req_issued));
         end
     end
@@ -1920,19 +1920,19 @@ module rv32_core #(
             lr_valid <= 1'b0;
         end else if (is_amo_mem && mem_valid && (amo_op_mem == AMO_LR)) begin
             // LR: Set reservation on the address
-            `DBG2(("[LR/SC] Setting reservation: addr=0x%h PC=0x%h", alu_result_mem, pc_mem));
+            `DEBUG2(("[LR/SC] Setting reservation: addr=0x%h PC=0x%h", alu_result_mem, pc_mem));
             lr_valid <= 1'b1;
             lr_addr  <= alu_result_mem;
         end else if (is_amo_mem && mem_valid && (amo_op_mem == AMO_SC)) begin
             // SC: Clear reservation after attempt
-            `DBG2(("[LR/SC] SC clearing reservation: lr_valid=%b lr_addr=0x%h sc_addr=0x%h PC=0x%h", lr_valid, lr_addr, alu_result_mem, pc_mem));
+            `DEBUG2(("[LR/SC] SC clearing reservation: lr_valid=%b lr_addr=0x%h sc_addr=0x%h PC=0x%h", lr_valid, lr_addr, alu_result_mem, pc_mem));
             lr_valid <= 1'b0;
         end else if (mem_write_mem && mem_valid && !is_amo_mem && lr_valid) begin
             // Normal store to reserved address (or overlapping word) clears reservation
             // RISC-V spec: reservation granularity is implementation-defined, typically a cache line
             // We use word-level granularity: clear if store overlaps the reserved word
             if (alu_result_mem[31:2] == lr_addr[31:2]) begin  // Same word
-                `DBG2(("[LR/SC] Store to reserved address clearing reservation: store_addr=0x%h lr_addr=0x%h PC=0x%h", alu_result_mem, lr_addr, pc_mem));
+                `DEBUG2(("[LR/SC] Store to reserved address clearing reservation: store_addr=0x%h lr_addr=0x%h PC=0x%h", alu_result_mem, lr_addr, pc_mem));
                 lr_valid <= 1'b0;
             end
         end
@@ -1959,25 +1959,25 @@ module rv32_core #(
                     if (is_amo_mem && mem_valid && !amo_started) begin
                         // AMO instruction entering MEM stage
                         amo_started <= 1'b1;  // Mark that we've started this AMO
-                        `DBG2(("[AMO] Starting AMO op=%0d PC=0x%h addr=0x%h", amo_op_mem, pc_mem, alu_result_mem));
+                        `DEBUG2(("[AMO] Starting AMO op=%0d PC=0x%h addr=0x%h", amo_op_mem, pc_mem, alu_result_mem));
                         if (amo_op_mem == AMO_LR) begin
                             // LR: Just read, no write phase
                             amo_state <= AMO_READ;
                             amo_addr  <= alu_result_mem;
                         end else if (amo_op_mem == AMO_SC) begin
                             // SC: Check reservation before proceeding
-                            `DBG2(("[LR/SC] SC checking: lr_valid=%b lr_addr=0x%h sc_addr=0x%h match=%b PC=0x%h",
+                            `DEBUG2(("[LR/SC] SC checking: lr_valid=%b lr_addr=0x%h sc_addr=0x%h match=%b PC=0x%h",
                                    lr_valid, lr_addr, alu_result_mem, (lr_valid && (lr_addr == alu_result_mem)), pc_mem));
                             if (lr_valid && (lr_addr == alu_result_mem)) begin
                                 // Reservation valid: proceed with write
-                                `DBG2(("[LR/SC] SC proceeding with write"));
+                                `DEBUG2(("[LR/SC] SC proceeding with write"));
                                 sc_success <= 1'b1;  // Save success status
                                 amo_state <= AMO_WRITE;
                                 amo_addr  <= alu_result_mem;
                                 amo_read_data <= 32'd0;  // SC doesn't need read data
                             end else begin
                                 // Reservation invalid: fail immediately (no memory access)
-                                `DBG2(("[LR/SC] SC FAILED - reservation invalid"));
+                                `DEBUG2(("[LR/SC] SC FAILED - reservation invalid"));
                                 sc_success <= 1'b0;  // Save failure status
                                 amo_state <= AMO_IDLE;
                                 amo_read_data <= 32'd1;  // Return 1 = failure
@@ -1997,8 +1997,8 @@ module rv32_core #(
                     // store buffer draining before our actual read completes.
                     if (dmem_resp_valid && !dmem_resp_is_write && amo_req_issued) begin
                         amo_read_data <= dmem_resp_data;
-                        `DBG2(("[AMO] READ complete addr=0x%h data=0x%h", amo_addr, dmem_resp_data));
-                        `DBG2(("[AMO] Result will be: amo_result_comb=0x%h (from amo_read_data_next)", dmem_resp_data));
+                        `DEBUG2(("[AMO] READ complete addr=0x%h data=0x%h", amo_addr, dmem_resp_data));
+                        `DEBUG2(("[AMO] Result will be: amo_result_comb=0x%h (from amo_read_data_next)", dmem_resp_data));
                         if (amo_op_mem == AMO_LR) begin
                             // LR: Complete (no write phase)
                             amo_state <= AMO_IDLE;
@@ -2012,8 +2012,8 @@ module rv32_core #(
                 AMO_WRITE: begin
                     // Waiting for write response
                     if (dmem_resp_valid && dmem_resp_is_write) begin
-                        `DBG2(("[AMO] WRITE complete addr=0x%h, amo_read_data still=0x%h", amo_addr, amo_read_data));
-                        `DBG2(("[AMO] Completing: amo_result=0x%h will be written to rd", amo_read_data));
+                        `DEBUG2(("[AMO] WRITE complete addr=0x%h, amo_read_data still=0x%h", amo_addr, amo_read_data));
+                        `DEBUG2(("[AMO] Completing: amo_result=0x%h will be written to rd", amo_read_data));
                         amo_state <= AMO_IDLE;
                     end
                 end
@@ -2247,7 +2247,7 @@ module rv32_core #(
     // Debug mem/wb stall reasons
     always @(posedge clk) begin
         if (mem_wb_stall) begin
-            `DBG2(("MEM_WB_STALL: mem_read=%b mem_write=%b | load_issued=%b dmem_resp=%b sb_ready=%b mem_valid=%b",
+            `DEBUG2(("MEM_WB_STALL: mem_read=%b mem_write=%b | load_issued=%b dmem_resp=%b sb_ready=%b mem_valid=%b",
                    mem_read_mem, mem_write_mem, load_req_issued, dmem_resp_valid, sb_cpu_ready, mem_valid));
         end
     end
@@ -2399,11 +2399,11 @@ module rv32_core #(
 
     always_ff @(posedge clk) begin
         if (mem_valid && is_amo_mem) begin
-            `DBG2(("[AMO_WB] PC=0x%h is_amo_mem=%b amo_result=0x%h mem_data_wb_next=0x%h amo_state=%0d",
+            `DEBUG2(("[AMO_WB] PC=0x%h is_amo_mem=%b amo_result=0x%h mem_data_wb_next=0x%h amo_state=%0d",
                    pc_mem, is_amo_mem, amo_result, mem_data_wb_next, amo_state));
             // Show when AMO completes and data will be latched
             if (amo_state == AMO_IDLE || (amo_state == AMO_WRITE && dmem_resp_valid)) begin
-                `DBG2(("[AMO_FINAL] PC=0x%h amo_complete: amo_read_data=0x%h amo_result=0x%h mem_data_wb_next=0x%h",
+                `DEBUG2(("[AMO_FINAL] PC=0x%h amo_complete: amo_read_data=0x%h amo_result=0x%h mem_data_wb_next=0x%h",
                        pc_mem, amo_read_data, amo_result, mem_data_wb_next));
             end
         end
@@ -2459,11 +2459,11 @@ module rv32_core #(
             reg_we_wb     <= reg_we_mem && !(mem_read_mem && data_access_fault_mem)
                                         && !irq_pending && !wb_exception;
             if (reg_we_mem && (mem_read_mem && data_access_fault_mem)) begin
-                `DBG2(("[WB_REG_WE_CLEAR] PC=0x%h instr=0x%h rd=%0d: Clearing reg_we due to faulting load",
+                `DEBUG2(("[WB_REG_WE_CLEAR] PC=0x%h instr=0x%h rd=%0d: Clearing reg_we due to faulting load",
                        pc_mem, instr_mem, rd_addr_mem));
             end
             if (reg_we_mem && !mem_read_mem && !mem_write_mem && data_access_fault_mem) begin
-                `DBG2(("[WB_DEBUG] Non-memory instr with fault flag: PC=0x%h instr=0x%h rd=%0d rd_data=0x%h fault=%b",
+                `DEBUG2(("[WB_DEBUG] Non-memory instr with fault flag: PC=0x%h instr=0x%h rd=%0d rd_data=0x%h fault=%b",
                        pc_mem, instr_mem, rd_addr_mem, alu_result_mem, data_access_fault_mem));
             end
             mem_read_wb   <= mem_read_mem;
@@ -2479,20 +2479,20 @@ module rv32_core #(
             wb_valid      <= mem_valid && !irq_pending && !wb_exception;
             data_access_fault_wb <= data_access_fault_mem;
             if (mem_valid) begin
-                `DBG2(("Cycle %0t: MEM->WB pc=0x%h instr=0x%h mem_valid=%b wb_valid_next=%b",
+                `DEBUG2(("Cycle %0t: MEM->WB pc=0x%h instr=0x%h mem_valid=%b wb_valid_next=%b",
                        $time, pc_mem, instr_mem, mem_valid, mem_valid));
                 if (mem_read_mem) begin
-                    `DBG2(("[LOAD_DATA] pc=0x%h addr=0x%h mem_data_wb_next=0x%h dmem_resp_valid=%b dmem_resp_data=0x%h dmem_resp_valid_buf=%b dmem_resp_data_buf=0x%h",
+                    `DEBUG2(("[LOAD_DATA] pc=0x%h addr=0x%h mem_data_wb_next=0x%h dmem_resp_valid=%b dmem_resp_data=0x%h dmem_resp_valid_buf=%b dmem_resp_data_buf=0x%h",
                            pc_mem, alu_result_mem, mem_data_wb_next, dmem_resp_valid, dmem_resp_data, dmem_resp_valid_buf, dmem_resp_data_buf));
                 end
             end
         end else if (mem_valid) begin
-            `DBG2(("Cycle %0t: MEM->WB STALLED pc=0x%h mem_wb_stall=%b mem_read=%b mem_write=%b dmem_resp_valid_buf=%b dmem_req_ready=%b",
+            `DEBUG2(("Cycle %0t: MEM->WB STALLED pc=0x%h mem_wb_stall=%b mem_read=%b mem_write=%b dmem_resp_valid_buf=%b dmem_req_ready=%b",
                    $time, pc_mem, mem_wb_stall, mem_read_mem, mem_write_mem, dmem_resp_valid_buf, dmem_req_ready));
             // Clear reg_we after instruction retires to prevent stale forwarding
             if (retire_instr && reg_we_wb) begin
                 reg_we_wb <= 1'b0;
-                `DBG2(("[REG_WE_CLEAR] PC=0x%h instr=0x%h rd=x%0d: Cleared reg_we after retirement (pipeline stalled)",
+                `DEBUG2(("[REG_WE_CLEAR] PC=0x%h instr=0x%h rd=x%0d: Cleared reg_we after retirement (pipeline stalled)",
                        pc_wb, instr_wb, rd_addr_wb));
             end
         end
@@ -2524,19 +2524,19 @@ module rv32_core #(
             last_cycle_counter <= 64'd0;
         end else begin
             if (retire_instr) begin
-                `DBG1(("RETIRE: PC=0x%h instr=0x%h cycle=%0d, gap=%0d", pc_wb, instr_wb, cycle_counter, cycle_counter - last_cycle_counter));
+                `DEBUG1(("RETIRE: PC=0x%h instr=0x%h cycle=%0d, gap=%0d", pc_wb, instr_wb, cycle_counter, cycle_counter - last_cycle_counter));
                 if (reg_we_wb && (rd_addr_wb != 5'd0)) begin
-                    `DBG2(("RETIRE:   Writing rd=x%0d with 0x%h", rd_addr_wb,
+                    `DEBUG2(("RETIRE:   Writing rd=x%0d with 0x%h", rd_addr_wb,
                            wb_write_data));
                 end
                 last_cycle_counter <= cycle_counter;
             end else if (wb_valid && wb_exception) begin
-                `DBG2(("WB_EXCEPTION: PC=0x%h cause=%0d cycle=%0d", pc_wb, wb_exception_cause, cycle_counter));
+                `DEBUG2(("WB_EXCEPTION: PC=0x%h cause=%0d cycle=%0d", pc_wb, wb_exception_cause, cycle_counter));
             end else if (wb_valid && !retire_instr && reg_we_wb && (rd_addr_wb != 5'd0)) begin
                 // WB stage valid but not retiring (duplicate)
-                `DBG2(("[RETIRE_SKIP] PC=0x%h instr=0x%h rd=x%0d: Not retiring (duplicate detection)",
+                `DEBUG2(("[RETIRE_SKIP] PC=0x%h instr=0x%h rd=x%0d: Not retiring (duplicate detection)",
                        pc_wb, instr_wb, rd_addr_wb));
-                `DBG2(("[RETIRE_SKIP]   retire_base=%b last_pc=0x%h last_instr=0x%h",
+                `DEBUG2(("[RETIRE_SKIP]   retire_base=%b last_pc=0x%h last_instr=0x%h",
                        retire_instr_base, last_retired_pc, last_retired_instr));
             end
         end
@@ -2571,10 +2571,10 @@ module rv32_core #(
             wb_exception = 1'b1;
             if (mem_read_wb) begin
                 wb_exception_cause = EXC_LOAD_ACCESS_FAULT;  // Exception code 5
-                `DBG1(("EXCEPTION: Load access fault @ PC=0x%h addr=0x%h", pc_wb, alu_result_wb));
+                `DEBUG1(("EXCEPTION: Load access fault @ PC=0x%h addr=0x%h", pc_wb, alu_result_wb));
             end else begin
                 wb_exception_cause = EXC_STORE_ACCESS_FAULT;  // Exception code 7
-                `DBG1(("EXCEPTION: Store access fault @ PC=0x%h addr=0x%h", pc_wb, alu_result_wb));
+                `DEBUG1(("EXCEPTION: Store access fault @ PC=0x%h addr=0x%h", pc_wb, alu_result_wb));
             end
         end
     end

@@ -161,24 +161,24 @@ module rv32_ib #(
             can_accept_q <= 1'b0;
         end else begin
             if (can_accept != can_accept_q) begin
-                `DBG2(("IB: can_accept %0b->%0b (out=%0d discard=%0d req_v=%0b req_r=%0b resp_v=%0b resp_c=%0b)",
+                `DEBUG2(("IB: can_accept %0b->%0b (out=%0d discard=%0d req_v=%0b req_r=%0b resp_v=%0b resp_c=%0b)",
                        can_accept_q, can_accept, outstanding, discard_cnt,
                        req_valid, req_ready, resp_valid, resp_consume));
             end
 
             if (req_valid && req_ready) begin
-                `DBG2(("IB: issue accepted (out=%0d discard=%0d can_accept=%0b)",
+                `DEBUG2(("IB: issue accepted (out=%0d discard=%0d can_accept=%0b)",
                        outstanding, discard_cnt, can_accept));
             end else if (req_valid && !req_ready) begin
-                `DBG2(("IB: issue blocked by req_ready=0 (out=%0d discard=%0d can_accept=%0b)",
+                `DEBUG2(("IB: issue blocked by req_ready=0 (out=%0d discard=%0d can_accept=%0b)",
                        outstanding, discard_cnt, can_accept));
             end else if (!req_valid && can_accept && !flush) begin
-                `DBG2(("IB: no issue while can_accept=1 (out=%0d discard=%0d)",
+                `DEBUG2(("IB: no issue while can_accept=1 (out=%0d discard=%0d)",
                        outstanding, discard_cnt));
             end
 
             if ((outstanding == CNT_WIDTH'(DEPTH)) && resp_consumed_valid) begin
-                `DBG2(("IB: full-depth, response consumed (out=%0d discard=%0d can_accept=%0b)",
+                `DEBUG2(("IB: full-depth, response consumed (out=%0d discard=%0d can_accept=%0b)",
                        outstanding, discard_cnt, can_accept));
             end
 
@@ -237,20 +237,20 @@ module rv32_ib #(
                         discard_cnt <= CNT_WIDTH'(DEPTH);
                     else
                         discard_cnt <= discard_cnt + outstanding - 1'b1;
-                    `DBG2(("IB: Flush - adding %0d outstanding to discard (adj for consume)", outstanding - 1'b1));
+                    `DEBUG2(("IB: Flush - adding %0d outstanding to discard (adj for consume)", outstanding - 1'b1));
                 end else begin
                     if ((discard_cnt + outstanding) > CNT_WIDTH'(DEPTH))
                         discard_cnt <= CNT_WIDTH'(DEPTH);
                     else
                         discard_cnt <= discard_cnt + outstanding;
-                    `DBG2(("IB: Flush - adding %0d outstanding to discard", outstanding));
+                    `DEBUG2(("IB: Flush - adding %0d outstanding to discard", outstanding));
                end
                 // Early-branch-target: if a new request is sent on the same
                 // cycle as the flush (branch_taken cycle), count it as
                 // outstanding=1 so the response is not lost.
                 outstanding <= req_sent ? CNT_WIDTH'(1'b1) : CNT_WIDTH'('0);
                 if (req_sent)
-                    `DBG2(("IB: Flush+early-fetch: outstanding starts at 1 for addr=0x%h",
+                    `DEBUG2(("IB: Flush+early-fetch: outstanding starts at 1 for addr=0x%h",
                            req_addr));
             end else begin
                 // Priority 2: Decrement discard counter when response is consumed
@@ -258,7 +258,7 @@ module rv32_ib #(
                 // with mem_axi_ro FIFO which only pops on resp_consumed
                 if (resp_consumed && discard_cnt > 0) begin
                     discard_cnt <= discard_cnt - 1'b1;
-                    `DBG2(("IB: Discarding response, discard_cnt=%0d->%0d", discard_cnt, discard_cnt - 1'b1));
+                    `DEBUG2(("IB: Discarding response, discard_cnt=%0d->%0d", discard_cnt, discard_cnt - 1'b1));
                 end
 
                 // Priority 3: Update outstanding count based on valid request/response pairs
@@ -302,7 +302,7 @@ module rv32_ib #(
             if (PTR_WIDTH > 0) begin
                 wr_ptr <= wr_ptr + 1'b1;
             end
-            `DBG2(("IB: Push pc=0x%h wrptr=%0d", req_addr, wr_ptr));
+            `DEBUG2(("IB: Push pc=0x%h wrptr=%0d", req_addr, wr_ptr));
         end
     end
 
@@ -331,14 +331,14 @@ module rv32_ib #(
             if (PTR_WIDTH > 0) begin
                 rd_ptr <= rd_ptr + 1'b1;
             end
-            `DBG2(("IB: Discard pc=0x%h rdptr=%0d", pc_fifo[rd_ptr], rd_ptr));
+            `DEBUG2(("IB: Discard pc=0x%h rdptr=%0d", pc_fifo[rd_ptr], rd_ptr));
         end else if (resp_consumed && discard_cnt == 0) begin
             // Case 2: Normal operation - valid response consumed by pipeline
             // Pop the PC and advance to next entry
             if (PTR_WIDTH > 0) begin
                 rd_ptr <= rd_ptr + 1'b1;
             end
-            `DBG2(("IB: Pop pc=0x%h rdptr=%0d", pc_fifo[rd_ptr], rd_ptr));
+            `DEBUG2(("IB: Pop pc=0x%h rdptr=%0d", pc_fifo[rd_ptr], rd_ptr));
         end
     end
 

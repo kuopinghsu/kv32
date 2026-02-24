@@ -75,20 +75,20 @@ static void handle_sigint(int) {
 
 // Debug macros
 #ifdef DEBUG
-#define DBG1(fmt, ...) do { \
+#define DEBUG1(fmt, ...) do { \
     if (DEBUG >= 1) { \
         fprintf(stderr, "[DEBUG] " fmt "\n", ##__VA_ARGS__); \
     } \
 } while(0)
 
-#define DBG2(fmt, ...) do { \
+#define DEBUG2(fmt, ...) do { \
     if (DEBUG >= 2) { \
         fprintf(stderr, "[DEBUG] " fmt "\n", ##__VA_ARGS__); \
     } \
 } while(0)
 #else
-#define DBG1(fmt, ...)
-#define DBG2(fmt, ...)
+#define DEBUG1(fmt, ...)
+#define DEBUG2(fmt, ...)
 #endif
 
 // Helper function to get register name
@@ -220,14 +220,14 @@ static void dump_instruction_trace(
         bool is_csr = (csr_op != 0);
         bool is_mret = (instr == 0x30200073);
 
-        DBG2("Cycle %llu: Instr %llu @ PC=0x%08x instr=0x%08x rd=%d mem_w=%d mem_r=%d",
+        DEBUG2("Cycle %llu: Instr %llu @ PC=0x%08x instr=0x%08x rd=%d mem_w=%d mem_r=%d",
              cycle_num, instr_count, pc, instr, rd_addr, mem_write_wb, mem_read_wb);
 
         if (mem_write_wb) {
-            DBG2("Cycle %llu: Memory WRITE addr=0x%08x", cycle_num, alu_res);
+            DEBUG2("Cycle %llu: Memory WRITE addr=0x%08x", cycle_num, alu_res);
         }
         if (mem_read_wb) {
-            DBG2("Cycle %llu: Memory READ addr=0x%08x", cycle_num, alu_res);
+            DEBUG2("Cycle %llu: Memory READ addr=0x%08x", cycle_num, alu_res);
         }
 
         // Build trace line into string stream for alignment
@@ -540,7 +540,7 @@ int main(int argc, char** argv) {
 
     // Release reset AFTER loading program
     dut->rst_n = 1;
-    DBG1("Simulation starting with max_instructions=%llu trace=%d", max_instructions, enable_trace);
+    DEBUG1("Simulation starting with max_instructions=%llu trace=%d", max_instructions, enable_trace);
     std::cout << "==========================================" << std::endl;
 
     // Run simulation

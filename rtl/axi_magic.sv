@@ -141,11 +141,11 @@ module axi_magic (
                             EXIT_MAGIC_ADDR: begin
                                 if (is_byte_write) begin
                                     // Exit simulation with byte value
-                                    `DBG1(("[MAGIC] Exit simulation with code %0d", write_byte));
+                                    `DEBUG1(("[MAGIC] Exit simulation with code %0d", write_byte));
                                     sim_request_exit(write_byte);
                                 end else begin
                                     // Exit simulation with word value
-                                    `DBG1(("[MAGIC] Exit simulation with code %0d", axi_wdata));
+                                    `DEBUG1(("[MAGIC] Exit simulation with code %0d", axi_wdata));
                                     sim_request_exit(axi_wdata);
                                 end
                             end

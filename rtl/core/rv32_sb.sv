@@ -242,7 +242,7 @@ module rv32_sb #(
                 if (PTR_WIDTH > 0) begin
                     wr_ptr <= wr_ptr + 1'b1;  // Advance tail pointer
                 end
-                `DBG2(("SB: Allocate entry wrptr=%0d addr=0x%h data=0x%h strb=0x%h",
+                `DEBUG2(("SB: Allocate entry wrptr=%0d addr=0x%h data=0x%h strb=0x%h",
                        wr_ptr, cpu_addr, cpu_data, cpu_strb));
             end
 
@@ -250,7 +250,7 @@ module rv32_sb #(
             // Condition: Memory accepts the store (handshake completes)
             if (mem_valid && mem_ready) begin
                 buf_inflight[rd_ptr] <= 1'b1;
-                `DBG2(("SB: Issue store rdptr=%0d addr=0x%h", rd_ptr, buf_addr[rd_ptr]));
+                `DEBUG2(("SB: Issue store rdptr=%0d addr=0x%h", rd_ptr, buf_addr[rd_ptr]));
             end
 
             // Operation 3: Flush - clear all entries
@@ -261,7 +261,7 @@ module rv32_sb #(
                     buf_valid[i]    <= 1'b0;
                     buf_inflight[i] <= 1'b0;
                 end
-                `DBG2(("SB: Flush all entries"));
+                `DEBUG2(("SB: Flush all entries"));
             end
         end
     end
@@ -290,7 +290,7 @@ module rv32_sb #(
                 if (PTR_WIDTH > 0) begin
                     rd_ptr <= rd_ptr + 1'b1;       // Advance head pointer
                 end
-                `DBG2(("SB: Complete store rdptr=%0d %s",
+                `DEBUG2(("SB: Complete store rdptr=%0d %s",
                        rd_ptr, resp_error ? "ERROR" : "OK"));
             end
 

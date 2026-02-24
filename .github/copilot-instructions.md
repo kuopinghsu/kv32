@@ -19,13 +19,13 @@ Debugging RTL:
   2. For detailed RTL internal behavior (state machines, AXI transactions):
      make DEBUG=2 rtl-<test>   # Enables verbose debug output
   3. Add custom debug messages in RTL when needed:
-     - `ifdef DEBUG_LEVEL_1 for critical debug messages (exceptions, branches, etc.), use `DBG1 macro for these messages
-     - `ifdef DEBUG_LEVEL_2 for verbose debug messages (pipeline details, state machines), use `DBG2 macro for these messages
+     - `ifdef DEBUG_LEVEL_1 for critical debug messages (exceptions, branches, etc.), use `DEBUG1 macro for these messages
+     - `ifdef DEBUG_LEVEL_2 for verbose debug messages (pipeline details, state machines), use `DEBUG2 macro for these messages
      - Use `ifdef DEBUG for either level of debug messages
      - DEBUG_LEVEL_2 automatically includes all DEBUG_LEVEL_1 messages
      Example:
-        `DBG1("[DEBUG] Exception @ PC=0x%h", pc);
-        `DBG2("[DEBUG] Pipeline: state=%d data=0x%h", state, data);
+        `DEBUG1("[DEBUG] Exception @ PC=0x%h", pc);
+        `DEBUG2("[DEBUG] Pipeline: state=%d data=0x%h", state, data);
         `ifdef DEBUG
         // Some debug code that runs when either DEBUG_LEVEL_1 or DEBUG_LEVEL_2 is enabled
         `endif

@@ -182,13 +182,13 @@ module rv32_alu #(
             always_ff @(posedge clk) begin
                 if (rst_n) begin
                     if (is_mul_op && !mul_active && !mul_valid && clz_b_mul != 6'd32) begin
-                        `DBG2(("[MUL_START] alu_op=%0d a=%h b=%h abs_a=%h abs_b=%h clz_b=%0d total=%0d neg=%b",
+                        `DEBUG2(("[MUL_START] alu_op=%0d a=%h b=%h abs_a=%h abs_b=%h clz_b=%0d total=%0d neg=%b",
                                  alu_op, operand_a, operand_b,
                                  abs_a_mul, abs_b_mul, clz_b_mul, 6'd32 - clz_b_mul,
                                  (is_signed_a_mul && operand_a[31]) ^ (is_signed_b_mul && operand_b[31])));
                     end
                     if (mul_valid) begin
-                        `DBG2(("[MUL_DONE] mul_result=%h alu_op=%0d",
+                        `DEBUG2(("[MUL_DONE] mul_result=%h alu_op=%0d",
                                  mul_result, alu_op));
                     end
                 end
@@ -400,7 +400,7 @@ module rv32_alu #(
                 if (rst_n) begin
                     if (is_div_op && !div_active && !div_valid &&
                         !div_by_zero && !signed_ovf) begin
-                        `DBG2(("[DIV_START] alu_op=%0d a=%h b=%h abs_a=%h abs_b=%h clz=%0d total=%0d q_init=%h neg_q=%b neg_r=%b",
+                        `DEBUG2(("[DIV_START] alu_op=%0d a=%h b=%h abs_a=%h abs_b=%h clz=%0d total=%0d q_init=%h neg_q=%b neg_r=%b",
                                  alu_op, operand_a, operand_b,
                                  abs_a, abs_b, clz_a, 6'd32 - clz_a,
                                  abs_a << clz_a,
@@ -408,7 +408,7 @@ module rv32_alu #(
                                  is_signed_div && operand_a[31]));
                     end
                     if (div_valid) begin
-                        `DBG2(("[DIV_DONE] div_q=%h div_r=%h div_result_q=%h div_result_r=%h neg_q=%b neg_r=%b alu_op=%0d",
+                        `DEBUG2(("[DIV_DONE] div_q=%h div_r=%h div_result_q=%h div_result_r=%h neg_q=%b neg_r=%b alu_op=%0d",
                                  div_q, div_r, div_result_q, div_result_r, div_neg_q, div_neg_r, alu_op));
                     end
                 end
