@@ -51,6 +51,7 @@ extern "C" {
     extern int mem_get_stat_r_responses();
     extern int mem_get_stat_aw_requests();
     extern int mem_get_stat_w_data();
+    extern int mem_get_stat_w_expected();
     extern int mem_get_stat_b_responses();
     extern int mem_get_stat_max_outstanding_reads();
     extern int mem_get_stat_max_outstanding_writes();
@@ -671,8 +672,9 @@ int main(int argc, char** argv) {
     int ar_requests = mem_get_stat_ar_requests();
     int r_responses = mem_get_stat_r_responses();
     int aw_requests = mem_get_stat_aw_requests();
-    int w_data = mem_get_stat_w_data();
-    int b_responses = mem_get_stat_b_responses();
+    int w_data       = mem_get_stat_w_data();
+    int w_expected   = mem_get_stat_w_expected();
+    int b_responses  = mem_get_stat_b_responses();
     int max_outstanding_reads = mem_get_stat_max_outstanding_reads();
     int max_outstanding_writes = mem_get_stat_max_outstanding_writes();
 
@@ -692,15 +694,18 @@ int main(int argc, char** argv) {
 
     std::cout << "Write Operations :" << std::endl;
     std::cout << "  AW Requests (Master) :       " << aw_requests << std::endl;
-    std::cout << "  W Data (Master) :            " << w_data << std::endl;
+    std::cout << "  W Data Beats (actual) :      " << w_data << std::endl;
+    std::cout << "  W Data Beats (expected) :    " << w_expected << std::endl;
     std::cout << "  B Responses (Slave) :        " << b_responses << std::endl;
     if (aw_requests != b_responses) {
         std::cout << "  WARNING: Mismatch AW=" << aw_requests << ", B=" << b_responses
                   << " (Diff=" << (aw_requests - b_responses) << ")" << std::endl;
     }
-    if (aw_requests != w_data) {
-        std::cout << "  WARNING: Mismatch AW=" << aw_requests << ", W=" << w_data
-                  << " (Diff=" << (aw_requests - w_data) << ")" << std::endl;
+    // w_expected = sum of (awlen+1) per AW transaction; w_data = actual W beats observed.
+    // They must match: any difference means beats were lost or spuriously generated.
+    if (w_data != w_expected) {
+        std::cout << "  WARNING: Mismatch W_expected=" << w_expected << ", W_actual=" << w_data
+                  << " (Diff=" << (w_expected - w_data) << ") -- burst beat count inconsistency!" << std::endl;
     }
     std::cout << "  Max Outstanding Writes :     " << max_outstanding_writes << std::endl;
     std::cout << std::endl;

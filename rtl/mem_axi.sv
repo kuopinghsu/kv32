@@ -221,8 +221,9 @@ module mem_axi #(
         end
     end
 
-    // (B channel handling moved below with response capture)
-    assign axi_bready = !resp_fifo_full && !axi_rvalid;  // Prefer R when both valid, accept B unless FIFO full
+    // Accept B response whenever FIFO has space (no longer gated by axi_rvalid
+    // to prevent B starvation when reads and writes are interleaved).
+    assign axi_bready = !resp_fifo_full;
 
     // ========================================================================
     // mem_req_ready: Can accept new request when channels and FIFOs have space

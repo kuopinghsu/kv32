@@ -910,3 +910,224 @@ bool CLINTDevice::get_timer_interrupt() {
 bool CLINTDevice::get_software_interrupt() {
     return msip & 0x1;
 }
+// ============================================================================
+// DMA Device Implementation
+// ============================================================================
+
+DMADevice::DMADevice(ReadFn rfn, WriteFn wfn)
+    : mem_read(rfn), mem_write(wfn)
+{
+    reset();
+}
+
+void DMADevice::reset() {
+    for (int i = 0; i < NUM_CH; i++) {
+        ch[i] = Chan{};
+    }
+    irq_stat     = 0;
+    irq_en       = 0;
+    perf_enable   = false;
+    perf_cycles   = 0;
+    perf_rd_bytes = 0;
+    perf_wr_bytes = 0;
+    perf_xfer_acc = 0;
+}
+
+// Returns true if addr is accessible by DMA (in RAM address space).
+bool DMADevice::is_valid_addr(uint32_t addr) const {
+    return (addr >= RV_RAM_BASE && addr < (RV_RAM_BASE + RV_RAM_SIZE));
+}
+
+// Copy cnt bytes from src to dst.  Address validity is checked before copy.
+// Returns false on error (invalid source address).
+bool DMADevice::do_1d_copy(uint32_t src, uint32_t dst, uint32_t cnt,
+                            bool src_inc, bool dst_inc)
+{
+    // Validate address range for the full read window
+    if (!is_valid_addr(src)) return false;
+    if (src_inc && cnt > 0 && !is_valid_addr(src + cnt - 1)) return false;
+
+    for (uint32_t i = 0; i < cnt; i++) {
+        uint32_t v = mem_read(src, 1);
+        mem_write(dst, v, 1);
+        if (src_inc) src++;
+        if (dst_inc) dst++;
+    }
+    if (perf_enable)
+        perf_xfer_acc += cnt;
+    return true;
+}
+
+// Execute the active transfer for channel n.  Returns false on error.
+bool DMADevice::execute_transfer(int n)
+{
+    Chan& c = ch[n];
+    uint32_t ctrl  = c.ctrl;
+    uint32_t mode  = (ctrl >> 3) & 0x3u;   // bits [4:3]
+    bool src_inc   = (ctrl & RV_DMA_CTRL_SRC_INC) != 0;
+    bool dst_inc   = (ctrl & RV_DMA_CTRL_DST_INC) != 0;
+
+    switch (mode) {
+    case 0: {   // 1D flat
+        return do_1d_copy(c.src_addr, c.dst_addr, c.xfer_cnt, src_inc, dst_inc);
+    }
+    case 1: {   // 2D strided
+        for (uint32_t r = 0; r < c.row_cnt; r++) {
+            uint32_t s = c.src_addr + r * c.src_stride;
+            uint32_t d = c.dst_addr + r * c.dst_stride;
+            if (!do_1d_copy(s, d, c.xfer_cnt, src_inc, dst_inc)) return false;
+        }
+        return true;
+    }
+    case 2: {   // 3D planar
+        for (uint32_t p = 0; p < c.plane_cnt; p++) {
+            for (uint32_t r = 0; r < c.row_cnt; r++) {
+                uint32_t s = c.src_addr + p * c.src_pstride + r * c.src_stride;
+                uint32_t d = c.dst_addr + p * c.dst_pstride + r * c.dst_stride;
+                if (!do_1d_copy(s, d, c.xfer_cnt, src_inc, dst_inc)) return false;
+            }
+        }
+        return true;
+    }
+    case 3: {   // Scatter-Gather
+        uint32_t desc = c.sg_addr;
+        for (uint32_t i = 0; i < c.sg_cnt; i++) {
+            if (!is_valid_addr(desc + 12)) return false;
+            uint32_t sg_src  = mem_read(desc +  0, 4);
+            uint32_t sg_dst  = mem_read(desc +  4, 4);
+            uint32_t sg_cnt  = mem_read(desc +  8, 4);
+            uint32_t sg_ctrl = mem_read(desc + 12, 4);
+            bool s_inc = (sg_ctrl >> 2) & 1u;
+            bool d_inc = (sg_ctrl >> 3) & 1u;
+            if (!do_1d_copy(sg_src, sg_dst, sg_cnt, s_inc, d_inc)) return false;
+            desc += 16;
+        }
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+// Set channel completion state, clear BUSY, and raise IRQ if configured.
+void DMADevice::finish_channel(int n, bool ok)
+{
+    Chan& c = ch[n];
+    c.stat &= ~0x7u;                        // clear busy / done / err
+    c.stat |= ok ? RV_DMA_STAT_DONE        // bit 1
+                 : RV_DMA_STAT_ERR;         // bit 2
+    c.ctrl &= ~(uint32_t)RV_DMA_CTRL_START; // START auto-clears
+
+    // Raise IRQ if channel IE and global IRQ_EN[n] are both set
+    if ((c.ctrl & RV_DMA_CTRL_IE) && (irq_en & (1u << n))) {
+        irq_stat |= (1u << n);
+    }
+}
+
+uint32_t DMADevice::read(uint32_t offset, int size)
+{
+    (void)size;
+
+    // Global registers
+    if (offset == RV_DMA_IRQ_STAT_OFF)      return irq_stat;
+    if (offset == RV_DMA_IRQ_EN_OFF)        return irq_en;
+    if (offset == RV_DMA_ID_OFF)            return DMA_ID;
+    if (offset == RV_DMA_PERF_CTRL_OFF)     return perf_enable ? 1u : 0u;
+    if (offset == RV_DMA_PERF_CYCLES_OFF)   return perf_cycles;
+    if (offset == RV_DMA_PERF_RD_BYTES_OFF) return perf_rd_bytes;
+    if (offset == RV_DMA_PERF_WR_BYTES_OFF) return perf_wr_bytes;
+
+    // Per-channel registers
+    if (offset < (uint32_t)(NUM_CH * (int)RV_DMA_CH_STRIDE)) {
+        int      n   = (int)(offset / RV_DMA_CH_STRIDE);
+        uint32_t reg = offset % RV_DMA_CH_STRIDE;
+        const Chan& c = ch[n];
+        switch (reg) {
+        case RV_DMA_CH_CTRL_OFF:     return c.ctrl;
+        case RV_DMA_CH_STAT_OFF:     return c.stat;
+        case RV_DMA_CH_SRC_OFF:      return c.src_addr;
+        case RV_DMA_CH_DST_OFF:      return c.dst_addr;
+        case RV_DMA_CH_XFER_OFF:     return c.xfer_cnt;
+        case RV_DMA_CH_SSTRIDE_OFF:  return c.src_stride;
+        case RV_DMA_CH_DSTRIDE_OFF:  return c.dst_stride;
+        case RV_DMA_CH_ROWCNT_OFF:   return c.row_cnt;
+        case RV_DMA_CH_SPSTRIDE_OFF: return c.src_pstride;
+        case RV_DMA_CH_DPSTRIDE_OFF: return c.dst_pstride;
+        case RV_DMA_CH_PLANECNT_OFF: return c.plane_cnt;
+        case RV_DMA_CH_SGADDR_OFF:   return c.sg_addr;
+        case RV_DMA_CH_SGCNT_OFF:    return c.sg_cnt;
+        default: return 0;
+        }
+    }
+    return 0;
+}
+
+void DMADevice::write(uint32_t offset, uint32_t value, int size)
+{
+    (void)size;
+
+    // Global registers
+    if (offset == RV_DMA_IRQ_STAT_OFF) { irq_stat &= ~value; return; }  // W1C
+    if (offset == RV_DMA_IRQ_EN_OFF)   { irq_en    = value;  return; }
+    if (offset == RV_DMA_ID_OFF)       { return; }                      // read-only
+    if (offset == RV_DMA_PERF_CTRL_OFF) {
+        if (value & 2u) {                   // bit[1] = RESET
+            perf_enable   = false;
+            perf_cycles   = 0;
+            perf_rd_bytes = 0;
+            perf_wr_bytes = 0;
+        } else {
+            perf_enable = (value & 1u) != 0; // bit[0] = ENABLE
+        }
+        return;
+    }
+    // PERF_CYCLES / RD_BYTES / WR_BYTES are read-only
+    if (offset == RV_DMA_PERF_CYCLES_OFF)   { return; }
+    if (offset == RV_DMA_PERF_RD_BYTES_OFF) { return; }
+    if (offset == RV_DMA_PERF_WR_BYTES_OFF) { return; }
+
+    // Per-channel registers
+    if (offset < (uint32_t)(NUM_CH * (int)RV_DMA_CH_STRIDE)) {
+        int      n   = (int)(offset / RV_DMA_CH_STRIDE);
+        uint32_t reg = offset % RV_DMA_CH_STRIDE;
+        Chan& c = ch[n];
+
+        switch (reg) {
+        case RV_DMA_CH_CTRL_OFF:
+            c.ctrl = value;
+            if ((value & RV_DMA_CTRL_EN) && (value & RV_DMA_CTRL_START)) {
+                c.stat = RV_DMA_STAT_BUSY;
+                perf_xfer_acc = 0;
+                bool ok = execute_transfer(n);
+                finish_channel(n, ok);
+                if (perf_enable) {
+                    // Each byte is both read and written; simulate 1 cycle/beat (BPB=4)
+                    perf_rd_bytes += perf_xfer_acc;
+                    perf_wr_bytes += perf_xfer_acc;
+                    perf_cycles   += (perf_xfer_acc + 3u) / 4u * 2u;  // 2 phases × beats
+                }
+            }
+            if (value & RV_DMA_CTRL_STOP) {
+                c.stat &= ~(uint32_t)RV_DMA_STAT_BUSY;
+                c.ctrl &= ~(uint32_t)RV_DMA_CTRL_STOP;
+            }
+            break;
+        case RV_DMA_CH_STAT_OFF:
+            // W1C: clear DONE(bit1) and ERR(bit2); BUSY(bit0) is read-only
+            c.stat &= ~(value & 0x6u);
+            break;
+        case RV_DMA_CH_SRC_OFF:      c.src_addr   = value; break;
+        case RV_DMA_CH_DST_OFF:      c.dst_addr   = value; break;
+        case RV_DMA_CH_XFER_OFF:     c.xfer_cnt   = value; break;
+        case RV_DMA_CH_SSTRIDE_OFF:  c.src_stride = value; break;
+        case RV_DMA_CH_DSTRIDE_OFF:  c.dst_stride = value; break;
+        case RV_DMA_CH_ROWCNT_OFF:   c.row_cnt    = value; break;
+        case RV_DMA_CH_SPSTRIDE_OFF: c.src_pstride = value; break;
+        case RV_DMA_CH_DPSTRIDE_OFF: c.dst_pstride = value; break;
+        case RV_DMA_CH_PLANECNT_OFF: c.plane_cnt  = value; break;
+        case RV_DMA_CH_SGADDR_OFF:   c.sg_addr    = value; break;
+        case RV_DMA_CH_SGCNT_OFF:    c.sg_cnt     = value; break;
+        default: break;
+        }
+    }
+}

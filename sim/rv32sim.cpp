@@ -159,6 +159,15 @@ RV32Simulator::RV32Simulator(uint32_t base, uint32_t size)
     i2c = new I2CDevice();
     clint = new CLINTDevice();
     plic = new PLICDevice();
+    dma = new DMADevice(
+        [this](uint32_t addr, int sz) {
+            bool handled = false;
+            return bus_read(addr, sz, &handled);
+        },
+        [this](uint32_t addr, uint32_t val, int sz) {
+            bus_write(addr, val, sz);
+        }
+    );
 
     // Register universal slave interface windows
     register_device_slave(mem_base, mem_size, memory, "RAM");
@@ -168,6 +177,7 @@ RV32Simulator::RV32Simulator(uint32_t base, uint32_t size)
     register_device_slave(SPI_BASE, SPI_SIZE, spi, "SPI");
     register_device_slave(I2C_BASE, I2C_SIZE, i2c, "I2C");
     register_device_slave(MAGIC_BASE, MAGIC_SIZE, magic, "MAGIC");
+    register_device_slave(RV_DMA_BASE, RV_DMA_SIZE, dma, "DMA");
 }
 
 RV32Simulator::~RV32Simulator() {
@@ -178,6 +188,7 @@ RV32Simulator::~RV32Simulator() {
     delete i2c;
     delete clint;
     delete plic;
+    delete dma;
     slaves.clear();
 
     delete memory;
@@ -518,11 +529,12 @@ void RV32Simulator::take_trap(uint32_t cause, uint32_t tval) {
 // Check for pending interrupts
 void RV32Simulator::check_interrupts() {
     // ── PLIC: update IRQ sources from peripherals ──────────────────────────
-    // Sources: [1]=UART, [2]=SPI, [3]=I2C  (matches rv32_soc.sv wiring)
+    // Sources: [1]=UART, [2]=SPI, [3]=I2C, [4]=DMA  (matches rv32_soc.sv wiring)
     uint32_t plic_src = 0;
     if (uart->get_irq()) plic_src |= (1u << 1);
     if (spi->get_irq())  plic_src |= (1u << 2);
     if (i2c->get_irq())  plic_src |= (1u << 3);
+    if (dma->get_irq())  plic_src |= (1u << RV_PLIC_SRC_DMA);
     plic->update_irq_sources(plic_src);
 
     // ── Update MIP bits ───────────────────────────────────────────────────

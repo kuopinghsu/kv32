@@ -10,6 +10,7 @@
  *  6. Scatter-Gather, 3 descriptors
  *  7. Error IRQ (unmapped source address → DECERR → ch_err)
  *  8. Multi-channel: ch0 and ch1 started back-to-back, both verified
+ *  9. Performance: 4 KB 1-D transfer, measures cycles / MB/s via PERF counters
  */
 
 #include <stdint.h>
@@ -51,6 +52,8 @@ static uint8_t   buf_src4[64]   __attribute__((aligned(4)));  /* test 8 */
 static uint8_t   buf_dst4[64]   __attribute__((aligned(4)));
 static uint8_t   buf_src5[64]   __attribute__((aligned(4)));  /* test 8 */
 static uint8_t   buf_dst5[64]   __attribute__((aligned(4)));
+static uint8_t   perf_src[4096] __attribute__((aligned(4)));  /* test 9 */
+static uint8_t   perf_dst[4096] __attribute__((aligned(4)));  /* test 9 */
 
 /* ── IRQ state (set by MEI handler) ─────────────────────────────────────── */
 static volatile uint32_t g_irq_stat;           /* captured IRQ_STAT */
@@ -517,6 +520,88 @@ static void test8_multi_ch(void)
 }
 
 /* ========================================================================== */
+/* TEST 9 – Performance: 4 KB 1-D transfer, PERF counter readout             */
+/* ========================================================================== */
+static void test9_perf(void)
+{
+    const uint32_t XFER_BYTES  = 4096;
+    const uint32_t SYS_CLK_HZ = 100000000UL;  /* 100 MHz */
+
+    /* Initialise source buffer with a known pattern */
+    for (uint32_t i = 0; i < XFER_BYTES; i++)
+        perf_src[i] = (uint8_t)(i & 0xFF);
+
+    dma_ch_reset(0);
+
+    /* ----- Reset, then enable performance counters ----- */
+    RV_DMA_GLB_REG(RV_DMA_PERF_CTRL_OFF) = 2;   /* RESET bit */
+    RV_DMA_FENCE();
+    RV_DMA_GLB_REG(RV_DMA_PERF_CTRL_OFF) = 1;   /* ENABLE counting */
+    RV_DMA_FENCE();
+
+    /* ----- Configure and kick 4 KB 1-D transfer on channel 0 ----- */
+    RV_DMA_CH_REG(0, RV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)perf_src;
+    RV_DMA_CH_REG(0, RV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)perf_dst;
+    RV_DMA_CH_REG(0, RV_DMA_CH_XFER_OFF) = XFER_BYTES;
+    RV_DMA_FENCE();
+    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) =
+        RV_DMA_CTRL_EN | RV_DMA_CTRL_SRC_INC | RV_DMA_CTRL_DST_INC |
+        RV_DMA_CTRL_MODE_1D | RV_DMA_CTRL_START;
+    RV_DMA_FENCE();
+
+    int r = dma_poll_done(0, 5000000);
+    RV_DMA_FENCE();
+
+    /* ----- Stop performance counters ----- */
+    RV_DMA_GLB_REG(RV_DMA_PERF_CTRL_OFF) = 0;
+    RV_DMA_FENCE();
+
+    /* ----- Read performance counters ----- */
+    uint32_t cycles   = RV_DMA_GLB_REG(RV_DMA_PERF_CYCLES_OFF);
+    uint32_t rd_bytes = RV_DMA_GLB_REG(RV_DMA_PERF_RD_BYTES_OFF);
+    uint32_t wr_bytes = RV_DMA_GLB_REG(RV_DMA_PERF_WR_BYTES_OFF);
+    uint32_t total    = rd_bytes + wr_bytes;
+
+    /* ----- Compute throughput in MB/s (use uint64 to avoid overflow) ----- */
+    /* throughput = total_bytes * SYS_CLK_HZ / (cycles * 1048576) */
+    uint32_t mbps = 0;
+    if (cycles > 0) {
+        uint64_t num = (uint64_t)total * SYS_CLK_HZ;
+        mbps = (uint32_t)(num / ((uint64_t)cycles * 1048576UL));
+    }
+
+    printf("  PERF cycles=%-8lu  rd=%lu B  wr=%lu B  throughput=%lu MB/s\n",
+           cycles, rd_bytes, wr_bytes, mbps);
+
+    /* ----- Cleanup channel ----- */
+    RV_DMA_CH_REG(0, RV_DMA_CH_STAT_OFF) = RV_DMA_STAT_DONE;
+    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) = 0;
+    RV_DMA_FENCE();
+
+    if (r <= 0) {
+        TEST_FAIL(9, "transfer failed or timed out");
+        return;
+    }
+
+    /* ----- Verify data integrity ----- */
+    int errs = dma_verify(perf_src, perf_dst, XFER_BYTES, "PERF");
+    if (errs != 0) {
+        TEST_FAIL(9, "data mismatch");
+        return;
+    }
+
+    /* ----- Sanity-check byte counter values ----- */
+    if (rd_bytes != XFER_BYTES || wr_bytes != XFER_BYTES) {
+        printf("  Expected rd=%lu wr=%lu, got rd=%lu wr=%lu\n",
+               XFER_BYTES, XFER_BYTES, rd_bytes, wr_bytes);
+        TEST_FAIL(9, "byte counter mismatch");
+        return;
+    }
+
+    TEST_PASS(9);
+}
+
+/* ========================================================================== */
 /* main                                                                       */
 /* ========================================================================== */
 int main(void)
@@ -534,6 +619,7 @@ int main(void)
     test6_sg();
     test7_irq_err();
     test8_multi_ch();
+    test9_perf();
 
     printf("\n=== Results: %d PASS, %d FAIL ===\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

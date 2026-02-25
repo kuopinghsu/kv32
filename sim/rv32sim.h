@@ -148,6 +148,7 @@ public:
     I2CDevice* i2c;
     CLINTDevice* clint;
     PLICDevice* plic;
+    DMADevice* dma;
 
     uint32_t tohost_addr;
     std::ofstream trace_file;

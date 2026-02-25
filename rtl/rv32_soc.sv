@@ -77,11 +77,14 @@ module rv32_soc #(
 
     // External AXI4-Lite RAM interface (2MB)
     output logic [31:0] m_axi_awaddr,
+    output logic [7:0]  m_axi_awlen,
+    output logic [1:0]  m_axi_awburst,
     output logic        m_axi_awvalid,
     input  logic        m_axi_awready,
 
     output logic [31:0] m_axi_wdata,
     output logic [3:0]  m_axi_wstrb,
+    output logic        m_axi_wlast,
     output logic        m_axi_wvalid,
     input  logic        m_axi_wready,
 
@@ -221,6 +224,10 @@ module rv32_soc #(
     logic [7:0]               arb_axi_arlen;       // Burst length (from arbiter to xbar)
     logic [2:0]               arb_axi_arsize;      // Burst size
     logic [1:0]               arb_axi_arburst;     // Burst type
+    logic [7:0]               arb_axi_awlen;       // Write burst length
+    logic [2:0]               arb_axi_awsize;      // Write burst size
+    logic [1:0]               arb_axi_awburst;     // Write burst type
+    logic                     arb_axi_wlast;       // Write data last beat
     logic [31:0]              arb_axi_rdata;
     logic [1:0]               arb_axi_rresp;
     logic [axi_pkg::AXI_ID_WIDTH-1:0] arb_axi_rid;        // Read data ID
@@ -348,6 +355,34 @@ module rv32_soc #(
     // ========================================================================
     // Special addresses for simulation control (exit, pass/fail, etc.)
     // Base address: 0xFFFF_0000
+    // DMA configuration slave AXI-Lite signals (xbar s6 → axi_dma cfg port)
+    logic [31:0] dma_cfg_axi_awaddr;  logic dma_cfg_axi_awvalid;  logic dma_cfg_axi_awready;
+    logic [31:0] dma_cfg_axi_wdata;   logic [3:0] dma_cfg_axi_wstrb;
+    logic        dma_cfg_axi_wvalid;  logic dma_cfg_axi_wready;
+    logic [1:0]  dma_cfg_axi_bresp;   logic dma_cfg_axi_bvalid;   logic dma_cfg_axi_bready;
+    logic [31:0] dma_cfg_axi_araddr;  logic dma_cfg_axi_arvalid;  logic dma_cfg_axi_arready;
+    logic [31:0] dma_cfg_axi_rdata;   logic [1:0] dma_cfg_axi_rresp;
+    logic        dma_cfg_axi_rvalid;  logic dma_cfg_axi_rready;
+    // DMA master AXI signals (axi_dma dma port → arbiter M2)
+    logic [31:0] dma_m_axi_awaddr;  logic [7:0] dma_m_axi_awlen;
+    logic [2:0]  dma_m_axi_awsize;  logic [1:0] dma_m_axi_awburst;
+    logic [axi_pkg::AXI_ID_WIDTH-1:0] dma_m_axi_awid;
+    logic        dma_m_axi_awvalid; logic dma_m_axi_awready;
+    logic [31:0] dma_m_axi_wdata;   logic [3:0] dma_m_axi_wstrb;
+    logic        dma_m_axi_wlast;   logic dma_m_axi_wvalid;  logic dma_m_axi_wready;
+    logic [1:0]  dma_m_axi_bresp;   logic [axi_pkg::AXI_ID_WIDTH-1:0] dma_m_axi_bid;
+    logic        dma_m_axi_bvalid;  logic dma_m_axi_bready;
+    logic [31:0] dma_m_axi_araddr;  logic [7:0] dma_m_axi_arlen;
+    logic [2:0]  dma_m_axi_arsize;  logic [1:0] dma_m_axi_arburst;
+    logic [axi_pkg::AXI_ID_WIDTH-1:0] dma_m_axi_arid;
+    logic        dma_m_axi_arvalid; logic dma_m_axi_arready;
+    logic [31:0] dma_m_axi_rdata;   logic [1:0] dma_m_axi_rresp;
+    logic [axi_pkg::AXI_ID_WIDTH-1:0] dma_m_axi_rid;
+    logic        dma_m_axi_rlast;   logic dma_m_axi_rvalid;  logic dma_m_axi_rready;
+    logic dma_irq;
+    assign dma_m_axi_awid = '0;
+    assign dma_m_axi_arid = '0;
+
     logic [31:0] magic_axi_awaddr;
     logic        magic_axi_awvalid;
     logic        magic_axi_awready;
@@ -678,15 +713,50 @@ module rv32_soc #(
         .m1_axi_rvalid(dmem_axi_rvalid),
         .m1_axi_rready(dmem_axi_rready),
 
+        // Master 2: DMA engine (Read/Write)
+        .m2_axi_awaddr  (dma_m_axi_awaddr),
+        .m2_axi_awid    (dma_m_axi_awid),
+        .m2_axi_awlen   (dma_m_axi_awlen),
+        .m2_axi_awsize  (dma_m_axi_awsize),
+        .m2_axi_awburst (dma_m_axi_awburst),
+        .m2_axi_awvalid (dma_m_axi_awvalid),
+        .m2_axi_awready (dma_m_axi_awready),
+        .m2_axi_wdata   (dma_m_axi_wdata),
+        .m2_axi_wstrb   (dma_m_axi_wstrb),
+        .m2_axi_wlast   (dma_m_axi_wlast),
+        .m2_axi_wvalid  (dma_m_axi_wvalid),
+        .m2_axi_wready  (dma_m_axi_wready),
+        .m2_axi_bresp   (dma_m_axi_bresp),
+        .m2_axi_bid     (dma_m_axi_bid),
+        .m2_axi_bvalid  (dma_m_axi_bvalid),
+        .m2_axi_bready  (dma_m_axi_bready),
+        .m2_axi_araddr  (dma_m_axi_araddr),
+        .m2_axi_arid    (dma_m_axi_arid),
+        .m2_axi_arlen   (dma_m_axi_arlen),
+        .m2_axi_arsize  (dma_m_axi_arsize),
+        .m2_axi_arburst (dma_m_axi_arburst),
+        .m2_axi_arvalid (dma_m_axi_arvalid),
+        .m2_axi_arready (dma_m_axi_arready),
+        .m2_axi_rdata   (dma_m_axi_rdata),
+        .m2_axi_rresp   (dma_m_axi_rresp),
+        .m2_axi_rid     (dma_m_axi_rid),
+        .m2_axi_rlast   (dma_m_axi_rlast),
+        .m2_axi_rvalid  (dma_m_axi_rvalid),
+        .m2_axi_rready  (dma_m_axi_rready),
+
         // Slave: to interconnect with ID
-        .s_axi_awaddr(arb_axi_awaddr),
-        .s_axi_awid(arb_axi_awid),
-        .s_axi_awvalid(arb_axi_awvalid),
-        .s_axi_awready(arb_axi_awready),
-        .s_axi_wdata(arb_axi_wdata),
-        .s_axi_wstrb(arb_axi_wstrb),
-        .s_axi_wvalid(arb_axi_wvalid),
-        .s_axi_wready(arb_axi_wready),
+        .s_axi_awaddr  (arb_axi_awaddr),
+        .s_axi_awid    (arb_axi_awid),
+        .s_axi_awlen   (arb_axi_awlen),
+        .s_axi_awsize  (arb_axi_awsize),
+        .s_axi_awburst (arb_axi_awburst),
+        .s_axi_awvalid (arb_axi_awvalid),
+        .s_axi_awready (arb_axi_awready),
+        .s_axi_wdata   (arb_axi_wdata),
+        .s_axi_wstrb   (arb_axi_wstrb),
+        .s_axi_wlast   (arb_axi_wlast),
+        .s_axi_wvalid  (arb_axi_wvalid),
+        .s_axi_wready  (arb_axi_wready),
         .s_axi_bresp(arb_axi_bresp),
         .s_axi_bid(arb_axi_bid),
         .s_axi_bvalid(arb_axi_bvalid),
@@ -723,15 +793,19 @@ module rv32_soc #(
         .rst_n(rst_n),
 
         // Master (from arbiter) with ID support
-        .m_axi_awaddr(arb_axi_awaddr),
-        .m_axi_awid(arb_axi_awid),
-        .m_axi_awvalid(arb_axi_awvalid),
-        .m_axi_awready(arb_axi_awready),
+        .m_axi_awaddr  (arb_axi_awaddr),
+        .m_axi_awid    (arb_axi_awid),
+        .m_axi_awlen   (arb_axi_awlen),
+        .m_axi_awsize  (arb_axi_awsize),
+        .m_axi_awburst (arb_axi_awburst),
+        .m_axi_awvalid (arb_axi_awvalid),
+        .m_axi_awready (arb_axi_awready),
 
-        .m_axi_wdata(arb_axi_wdata),
-        .m_axi_wstrb(arb_axi_wstrb),
-        .m_axi_wvalid(arb_axi_wvalid),
-        .m_axi_wready(arb_axi_wready),
+        .m_axi_wdata   (arb_axi_wdata),
+        .m_axi_wstrb   (arb_axi_wstrb),
+        .m_axi_wlast   (arb_axi_wlast),
+        .m_axi_wvalid  (arb_axi_wvalid),
+        .m_axi_wready  (arb_axi_wready),
 
         .m_axi_bresp(arb_axi_bresp),
         .m_axi_bid(arb_axi_bid),
@@ -755,11 +829,14 @@ module rv32_soc #(
 
         // Slave 0: External RAM
         .s0_axi_awaddr (m_axi_awaddr),
+        .s0_axi_awlen  (m_axi_awlen),
+        .s0_axi_awburst(m_axi_awburst),
         .s0_axi_awvalid(m_axi_awvalid),
         .s0_axi_awready(m_axi_awready),
 
         .s0_axi_wdata  (m_axi_wdata),
         .s0_axi_wstrb  (m_axi_wstrb),
+        .s0_axi_wlast  (m_axi_wlast),
         .s0_axi_wvalid (m_axi_wvalid),
         .s0_axi_wready (m_axi_wready),
 
@@ -895,28 +972,43 @@ module rv32_soc #(
         .s5_axi_rvalid(spi_axi_rvalid),
         .s5_axi_rready(spi_axi_rready),
 
-        // Slave 6: Magic
-        .s6_axi_awaddr(magic_axi_awaddr),
-        .s6_axi_awvalid(magic_axi_awvalid),
-        .s6_axi_awready(magic_axi_awready),
+        // Slave 6: DMA Controller
+        .s6_axi_awaddr  (dma_cfg_axi_awaddr),
+        .s6_axi_awvalid (dma_cfg_axi_awvalid),
+        .s6_axi_awready (dma_cfg_axi_awready),
+        .s6_axi_wdata   (dma_cfg_axi_wdata),
+        .s6_axi_wstrb   (dma_cfg_axi_wstrb),
+        .s6_axi_wvalid  (dma_cfg_axi_wvalid),
+        .s6_axi_wready  (dma_cfg_axi_wready),
+        .s6_axi_bresp   (dma_cfg_axi_bresp),
+        .s6_axi_bvalid  (dma_cfg_axi_bvalid),
+        .s6_axi_bready  (dma_cfg_axi_bready),
+        .s6_axi_araddr  (dma_cfg_axi_araddr),
+        .s6_axi_arvalid (dma_cfg_axi_arvalid),
+        .s6_axi_arready (dma_cfg_axi_arready),
+        .s6_axi_rdata   (dma_cfg_axi_rdata),
+        .s6_axi_rresp   (dma_cfg_axi_rresp),
+        .s6_axi_rvalid  (dma_cfg_axi_rvalid),
+        .s6_axi_rready  (dma_cfg_axi_rready),
 
-        .s6_axi_wdata(magic_axi_wdata),
-        .s6_axi_wstrb(magic_axi_wstrb),
-        .s6_axi_wvalid(magic_axi_wvalid),
-        .s6_axi_wready(magic_axi_wready),
-
-        .s6_axi_bresp(magic_axi_bresp),
-        .s6_axi_bvalid(magic_axi_bvalid),
-        .s6_axi_bready(magic_axi_bready),
-
-        .s6_axi_araddr(magic_axi_araddr),
-        .s6_axi_arvalid(magic_axi_arvalid),
-        .s6_axi_arready(magic_axi_arready),
-
-        .s6_axi_rdata(magic_axi_rdata),
-        .s6_axi_rresp(magic_axi_rresp),
-        .s6_axi_rvalid(magic_axi_rvalid),
-        .s6_axi_rready(magic_axi_rready)
+        // Slave 7: Magic Device
+        .s7_axi_awaddr  (magic_axi_awaddr),
+        .s7_axi_awvalid (magic_axi_awvalid),
+        .s7_axi_awready (magic_axi_awready),
+        .s7_axi_wdata   (magic_axi_wdata),
+        .s7_axi_wstrb   (magic_axi_wstrb),
+        .s7_axi_wvalid  (magic_axi_wvalid),
+        .s7_axi_wready  (magic_axi_wready),
+        .s7_axi_bresp   (magic_axi_bresp),
+        .s7_axi_bvalid  (magic_axi_bvalid),
+        .s7_axi_bready  (magic_axi_bready),
+        .s7_axi_araddr  (magic_axi_araddr),
+        .s7_axi_arvalid (magic_axi_arvalid),
+        .s7_axi_arready (magic_axi_arready),
+        .s7_axi_rdata   (magic_axi_rdata),
+        .s7_axi_rresp   (magic_axi_rresp),
+        .s7_axi_rvalid  (magic_axi_rvalid),
+        .s7_axi_rready  (magic_axi_rready)
     );
 
     // ========================================================================
@@ -986,9 +1078,10 @@ module rv32_soc #(
     assign plic_irq_src[1]   = uart_irq;
     assign plic_irq_src[2]   = spi_irq;
     assign plic_irq_src[3]   = i2c_irq;
-    assign plic_irq_src[7:4] = 4'b0;
+    assign plic_irq_src[4]   = dma_irq;
+    assign plic_irq_src[7:5] = 3'b0;
 
-    rv32_plic #(
+    axi_plic #(
         .NUM_IRQ(PLIC_NUM_IRQ)
     ) u_plic (
         .clk         (clk),
@@ -1144,6 +1237,69 @@ module rv32_soc #(
 
     // ========================================================================
     // Magic Addresses - Simulation Control
+    // ========================================================================
+    // DMA Controller (AXI4 DMA, slave 6 at 0x2003_0000)
+    // ========================================================================
+    axi_dma #(
+        .NUM_CHANNELS  (4),
+        .DATA_WIDTH    (32),
+        .FIFO_DEPTH    (16),
+        .MAX_BURST_LEN (16)
+    ) u_dma (
+        .clk     (clk),
+        .rst_n   (rst_n),
+
+        // Config slave (AXI4-Lite from xbar s6)
+        .cfg_awaddr  (dma_cfg_axi_awaddr),
+        .cfg_awvalid (dma_cfg_axi_awvalid),
+        .cfg_awready (dma_cfg_axi_awready),
+        .cfg_wdata   (dma_cfg_axi_wdata),
+        .cfg_wstrb   (dma_cfg_axi_wstrb),
+        .cfg_wvalid  (dma_cfg_axi_wvalid),
+        .cfg_wready  (dma_cfg_axi_wready),
+        .cfg_bresp   (dma_cfg_axi_bresp),
+        .cfg_bvalid  (dma_cfg_axi_bvalid),
+        .cfg_bready  (dma_cfg_axi_bready),
+        .cfg_araddr  (dma_cfg_axi_araddr),
+        .cfg_arvalid (dma_cfg_axi_arvalid),
+        .cfg_arready (dma_cfg_axi_arready),
+        .cfg_rdata   (dma_cfg_axi_rdata),
+        .cfg_rresp   (dma_cfg_axi_rresp),
+        .cfg_rvalid  (dma_cfg_axi_rvalid),
+        .cfg_rready  (dma_cfg_axi_rready),
+
+        // Data master (AXI4 to arbiter M2)
+        .dma_awaddr  (dma_m_axi_awaddr),
+        .dma_awlen   (dma_m_axi_awlen),
+        .dma_awsize  (dma_m_axi_awsize),
+        .dma_awburst (dma_m_axi_awburst),
+        .dma_awvalid (dma_m_axi_awvalid),
+        .dma_awready (dma_m_axi_awready),
+        .dma_wdata   (dma_m_axi_wdata),
+        .dma_wstrb   (dma_m_axi_wstrb),
+        .dma_wlast   (dma_m_axi_wlast),
+        .dma_wvalid  (dma_m_axi_wvalid),
+        .dma_wready  (dma_m_axi_wready),
+        .dma_bresp   (dma_m_axi_bresp),
+        .dma_bvalid  (dma_m_axi_bvalid),
+        .dma_bready  (dma_m_axi_bready),
+        .dma_araddr  (dma_m_axi_araddr),
+        .dma_arlen   (dma_m_axi_arlen),
+        .dma_arsize  (dma_m_axi_arsize),
+        .dma_arburst (dma_m_axi_arburst),
+        .dma_arvalid (dma_m_axi_arvalid),
+        .dma_arready (dma_m_axi_arready),
+        .dma_rdata   (dma_m_axi_rdata),
+        .dma_rresp   (dma_m_axi_rresp),
+        .dma_rlast   (dma_m_axi_rlast),
+        .dma_rvalid  (dma_m_axi_rvalid),
+        .dma_rready  (dma_m_axi_rready),
+
+        .irq         (dma_irq)
+    );
+
+    // ========================================================================
+    // Magic Device (simulation control, slave 7 at 0xFFFF_0000)
     // ========================================================================
     // Provides special memory-mapped addresses for testbench control:
     //   - Exit simulation
@@ -1309,22 +1465,22 @@ module rv32_soc #(
     // Arbiter: Write channels pass through from DMEM only
     property p_arb_aw_from_dmem;
         @(posedge clk) disable iff (!rst_n)
-        !arb_axi_awvalid || dmem_axi_awvalid;
+        !arb_axi_awvalid || dmem_axi_awvalid || dma_m_axi_awvalid;
     endproperty
     assert property (p_arb_aw_from_dmem)
-        else $error("[SOC] Arbiter AW valid without DMEM AW valid");
+        else $error("[SOC] Arbiter AW valid without DMEM/DMA AW valid");
 
     property p_arb_w_from_dmem;
         @(posedge clk) disable iff (!rst_n)
-        !arb_axi_wvalid || dmem_axi_wvalid;
+        !arb_axi_wvalid || dmem_axi_wvalid || dma_m_axi_wvalid;
     endproperty
     assert property (p_arb_w_from_dmem)
-        else $error("[SOC] Arbiter W valid without DMEM W valid");
+        else $error("[SOC] Arbiter W valid without DMEM/DMA W valid");
 
-    // Arbiter: Read channel must come from either IMEM or DMEM
+    // Arbiter: Read channel must come from either IMEM, DMEM, or DMA
     property p_arb_ar_source;
         @(posedge clk) disable iff (!rst_n)
-        !arb_axi_arvalid || imem_axi_arvalid || dmem_axi_arvalid;
+        !arb_axi_arvalid || imem_axi_arvalid || dmem_axi_arvalid || dma_m_axi_arvalid;
     endproperty
     assert property (p_arb_ar_source)
         else $error("[SOC] Arbiter AR valid without any master AR valid");

@@ -34,10 +34,12 @@ set RTL_FILES [list \
     "$RTL_ROOT/memories/sram_1rw.sv" \
     "$RTL_ROOT/axi_pkg.sv" \
     "$RTL_ROOT/axi_arbiter.sv" \
+    "$RTL_ROOT/axi_dma.sv" \
     "$RTL_ROOT/axi_xbar.sv" \
     "$RTL_ROOT/axi_clint.sv" \
     "$RTL_ROOT/axi_i2c.sv" \
     "$RTL_ROOT/axi_spi.sv" \
+    "$RTL_ROOT/axi_plic.sv" \
     "$RTL_ROOT/axi_uart.sv" \
     "$RTL_ROOT/axi_magic.sv" \
     "$RTL_ROOT/mem_axi.sv" \

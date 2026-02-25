@@ -26,12 +26,15 @@ module axi_memory #(
     // AXI4-Lite Slave Interface
     // Write Address Channel
     input  logic [ADDR_WIDTH-1:0]   axi_awaddr,
+    input  logic [7:0]              axi_awlen,
+    input  logic [1:0]              axi_awburst,
     input  logic                    axi_awvalid,
     output logic                    axi_awready,
 
     // Write Data Channel
     input  logic [DATA_WIDTH-1:0]   axi_wdata,
     input  logic [3:0]              axi_wstrb,
+    input  logic                    axi_wlast,
     input  logic                    axi_wvalid,
     output logic                    axi_wready,
 
@@ -74,7 +77,8 @@ module axi_memory #(
     int unsigned stat_ar_requests;        // Total AR (read address) channel handshakes
     int unsigned stat_r_responses;        // Total R (read data) channel handshakes
     int unsigned stat_aw_requests;        // Total AW (write address) channel handshakes
-    int unsigned stat_w_data;             // Total W (write data) channel handshakes
+    int unsigned stat_w_data;             // Total W (write data) channel handshakes (beats)
+    int unsigned stat_w_expected;         // Expected W beats: sum of (awlen+1) per AW transaction
     int unsigned stat_b_responses;        // Total B (write response) channel handshakes
     int unsigned stat_outstanding_reads;  // Current outstanding read requests
     int unsigned stat_outstanding_writes; // Current outstanding write requests
@@ -96,6 +100,7 @@ module axi_memory #(
         stat_r_responses = 0;
         stat_aw_requests = 0;
         stat_w_data = 0;
+        stat_w_expected = 0;
         stat_b_responses = 0;
         stat_outstanding_reads = 0;
         stat_outstanding_writes = 0;
@@ -180,23 +185,39 @@ module axi_memory #(
     logic write_data_accepted;
     logic [ADDR_WIDTH-1:0] write_addr_reg;
     logic write_addr_valid;
+    logic [1:0] wr_burst_type;   // Captured burst type for address increment logic
+    logic       wr_burst_err;    // Any beat had an out-of-range address
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            write_addr_reg <= '0;
+            write_addr_reg   <= '0;
             write_addr_valid <= 1'b0;
+            wr_burst_type    <= 2'b01;
+            wr_burst_err     <= 1'b0;
             stat_aw_requests <= 0;
             stat_outstanding_writes <= 0;
             stat_b_responses <= 0;            current_outstanding_writes <= 0;        end else begin
             // Handle AW acceptance
             if (axi_awvalid && axi_awready) begin
-                write_addr_reg <= axi_awaddr;
+                write_addr_reg   <= axi_awaddr;
                 write_addr_valid <= 1'b1;
+                wr_burst_type    <= axi_awburst;
+                wr_burst_err     <= 1'b0;
                 stat_aw_requests <= stat_aw_requests + 1;
-                `DEBUG2(("AXI_MEM: Write addr accepted addr=0x%h", axi_awaddr));
+                stat_w_expected  <= stat_w_expected + (32'(axi_awlen) + 1);
+                `DEBUG2(("AXI_MEM: Write addr accepted addr=0x%h awlen=%0d", axi_awaddr, axi_awlen));
             end else if (write_addr_valid && axi_wvalid && write_can_accept) begin
-                write_addr_valid <= 1'b0;  // Clear after data arrives and pipeline accepts
-                `DEBUG2(("AXI_MEM: Write data accepted data=0x%h strb=0x%h", axi_wdata, axi_wstrb));
+                // Track out-of-range address
+                if (write_addr_reg < BASE_ADDR || write_addr_reg >= (BASE_ADDR + MEM_SIZE))
+                    wr_burst_err <= 1'b1;
+                if (axi_wlast) begin
+                    write_addr_valid <= 1'b0;  // Clear only on last beat
+                end else begin
+                    // Advance address for INCR bursts
+                    if (wr_burst_type == 2'b01)
+                        write_addr_reg <= write_addr_reg + 4;
+                end
+                `DEBUG2(("AXI_MEM: Write data accepted addr=0x%h data=0x%h strb=0x%h wlast=%b", write_addr_reg, axi_wdata, axi_wstrb, axi_wlast));
             end
 
             // Handle simultaneous AW and B
@@ -275,13 +296,14 @@ module axi_memory #(
             end
 `endif
             // Stage 0: Accept new write transaction
-            if (write_addr_valid && axi_wvalid && write_can_accept) begin
+            // For burst writes, only enter pipeline on wlast to generate exactly one B response
+            if (write_addr_valid && axi_wvalid && write_can_accept && axi_wlast) begin
                 write_pipe[0].valid <= 1'b1;
                 write_pipe[0].addr <= write_addr_reg;
                 write_pipe[0].data <= axi_wdata;
                 write_pipe[0].strb <= axi_wstrb;
-                // Check address bounds
-                if (write_addr_reg < BASE_ADDR || write_addr_reg >= (BASE_ADDR + MEM_SIZE)) begin
+                // Check address bounds (wr_burst_err tracks any earlier out-of-range beat)
+                if (wr_burst_err || write_addr_reg < BASE_ADDR || write_addr_reg >= (BASE_ADDR + MEM_SIZE)) begin
                     write_pipe[0].resp <= 2'b10;  // SLVERR
                 end else begin
                     write_pipe[0].resp <= 2'b00;  // OKAY
@@ -730,6 +752,7 @@ module axi_memory #(
     export "DPI-C" function mem_get_stat_r_responses;
     export "DPI-C" function mem_get_stat_aw_requests;
     export "DPI-C" function mem_get_stat_w_data;
+    export "DPI-C" function mem_get_stat_w_expected;
     export "DPI-C" function mem_get_stat_b_responses;
     export "DPI-C" function mem_get_stat_max_outstanding_reads;
     export "DPI-C" function mem_get_stat_max_outstanding_writes;
@@ -769,6 +792,10 @@ module axi_memory #(
 
     function int mem_get_stat_w_data();
         return stat_w_data;
+    endfunction
+
+    function int mem_get_stat_w_expected();
+        return stat_w_expected;
     endfunction
 
     function int mem_get_stat_b_responses();

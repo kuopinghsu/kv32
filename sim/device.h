@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <vector>
 #include <string>
+#include <functional>
 
 // HAL register map – base addresses, register offsets, and bit-field constants
 // are sourced from the firmware header so simulator and firmware always agree.
@@ -363,6 +364,69 @@ public:
 
     bool get_timer_interrupt();
     bool get_software_interrupt();
+};
+
+// DMA Device Driver
+// Base address: 0x2003_0000 (4KB aperture)
+// Emulates axi_dma.sv register map with immediate-execution semantics:
+//   when CTRL.START + CTRL.EN are written, the transfer runs synchronously
+//   so polling and IRQ-driven tests both work correctly.
+// Supports transfer modes: 1D, 2D (strided), 3D (planar), Scatter-Gather.
+class DMADevice : public Device {
+public:
+    using ReadFn  = std::function<uint32_t(uint32_t addr, int size)>;
+    using WriteFn = std::function<void(uint32_t addr, uint32_t value, int size)>;
+
+    static const int     NUM_CH = 4;
+    static const uint32_t DMA_ID = 0xD4A00100u;
+
+    struct Chan {
+        uint32_t ctrl        = 0;
+        uint32_t stat        = 0;   // [0]=busy(RO), [1]=done(W1C), [2]=err(W1C)
+        uint32_t src_addr    = 0;
+        uint32_t dst_addr    = 0;
+        uint32_t xfer_cnt    = 0;
+        uint32_t src_stride  = 0;
+        uint32_t dst_stride  = 0;
+        uint32_t row_cnt     = 0;
+        uint32_t src_pstride = 0;
+        uint32_t dst_pstride = 0;
+        uint32_t plane_cnt   = 0;
+        uint32_t sg_addr     = 0;
+        uint32_t sg_cnt      = 0;
+    };
+
+    Chan     ch[NUM_CH];
+    uint32_t irq_stat    = 0;
+    uint32_t irq_en      = 0;
+
+    // Performance counters (mirrors axi_dma.sv PERF_CTRL/CYCLES/RD_BYTES/WR_BYTES)
+    bool     perf_enable   = false;  // PERF_CTRL bit[0]
+    uint32_t perf_cycles   = 0;      // PERF_CYCLES  (+0xF14)
+    uint32_t perf_rd_bytes = 0;      // PERF_RD_BYTES (+0xF18)
+    uint32_t perf_wr_bytes = 0;      // PERF_WR_BYTES (+0xF1C)
+
+    DMADevice(ReadFn rfn, WriteFn wfn);
+    virtual ~DMADevice() {}
+
+    virtual uint32_t read(uint32_t offset, int size) override;
+    virtual void write(uint32_t offset, uint32_t value, int size) override;
+    virtual const char* name() const override { return "DMA"; }
+    virtual void reset() override;
+
+    bool get_irq() const { return (irq_stat & irq_en) != 0; }
+
+private:
+    ReadFn  mem_read;
+    WriteFn mem_write;
+
+    uint32_t perf_xfer_acc = 0;  // bytes accumulated during one execute_transfer
+
+    bool is_valid_addr(uint32_t addr) const;
+    bool do_1d_copy(uint32_t src, uint32_t dst, uint32_t cnt,
+                    bool src_inc, bool dst_inc);
+    bool execute_transfer(int n);
+    void finish_channel(int n, bool ok);
 };
 
 #endif // DEVICE_H

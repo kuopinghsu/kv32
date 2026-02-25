@@ -147,6 +147,66 @@
 #define RV_SPI_IE_TX_EMPTY  (1u << 1)  /* TX FIFO drained interrupt     */
 
 /* ═══════════════════════════════════════════════════════════════════
+ * DMA controller  (0x2003_0000, 4 KB)
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * Up to 8 independent channels.  Per-channel registers are at
+ *   DMA_BASE + channel * 0x40.  Global registers at DMA_BASE + 0xF00.
+ */
+#define RV_DMA_BASE              0x20030000UL
+#define RV_DMA_SIZE              0x00001000UL
+#define RV_PLIC_SRC_DMA          4  /* PLIC interrupt source number */
+
+/* Per-channel register offsets (relative to RV_DMA_BASE + ch*0x40) */
+#define RV_DMA_CH_STRIDE         0x40UL
+#define RV_DMA_CH_CTRL_OFF       0x00UL
+#define RV_DMA_CH_STAT_OFF       0x04UL
+#define RV_DMA_CH_SRC_OFF        0x08UL
+#define RV_DMA_CH_DST_OFF        0x0CUL
+#define RV_DMA_CH_XFER_OFF       0x10UL
+#define RV_DMA_CH_SSTRIDE_OFF    0x14UL
+#define RV_DMA_CH_DSTRIDE_OFF    0x18UL
+#define RV_DMA_CH_ROWCNT_OFF     0x1CUL
+#define RV_DMA_CH_SPSTRIDE_OFF   0x20UL
+#define RV_DMA_CH_DPSTRIDE_OFF   0x24UL
+#define RV_DMA_CH_PLANECNT_OFF   0x28UL
+#define RV_DMA_CH_SGADDR_OFF     0x2CUL
+#define RV_DMA_CH_SGCNT_OFF      0x30UL
+
+/* Global register offsets */
+#define RV_DMA_IRQ_STAT_OFF      0xF00UL  /* Channel done/err flags (W1C) */
+#define RV_DMA_IRQ_EN_OFF        0xF04UL  /* Per-channel IRQ global enable */
+#define RV_DMA_ID_OFF            0xF08UL  /* ID register: 0xD4A00100 (RO) */
+
+/* Performance counter register offsets (global, BASE + offset) */
+#define RV_DMA_PERF_CTRL_OFF     0xF10UL  /* [0]=enable; write [1]=1 to reset all */
+#define RV_DMA_PERF_CYCLES_OFF   0xF14UL  /* cycles elapsed while CTRL[0]=1       */
+#define RV_DMA_PERF_RD_BYTES_OFF 0xF18UL  /* DMA read bytes (S_RD_DATA × BPB)     */
+#define RV_DMA_PERF_WR_BYTES_OFF 0xF1CUL  /* DMA write bytes (W-channel × BPB)    */
+
+/* CTRL register bits */
+#define RV_DMA_CTRL_EN           (1u << 0)  /* Enable channel */
+#define RV_DMA_CTRL_START        (1u << 1)  /* Arm transfer (auto-clears) */
+#define RV_DMA_CTRL_STOP         (1u << 2)  /* Abort transfer (auto-clears) */
+#define RV_DMA_CTRL_MODE_1D      (0u << 3)  /* 1-D flat transfer */
+#define RV_DMA_CTRL_MODE_2D      (1u << 3)  /* 2-D strided transfer */
+#define RV_DMA_CTRL_MODE_3D      (2u << 3)  /* 3-D planar transfer */
+#define RV_DMA_CTRL_MODE_SG      (3u << 3)  /* Scatter-Gather */
+#define RV_DMA_CTRL_SRC_INC      (1u << 5)  /* Increment source address */
+#define RV_DMA_CTRL_DST_INC      (1u << 6)  /* Increment destination address */
+#define RV_DMA_CTRL_IE           (1u << 7)  /* Interrupt enable for channel */
+
+/* STAT register bits */
+#define RV_DMA_STAT_BUSY         (1u << 0)  /* Transfer in progress (RO) */
+#define RV_DMA_STAT_DONE         (1u << 1)  /* Transfer complete (W1C)   */
+#define RV_DMA_STAT_ERR          (1u << 2)  /* AXI error (W1C)           */
+
+/* Convenience accessors */
+#define RV_DMA_CH_REG(ch, off) \
+    RV_REG32(RV_DMA_BASE, (ch) * RV_DMA_CH_STRIDE + (off))
+#define RV_DMA_GLB_REG(off)    RV_REG32(RV_DMA_BASE, (off))
+
+/* ═══════════════════════════════════════════════════════════════════
  * Register accessor macro  (firmware only; not used by simulator)
  * ══════════════════════════════════════════════════════════════════ */
 #define RV_REG32(base, off) \

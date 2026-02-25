@@ -54,10 +54,13 @@ module tb_rv32_soc #(
 
     // AXI Interface signals
     logic [31:0] axi_awaddr;
+    logic [7:0]  axi_awlen;    // AW burst length
+    logic [1:0]  axi_awburst;  // AW burst type
     logic        axi_awvalid;
     logic        axi_awready;
     logic [31:0] axi_wdata;
     logic [3:0]  axi_wstrb;
+    logic        axi_wlast;    // W channel last beat
     logic        axi_wvalid;
     logic        axi_wready;
     logic [1:0]  axi_bresp;
@@ -113,10 +116,13 @@ module tb_rv32_soc #(
         .i2c_sda_oe(i2c_sda_oe_internal),
         // External AXI master port
         .m_axi_awaddr(axi_awaddr),
+        .m_axi_awlen (axi_awlen),
+        .m_axi_awburst(axi_awburst),
         .m_axi_awvalid(axi_awvalid),
         .m_axi_awready(axi_awready),
         .m_axi_wdata(axi_wdata),
         .m_axi_wstrb(axi_wstrb),
+        .m_axi_wlast (axi_wlast),
         .m_axi_wvalid(axi_wvalid),
         .m_axi_wready(axi_wready),
         .m_axi_bresp(axi_bresp),
@@ -183,10 +189,13 @@ module tb_rv32_soc #(
         .clk(clk),
         .rst_n(rst_n),
         .axi_awaddr(axi_awaddr),
+        .axi_awlen (axi_awlen),
+        .axi_awburst(axi_awburst),
         .axi_awvalid(axi_awvalid),
         .axi_awready(axi_awready),
         .axi_wdata(axi_wdata),
         .axi_wstrb(axi_wstrb),
+        .axi_wlast (axi_wlast),
         .axi_wvalid(axi_wvalid),
         .axi_wready(axi_wready),
         .axi_bresp(axi_bresp),

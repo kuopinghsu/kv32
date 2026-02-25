@@ -43,6 +43,10 @@
 //     +0xF00  IRQ_STAT  – channel IRQ status (W1C); bit N = channel N done/err
 //     +0xF04  IRQ_EN    – per-channel IRQ global enable (not per START)
 //     +0xF08  DMA_ID    – 0xD4A0_0100 (read-only version/ID)
+//     +0xF10  PERF_CTRL     – [0]=enable counters; write [1]=1 to reset all
+//     +0xF14  PERF_CYCLES   – cycles elapsed while PERF_CTRL[0]=1
+//     +0xF18  PERF_RD_BYTES – DMA read data bytes (S_RD_DATA beats × BPB)
+//     +0xF1C  PERF_WR_BYTES – DMA write data bytes (W-channel beats × BPB)
 //
 // Scatter-Gather Descriptor (16 bytes in memory, little-endian):
 //   [0x00]  src_addr  (32-bit)
@@ -95,9 +99,9 @@ module axi_dma #(
     output logic                     dma_awvalid,
     input  logic                     dma_awready,
 
-    output logic [DATA_WIDTH-1:0]    dma_wdata,
+    output logic [DATA_WIDTH-1:0]    dma_wdata,   // combinatorial
     output logic [DATA_WIDTH/8-1:0]  dma_wstrb,
-    output logic                     dma_wlast,
+    output logic                     dma_wlast,   // combinatorial
     output logic                     dma_wvalid,
     input  logic                     dma_wready,
 
@@ -155,9 +159,18 @@ module axi_dma #(
     logic [NUM_CHANNELS-1:0] ch_busy;
     logic [NUM_CHANNELS-1:0] ch_done;
     logic [NUM_CHANNELS-1:0] ch_err;
+    // Sticky arm latch: set when START bit is written, cleared when engine picks the channel.
+    // Separating from ch_ctrl[1] avoids the auto-clear race when the engine is busy.
+    logic [NUM_CHANNELS-1:0] ch_armed;
 
     // Global IRQ control
     logic [NUM_CHANNELS-1:0] glb_irq_en;    // bit N = channel N globally enabled
+
+    // Performance counters
+    logic        perf_enable;              // counter gate
+    logic [31:0] perf_cycles;             // elapsed cycles while perf_enable=1
+    logic [31:0] perf_rd_bytes;           // DMA read bytes (S_RD_DATA beats × BPB)
+    logic [31:0] perf_wr_bytes;           // DMA write bytes (W-channel beats × BPB)
 
     // Aggregate IRQ status for readback
     wire  [NUM_CHANNELS-1:0] irq_stat_wire = ch_done | ch_err;
@@ -168,6 +181,13 @@ module axi_dma #(
     assign cfg_awready = 1'b1;
     assign cfg_wready  = 1'b1;
     assign cfg_arready = 1'b1;
+
+    // wlast is purely combinatorial: high on the last beat of a write burst
+    assign dma_wlast = dma_wvalid && (beat_cnt == e_beats - 8'h1);
+    // wdata/wstrb combinatorial from FIFO head; fifo_pop is a wire so rd_ptr
+    // advances on the same clock edge the beat is accepted.
+    assign dma_wdata = fifo_rdata;
+    assign dma_wstrb = {(DATA_WIDTH/8){dma_wvalid}};
 
     // Write path
     always_ff @(posedge clk or negedge rst_n) begin
@@ -210,7 +230,7 @@ module axi_dma #(
                     // Per-channel register write
                     if (ch_idx < NUM_CHANNELS) begin
                         case (reg_idx)
-                            4'h0: ch_ctrl[ch_idx]        <= cfg_wdata[7:0];
+                            4'h0: ch_ctrl[ch_idx] <= cfg_wdata[7:0];
                             // 0x04 = STATUS: W1C handled below
                             4'h2: ch_src_addr[ch_idx]    <= cfg_wdata;
                             4'h3: ch_dst_addr[ch_idx]    <= cfg_wdata;
@@ -263,6 +283,66 @@ module axi_dma #(
         end
     end
 
+    // ── ch_armed: sticky arm latch (single driver to avoid multiple-driver lint) ──
+    // Set:   when CPU writes CTRL with START bit=1 and EN bit=1
+    // Clear: when EN is explicitly deasserted (CTRL write with EN=0)
+    //        OR when the engine picks the channel in S_IDLE
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            ch_armed <= '0;
+        end else begin
+            // CPU write to CTRL register
+            if (cfg_awvalid && cfg_wvalid &&
+                (cfg_awaddr[11:0] < GLBL_OFF) &&
+                (cfg_awaddr[5:2] == 4'h0)) begin
+                automatic int ci = int'(cfg_awaddr[11:6]);
+                if (ci < NUM_CHANNELS) begin
+                    if (!cfg_wdata[0]) begin
+                        ch_armed[ci] <= 1'b0;  // EN cleared → disarm
+                    end else if (cfg_wdata[1]) begin
+                        ch_armed[ci] <= 1'b1;  // EN=1 and START=1 → arm
+                    end
+                end
+            end
+            // Engine picks a channel in S_IDLE → consume the arm latch
+            if (eng_state == S_IDLE && !no_pending) begin
+                ch_armed[sched_ch] <= 1'b0;
+            end
+        end
+    end
+
+    // ── Performance counters ────────────────────────────────────────────────
+    // PERF_CTRL write: bit[1]=RESET clears all counters; bit[0]=ENABLE gates counting.
+    // PERF_CYCLES counts every clock tick while perf_enable=1.
+    // PERF_RD_BYTES counts DMA read data beats (S_RD_DATA only, excludes SG fetches).
+    // PERF_WR_BYTES counts DMA write data beats (dma_wvalid && dma_wready).
+    always_ff @(posedge clk or negedge rst_n) begin : perf_counters
+        if (!rst_n) begin
+            perf_enable   <= 1'b0;
+            perf_cycles   <= '0;
+            perf_rd_bytes <= '0;
+            perf_wr_bytes <= '0;
+        end else begin
+            if (cfg_awvalid && cfg_wvalid &&
+                cfg_awaddr[11:0] == GLBL_OFF + 12'h010) begin   // PERF_CTRL write
+                if (cfg_wdata[1]) begin   // bit[1] = RESET
+                    perf_enable   <= 1'b0;
+                    perf_cycles   <= '0;
+                    perf_rd_bytes <= '0;
+                    perf_wr_bytes <= '0;
+                end else begin
+                    perf_enable <= cfg_wdata[0];   // bit[0] = ENABLE
+                end
+            end else if (perf_enable) begin
+                perf_cycles <= perf_cycles + 32'h1;
+                if (dma_rvalid && dma_rready && eng_state == S_RD_DATA)
+                    perf_rd_bytes <= perf_rd_bytes + 32'(BPB);
+                if (dma_wvalid && dma_wready)
+                    perf_wr_bytes <= perf_wr_bytes + 32'(BPB);
+            end
+        end
+    end
+
     // Read path
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -306,6 +386,10 @@ module axi_dma #(
                         12'h000: cfg_rdata <= {{(32-NUM_CHANNELS){1'b0}}, irq_stat_wire};
                         12'h004: cfg_rdata <= {{(32-NUM_CHANNELS){1'b0}}, glb_irq_en};
                         12'h008: cfg_rdata <= 32'hD4A0_0100;  // DMA_ID
+                        12'h010: cfg_rdata <= {31'h0, perf_enable};   // PERF_CTRL
+                        12'h014: cfg_rdata <= perf_cycles;             // PERF_CYCLES
+                        12'h018: cfg_rdata <= perf_rd_bytes;           // PERF_RD_BYTES
+                        12'h01C: cfg_rdata <= perf_wr_bytes;           // PERF_WR_BYTES
                         default: cfg_rdata <= '0;
                     endcase
                 end
@@ -327,25 +411,12 @@ module axi_dma #(
                                          (fifo_wr_ptr[FIFO_BITS-1:0] == fifo_rd_ptr[FIFO_BITS-1:0]);
     wire [FIFO_BITS:0]     fifo_count  = fifo_wr_ptr - fifo_rd_ptr;
 
-    logic fifo_push, fifo_pop;
+    logic fifo_push;
+    wire  fifo_pop = dma_wvalid && dma_wready && !fifo_empty;  // combinatorial pop
     logic [DATA_WIDTH-1:0] fifo_wdata, fifo_rdata;
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            fifo_wr_ptr <= '0;
-            fifo_rd_ptr <= '0;
-        end else begin
-            if (fifo_push && !fifo_full) begin
-                fifo_mem[fifo_wr_ptr[FIFO_BITS-1:0]] <= fifo_wdata;
-                fifo_wr_ptr <= fifo_wr_ptr + 1;
-            end
-            if (fifo_pop && !fifo_empty) begin
-                fifo_rd_ptr <= fifo_rd_ptr + 1;
-            end
-        end
-    end
-
     assign fifo_rdata = fifo_mem[fifo_rd_ptr[FIFO_BITS-1:0]];
+    // wdata/wstrb/wlast are driven combinatorially from fifo_rdata.
 
     // ========================================================================
     // DMA Engine State Machine
@@ -409,7 +480,7 @@ module axi_dma #(
         for (int k = 0; k < NUM_CHANNELS; k++) begin
             automatic int idx = (int'(rr_ptr) + k) % NUM_CHANNELS;
             if (ch_ctrl[idx][0] &&    // EN
-                ch_ctrl[idx][1] &&    // START (armed)
+                ch_armed[idx]   &&    // START was written and not yet consumed
                 !ch_busy[idx]) begin
                 sched_ch   = idx[$clog2(NUM_CHANNELS > 1 ? NUM_CHANNELS : 2)-1:0];
                 no_pending = 1'b0;
@@ -447,15 +518,13 @@ module axi_dma #(
             dma_awaddr  <= '0; dma_awlen  <= '0;
             dma_awsize  <= '0; dma_awburst<= '0;
             dma_awvalid <= 1'b0;
-            dma_wvalid  <= 1'b0; dma_wlast <= 1'b0;
-            dma_wdata   <= '0;   dma_wstrb <= '0;
+            dma_wvalid  <= 1'b0;
             dma_bready  <= 1'b0;
             dma_araddr  <= '0; dma_arlen  <= '0;
             dma_arsize  <= '0; dma_arburst<= '0;
             dma_arvalid <= 1'b0;
             dma_rready  <= 1'b0;
             fifo_push   <= 1'b0;
-            fifo_pop    <= 1'b0;
             fifo_wdata  <= '0;
         end else begin
             // Default: de-assert one-shot signals
@@ -465,7 +534,7 @@ module axi_dma #(
             dma_rready  <= 1'b0;
             dma_bready  <= 1'b0;
             fifo_push   <= 1'b0;
-            fifo_pop    <= 1'b0;
+            // fifo_pop is a wire, no register to clear
 
             case (eng_state)
 
@@ -475,6 +544,7 @@ module axi_dma #(
                         active_ch   <= sched_ch;
                         rr_ptr      <= sched_ch + 1'b1;
                         ch_busy[sched_ch] <= 1'b1;
+                        // ch_armed[sched_ch] is cleared in its own always_ff
 
                         // Load channel snapshot
                         e_ctrl     <= ch_ctrl[sched_ch];
@@ -514,7 +584,7 @@ module axi_dma #(
                         dma_arburst <= 2'b01;      // INCR
                         dma_arvalid <= 1'b1;
                         sg_word_cnt <= 2'd0;
-                        if (dma_arready) begin
+                        if (dma_arvalid && dma_arready) begin
                             dma_arvalid <= 1'b0;
                             dma_rready  <= 1'b1;
                             eng_state   <= S_FETCH_RDAT;
@@ -544,43 +614,31 @@ module axi_dma #(
 
                 // ── BURST_CALC: compute next burst length (4K boundary) ───
                 S_BURST_CALC: begin
-                    // If in SG mode, apply previously fully-captured descriptor
+                    // For SG mode pick up the freshly captured descriptor words
+                    // directly so that burst calc sees the right addresses/lengths.
+                    begin : bc
+                        automatic logic [31:0] bc_src = (e_mode == 2'b11) ? sg_desc[0] : e_cur_src;
+                        automatic logic [31:0] bc_dst = (e_mode == 2'b11) ? sg_desc[1] : e_cur_dst;
+                        automatic logic [31:0] bc_rem = (e_mode == 2'b11) ? sg_desc[2] : e_rem_bytes;
+                        automatic logic [31:0] rem_in_src_page = 32'h1000 - {20'h0, bc_src[11:0]};
+                        automatic logic [31:0] rem_in_dst_page = 32'h1000 - {20'h0, bc_dst[11:0]};
+                        automatic logic [31:0] max_burst_bytes = {24'h0, MAX_BURST_LEN[7:0]} * BPB;
+                        automatic logic [31:0] limit = (bc_rem < max_burst_bytes) ? bc_rem : max_burst_bytes;
+                        automatic logic [31:0] limit_aligned   = (limit / BPB) * BPB;
+                        automatic logic [31:0] src_page_limit  = (limit_aligned < rem_in_src_page) ? limit_aligned : rem_in_src_page;
+                        automatic logic [31:0] dst_page_limit  = (src_page_limit < rem_in_dst_page) ? src_page_limit : rem_in_dst_page;
+                        automatic logic [31:0] burst_bytes     = (dst_page_limit / BPB) * BPB;
+                        if (burst_bytes < BPB) burst_bytes = BPB;
+                        e_burst_bytes <= burst_bytes;
+                        e_beats       <= burst_bytes[8:0] / BPB[8:0];
+                    end
+
                     if (e_mode == 2'b11) begin
                         e_cur_src   <= sg_desc[0];
                         e_cur_dst   <= sg_desc[1];
                         e_rem_bytes <= sg_desc[2];
                         e_src_inc   <= sg_desc[3][2];
                         e_dst_inc   <= sg_desc[3][3];
-                        // mode bits inside descriptor (ignored for SG outer; inner is 1D)
-                    end
-
-                    begin
-                        // Number of bytes remaining in current 4KB page for source
-                        automatic logic [31:0] rem_in_src_page =
-                            32'h1000 - {20'h0, e_cur_src[11:0]};
-                        automatic logic [31:0] rem_in_dst_page =
-                            32'h1000 - {20'h0, e_cur_dst[11:0]};
-                        // Choose the smaller of: remaining bytes, max burst, page boundary
-                        automatic logic [31:0] max_burst_bytes =
-                            {24'h0, MAX_BURST_LEN[7:0]} * BPB;
-                        automatic logic [31:0] limit =
-                            (e_rem_bytes < max_burst_bytes) ? e_rem_bytes : max_burst_bytes;
-                        // Align to BPB boundary
-                        automatic logic [31:0] limit_aligned =
-                            (limit / BPB) * BPB;
-                        // 4K page boundary for source
-                        automatic logic [31:0] src_page_limit =
-                            (limit_aligned < rem_in_src_page) ? limit_aligned : rem_in_src_page;
-                        automatic logic [31:0] dst_page_limit =
-                            (src_page_limit < rem_in_dst_page) ? src_page_limit : rem_in_dst_page;
-                        // Align to BPB (remove sub-beat fragments)
-                        automatic logic [31:0] burst_bytes = (dst_page_limit / BPB) * BPB;
-                        // Clamp to at least BPB
-                        if (burst_bytes < BPB) burst_bytes = BPB;
-                        e_burst_bytes <= burst_bytes;
-                        e_beats       <= burst_bytes[7:0] / BPB[7:0] - 8'h1 + 8'h1; // beats = burst_bytes/BPB
-                        // actual beat count
-                        e_beats       <= burst_bytes[8:0] / BPB[8:0];
                     end
 
                     eng_state <= S_RD_ADDR;
@@ -594,7 +652,7 @@ module axi_dma #(
                     dma_arburst <= e_src_inc ? 2'b01 : 2'b00; // INCR or FIXED
                     dma_arvalid <= 1'b1;
                     beat_cnt    <= 8'h0;
-                    if (dma_arready) begin
+                    if (dma_arvalid && dma_arready) begin
                         dma_arvalid <= 1'b0;
                         dma_rready  <= 1'b1;
                         eng_state   <= S_RD_DATA;
@@ -637,15 +695,10 @@ module axi_dma #(
                 S_WR_DATA: begin
                     if (!fifo_empty) begin
                         dma_wvalid <= 1'b1;
-                        dma_wdata  <= fifo_rdata;
-                        dma_wstrb  <= {(DATA_WIDTH/8){1'b1}};
-                        dma_wlast  <= (beat_cnt == e_beats - 8'h1);
-                        if (dma_wready) begin
-                            fifo_pop <= 1'b1;
+                        if (dma_wvalid && dma_wready) begin  // real AXI handshake
                             beat_cnt <= beat_cnt + 1'b1;
                             if (beat_cnt == e_beats - 8'h1) begin
                                 dma_wvalid <= 1'b0;
-                                dma_wlast  <= 1'b0;
                                 dma_bready <= 1'b1;
                                 eng_state  <= S_WR_RESP;
                             end
@@ -763,17 +816,21 @@ module axi_dma #(
         end
     end
 
-    // Reset FIFO pointers when engine re-enters IDLE to start fresh
+    // FIFO memory, pointer management, and IDLE-flush in one always_ff
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             fifo_wr_ptr <= '0;
             fifo_rd_ptr <= '0;
         end else if (eng_state == S_IDLE && !no_pending) begin
+            // Flush FIFO at start of each new transfer
             fifo_wr_ptr <= '0;
             fifo_rd_ptr <= '0;
         end else begin
-            if (fifo_push && !fifo_full)  fifo_wr_ptr <= fifo_wr_ptr + 1;
-            if (fifo_pop  && !fifo_empty) fifo_rd_ptr <= fifo_rd_ptr + 1;
+            if (fifo_push && !fifo_full) begin
+                fifo_mem[fifo_wr_ptr[FIFO_BITS-1:0]] <= fifo_wdata;
+                fifo_wr_ptr <= fifo_wr_ptr + 1;
+            end
+            if (fifo_pop && !fifo_empty) fifo_rd_ptr <= fifo_rd_ptr + 1;
         end
     end
 
@@ -797,7 +854,6 @@ module axi_dma #(
 `ifndef NO_ASSERTION
 `ifndef ASSERTION
 `define ASSERTION
-`endif
 `endif
 
 `ifdef ASSERTION
