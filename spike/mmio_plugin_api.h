@@ -29,10 +29,6 @@
 #ifndef RV_PLATFORM_NO_INLINE_HELPERS
 #  define RV_PLATFORM_NO_INLINE_HELPERS
 #endif
-/* RV_REG32 expands to a volatile pointer dereference that is firmware-only.  *
- * Pre-define it as a safe no-op; rv_platform.h will redefine it (no guard),  *
- * but it is never called in plugin code so the subsequent definition is fine. */
-#define RV_REG32(base, off)  ((void)0)
 
 /* ── SDK peripheral register map (single source of truth) ───────────────── */
 #include "rv_platform.h"     /* resolved via -I../sw/include in spike/Makefile */

@@ -239,6 +239,10 @@
 #define RV_MAGIC_CONSOLE RV_REG32(RV_MAGIC_BASE, RV_MAGIC_CONSOLE_OFF)
 
 /* Inline API ------------------------------------------------------- */
+/* Define RV_PLATFORM_NO_INLINE_HELPERS before including this file     *
+ * to suppress the inline helpers that dereference volatile MMIO       *
+ * addresses (useful when building host-side code such as Spike plugins). */
+#ifndef RV_PLATFORM_NO_INLINE_HELPERS
 
 /* Write one character to the simulator/testbench console. */
 static inline void rv_magic_putc(char c)
@@ -256,5 +260,7 @@ static inline void rv_magic_exit(int code)
     RV_MAGIC_EXIT = (code == 0) ? 1u : (((uint32_t)code << 1) | 1u);
     while (1) { __asm__ volatile ("nop"); }  /* halt; simulator stops here */
 }
+
+#endif /* RV_PLATFORM_NO_INLINE_HELPERS */
 
 #endif /* RV_PLATFORM_H */

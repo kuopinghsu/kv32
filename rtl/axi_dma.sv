@@ -855,6 +855,7 @@ module axi_dma #(
 `ifndef ASSERTION
 `define ASSERTION
 `endif
+`endif // NO_ASSERTION
 
 `ifdef ASSERTION
     // DATA_WIDTH must be 32, 64, or 128
@@ -889,6 +890,6 @@ module axi_dma #(
     endproperty
     assert property (p_dma_wvalid_stable)
         else $error("[AXI_DMA] WVALID/WDATA must be stable until WREADY");
-`endif
+`endif // ASSERTION
 
 endmodule

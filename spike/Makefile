@@ -9,6 +9,12 @@
 # Each plugin is compiled as a position-independent shared library.
 # Plugins are loaded by Spike at runtime via --extlib=<path>.so.
 # Register constants are sourced from ../sw/include/rv_platform.h.
+#
+# NOTE: On macOS, Spike must be built with -Wl,-export_dynamic or similar
+#       to export the register_mmio_plugin symbol for plugins to work at runtime.
+#       Standard Spike builds may not have this enabled. If you encounter
+#       "symbol not found '_register_mmio_plugin'" errors at runtime, you'll
+#       need to rebuild Spike with proper symbol exports.
 
 # ── directories ───────────────────────────────────────────────────────────────
 SPIKE_DIR  := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
@@ -25,6 +31,12 @@ CXXFLAGS  = -std=c++14 -O2 -fPIC -shared
 CXXFLAGS += -I$(SPIKE_DIR) -I$(SW_INCLUDE)
 CXXFLAGS += -DRV_PLATFORM_NO_INLINE_HELPERS
 LDFLAGS   = -ldl
+
+# On macOS, allow undefined symbols to be resolved at runtime
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  LDFLAGS += -undefined dynamic_lookup
+endif
 
 # If real Spike headers are present, use them instead of our shim.
 ifneq ($(SPIKE_INCLUDE),)
