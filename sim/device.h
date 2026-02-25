@@ -8,85 +8,32 @@
 #include <vector>
 #include <string>
 
-// =============================================================================
-// Memory Interface Address Map (Universal Slave Interface)
-// =============================================================================
-
-// Main memory
-#define MEM_BASE            0x80000000
-#define MEM_SIZE            (2 * 1024 * 1024)  // 2MB
-
-// CLINT slave window
-#define CLINT_BASE          0x02000000
-#define CLINT_SIZE          0x000C0000
-
-// PLIC slave window
-#define PLIC_BASE           0x0C000000
-#define PLIC_SIZE           0x04000000
-
-// UART slave window
-#define UART_BASE           0x20000000
-#define UART_SIZE           0x00010000
-
-// I2C slave window
-#define I2C_BASE            0x20010000
-#define I2C_SIZE            0x00010000
-
-// SPI slave window
-#define SPI_BASE            0x20020000
-#define SPI_SIZE            0x00010000
-
-// Magic slave window
-#define MAGIC_BASE          0xFFFF0000
-#define MAGIC_SIZE          0x00010000
+// HAL register map – base addresses, register offsets, and bit-field constants
+// are sourced from the firmware header so simulator and firmware always agree.
+// Note: RV_REG32 (volatile pointer accessor used only by firmware) is defined
+// by rv_platform.h but is never called by simulator code.
+#include "../sw/include/rv_platform.h"
 
 // =============================================================================
-// Device Register Offsets (window-relative)
+// Simulator address-space layout
+// Window sizes and base addresses are all sourced from rv_platform.h.
+// Short aliases below are kept for rv32sim.cpp which uses the unprefixed names.
 // =============================================================================
 
-// Magic device registers
-#define MAGIC_EXIT_REG      0xFFF0
-#define MAGIC_CONSOLE_REG   0xFFF4
-
-// UART registers (FIFO-based, matches RTL axi_uart.sv)
-#define UART_DATA_REG       0x00   // TX push (write) / RX pop (read)
-#define UART_STATUS_REG     0x04   // [0]=tx_full(busy), [1]=tx_full, [2]=rx_not_empty, [3]=rx_full
-#define UART_IE_REG         0x08   // [0]=rx_not_empty_ie, [1]=tx_empty_ie
-#define UART_IS_REG         0x0C   // [0]=rx_not_empty, [1]=tx_empty (read-only level)
-#define UART_LEVEL_REG      0x10   // [4:0]=rx_count, [12:8]=tx_count
-
-// SPI registers (FIFO-based, matches RTL axi_spi.sv)
-#define SPI_CONTROL_REG     0x00
-#define SPI_CLKDIV_REG      0x04
-#define SPI_TXDATA_REG      0x08   // TX push (write)
-#define SPI_RXDATA_REG      0x0C   // RX pop  (read)
-#define SPI_STATUS_REG      0x10   // [0]=busy, [1]=tx_ready, [2]=rx_valid, [3]=tx_empty, [4]=rx_full
-#define SPI_IE_REG          0x14   // [0]=rx_not_empty_ie, [1]=tx_empty_ie
-#define SPI_IS_REG          0x18   // [0]=rx_not_empty, [1]=tx_empty (read-only level)
-
-// I2C registers (FIFO-based, matches RTL axi_i2c.sv)
-#define I2C_CONTROL_REG     0x00
-#define I2C_CLKDIV_REG      0x04
-#define I2C_TXDATA_REG      0x08   // TX FIFO push (write)
-#define I2C_RXDATA_REG      0x0C   // RX FIFO pop  (read)
-#define I2C_STATUS_REG      0x10   // [0]=busy, [1]=tx_ready, [2]=rx_valid, [3]=ack_received
-#define I2C_IE_REG          0x14   // [0]=rx_not_empty_ie, [1]=tx_empty_ie, [2]=done_ie
-#define I2C_IS_REG          0x18   // [0]=rx_not_empty, [1]=tx_empty, [2]=stop_done (read-only level)
-
-// PLIC registers (offsets from PLIC_BASE 0x0C000000)
-// Compatible with RTL rv32_plic.sv
-#define PLIC_PRIORITY_BASE  0x000000  // +4*src: source i priority (i=1..7)
-#define PLIC_PENDING_0      0x001000  // Pending bits [7:1]
-#define PLIC_ENABLE_0       0x002000  // Enable bits  [7:1] for context 0 (hart 0 M-mode)
-#define PLIC_THRESHOLD_0    0x200000  // Priority threshold for context 0
-#define PLIC_CLAIM_0        0x200004  // Claim/Complete for context 0
-
-// CLINT registers
-#define CLINT_MSIP          0x0000
-#define CLINT_MTIMECMP      0x4000
-#define CLINT_MTIMECMPH     0x4004
-#define CLINT_MTIME         0xBFF8
-#define CLINT_MTIMEH        0xBFFC
+#define MEM_BASE            RV_RAM_BASE
+#define MEM_SIZE            RV_RAM_SIZE
+#define CLINT_BASE          RV_CLINT_BASE
+#define CLINT_SIZE          RV_CLINT_SIZE
+#define PLIC_BASE           RV_PLIC_BASE
+#define PLIC_SIZE           RV_PLIC_SIZE
+#define UART_BASE           RV_UART_BASE
+#define UART_SIZE           RV_UART_SIZE
+#define I2C_BASE            RV_I2C_BASE
+#define I2C_SIZE            RV_I2C_SIZE
+#define SPI_BASE            RV_SPI_BASE
+#define SPI_SIZE            RV_SPI_SIZE
+#define MAGIC_BASE          RV_MAGIC_BASE
+#define MAGIC_SIZE          RV_MAGIC_SIZE
 
 // Abstract base class for all peripheral devices
 class Device {
@@ -157,12 +104,14 @@ public:
 //   0x08: IE     [0]=rx_not_empty_ie, [1]=tx_empty_ie
 //   0x0C: IS     (read-only level)
 //   0x10: LEVEL  [4:0]=rx_count, [12:8]=tx_count
+//   0x14: CTRL   [0]=loopback_en
 class UARTDevice : public Device {
 private:
     static const int FIFO_DEPTH = 16;
     std::vector<uint8_t> rx_fifo;
     std::vector<uint8_t> tx_fifo;   // printed immediately; kept for level/stats
     uint8_t ie_reg;                  // [0]=rx_ne_ie, [1]=tx_e_ie
+    bool loopback_en;               // CTRL[0]: TX→RX loopback (mirrors RTL axi_uart.sv)
 
 public:
     UARTDevice();
@@ -196,6 +145,8 @@ public:
 //   0x18: IS      (read-only level)
 class I2CDevice : public Device {
 private:
+    static const int FIFO_DEPTH = 8;
+
     // Control register fields
     bool i2c_enable;
     bool start_cmd;
@@ -207,10 +158,14 @@ private:
     uint16_t clk_div;
     uint16_t clk_counter;
 
-    // Data registers
+    // Data registers (current byte being processed)
     uint8_t tx_data;
     uint8_t rx_data;
     bool tx_valid;
+
+    // TX / RX FIFOs
+    std::vector<uint8_t> tx_fifo;   // depth = FIFO_DEPTH
+    std::vector<uint8_t> rx_fifo;   // depth = FIFO_DEPTH
 
     // Status flags
     bool busy;
@@ -243,7 +198,7 @@ private:
 
     // IE/IS registers
     uint8_t ie_reg;      // [0]=rx_ne_ie, [1]=tx_e_ie, [2]=done_ie
-    bool stop_done;      // level signal: set when a STOP completes (drives IS[2])
+    bool stop_done;      // 1-cycle pulse flag (auto-cleared at start of tick)
 
 public:
     I2CDevice();
@@ -268,7 +223,7 @@ private:
 // Base address: 0x20020000
 // FIFO-based; matches RTL axi_spi.sv register map.
 // Registers:
-//   0x00: Control
+//   0x00: Control [0]=enable,[1]=cpol,[2]=cpha,[3]=loopback_en,[7:4]=CS
 //   0x04: Clock Divider
 //   0x08: TX Data (write = TX FIFO push)
 //   0x0C: RX Data (read  = RX FIFO pop)
@@ -281,6 +236,7 @@ private:
     bool spi_enable;
     bool cpol;  // Clock polarity
     bool cpha;  // Clock phase
+    bool loopback_en; // CTRL[3]: MOSI→MISO loopback (mirrors RTL axi_spi.sv)
 
     // Clock divider
     uint16_t clk_div;
@@ -317,6 +273,7 @@ private:
     uint32_t flash_addr[4];
     bool flash_addr_set[4];
     int flash_addr_bytes[4];
+    uint8_t flash_cmd[4];   // current command per CS (0x02=write, 0x03=read, 0=none)
 
     // IE register
     uint8_t ie_reg;     // [0]=rx_ne_ie, [1]=tx_e_ie
@@ -340,7 +297,7 @@ public:
 private:
     void process_spi_transfer();
     void handle_flash_command(int cs, uint8_t cmd);
-    uint8_t handle_flash_read(int cs);
+    uint8_t handle_flash_data(int cs, uint8_t tx_byte);  // read or write based on flash_cmd[cs]
 };
 
 // PLIC Device Driver

@@ -140,13 +140,13 @@ module axi_magic (
                         case (write_addr_reg & ~32'h3)  // Align to 4-byte boundary
                             EXIT_MAGIC_ADDR: begin
                                 if (is_byte_write) begin
-                                    // Exit simulation with byte value
-                                    `DEBUG1(("[MAGIC] Exit simulation with code %0d", write_byte));
-                                    sim_request_exit(write_byte);
+                                    // Exit simulation - decode HTIF: exit_code = value >> 1
+                                    `DEBUG1(("[MAGIC] Exit simulation with code %0d", write_byte >> 1));
+                                    sim_request_exit(write_byte >> 1);
                                 end else begin
-                                    // Exit simulation with word value
-                                    `DEBUG1(("[MAGIC] Exit simulation with code %0d", axi_wdata));
-                                    sim_request_exit(axi_wdata);
+                                    // Exit simulation - decode HTIF: exit_code = value >> 1
+                                    `DEBUG1(("[MAGIC] Exit simulation with code %0d", axi_wdata >> 1));
+                                    sim_request_exit(axi_wdata >> 1);
                                 end
                             end
                             CONSOLE_MAGIC_ADDR: begin

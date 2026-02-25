@@ -47,6 +47,7 @@ LDFLAGS = -T$(SW_DIR)/common/link.ld -Wl,--gc-sections
 LDFLAGS += -Wl,--wrap=fflush
 LDFLAGS += -lc -lgcc -lm
 COMMON_SRCS = $(SW_DIR)/common/start.S $(SW_DIR)/common/syscall.c $(SW_DIR)/common/trap.c \
+              $(SW_DIR)/common/rv_irq.c \
               $(SW_DIR)/common/puts.c $(SW_DIR)/common/putc.c
 
 # Optional per-test software makefile include.

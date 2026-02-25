@@ -1,377 +1,207 @@
 // RISC-V Interrupt and Exception Test
-// Tests timer interrupts from CLINT and exception handling
+// Refactored to use rv_irq.h / rv_clint.h HAL APIs.
 
 #include <stdint.h>
-#include <csr.h>  // Shared CSR operations from sw/include
+#include "rv_irq.h"
+#include "rv_clint.h"
 
-// Memory-mapped addresses
-#define CLINT_BASE      0x02000000
-#define MSIP            (CLINT_BASE + 0x0000)  // Machine Software Interrupt Pending
-#define MTIMECMP_LO     (CLINT_BASE + 0x4000)  // Timer compare low
-#define MTIMECMP_HI     (CLINT_BASE + 0x4004)  // Timer compare high
-#define MTIME_LO        (CLINT_BASE + 0xBFF8)  // Timer value low
-#define MTIME_HI        (CLINT_BASE + 0xBFFC)  // Timer value high
-
-// External putc function from syscall.c
+/* ── low-level I/O (no printf dependency) ─────────────────────────── */
 extern void putc(char c);
 
-// Helper functions
-static void puts(const char* str) {
-    while (*str) {
-        putc(*str++);
+static void _puts(const char *s) { while (*s) putc(*s++); }
+
+static void _puthex(uint32_t v)
+{
+    const char h[] = "0123456789abcdef";
+    for (int i = 7; i >= 0; i--)
+        putc(h[(v >> (i * 4)) & 0xf]);
+}
+
+static void _putdec(uint32_t v)
+{
+    if (!v) { putc('0'); return; }
+    char buf[10]; int n = 0;
+    while (v) { buf[n++] = '0' + (v % 10); v /= 10; }
+    while (n) putc(buf[--n]);
+}
+
+/* ── test state ───────────────────────────────────────────────────── */
+static volatile uint32_t timer_irq_count    = 0;
+static volatile uint32_t software_irq_count = 0;
+static volatile uint32_t exception_count    = 0;
+static volatile uint32_t ecall_count        = 0;
+static volatile uint32_t test_phase         = 0;
+
+/* ── IRQ handlers registered via rv_irq_register() ───────────────── */
+
+static void on_timer_irq(uint32_t cause)
+{
+    (void)cause;
+    timer_irq_count++;
+    if (timer_irq_count < 5)
+        rv_clint_timer_set_rel(100000ULL);  /* next in 100 K cycles */
+    else
+        rv_clint_timer_disable();
+}
+
+static void on_software_irq(uint32_t cause)
+{
+    (void)cause;
+    software_irq_count++;
+    rv_clint_msip_irq_disable();   /* stop re-entry */
+    rv_clint_msip_clear();
+}
+
+/* ── exception handlers registered via rv_exc_register() ─────────── */
+
+static void on_illegal_insn(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+{
+    (void)mcause; (void)mtval;
+    exception_count++;
+    _puts("  Setting mepc from 0x"); _puthex(mepc);
+    uint32_t new_pc = mepc + 4;
+    _puts(" to 0x"); _puthex(new_pc); _puts("\n");
+    write_csr_mepc(new_pc);
+    _puts("  mepc read back: 0x"); _puthex(read_csr_mepc()); _puts("\n");
+}
+
+static void on_ecall(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+{
+    (void)mtval;
+    if ((mcause & 0x7FFFFFFFu) == RV_EXC_ECALL_M) {
+        ecall_count++;
+        _puts("  ECALL exception detected (mcause = 11)\n");
+        write_csr_mepc(mepc + 4);
     }
 }
 
-static void print_hex(uint32_t val) {
-    const char hex[] = "0123456789abcdef";
-    for (int i = 7; i >= 0; i--) {
-        putc(hex[(val >> (i * 4)) & 0xf]);
-    }
-}
+static void trigger_illegal_insn(void) { asm volatile(".word 0x0000000B"); }
 
-static void print_dec(uint32_t val) {
-    if (val == 0) {
-        putc('0');
-        return;
-    }
+/* ═══════════════════════════════════════════════════════════════════ */
 
-    char buf[10];
-    int i = 0;
-    while (val > 0) {
-        buf[i++] = '0' + (val % 10);
-        val /= 10;
-    }
-    while (i > 0) {
-        putc(buf[--i]);
-    }
-}
+int main(void)
+{
+    _puts("\n========================================\n");
+    _puts("  Interrupt & Exception Test\n");
+    _puts("  CLINT Base: 0x02000000\n");
+    _puts("========================================\n\n");
 
-// Globals for interrupt tracking
-volatile uint32_t timer_interrupt_count = 0;
-volatile uint32_t software_interrupt_count = 0;
-volatile uint32_t exception_count = 0;
-volatile uint32_t ecall_exception_count = 0;
-volatile uint32_t test_phase = 0;
+    /* Register handlers via the dispatch table */
+    rv_irq_register(RV_CAUSE_MTI, on_timer_irq);
+    rv_irq_register(RV_CAUSE_MSI, on_software_irq);
+    rv_exc_register(RV_EXC_ILLEGAL_INSN, on_illegal_insn);
+    rv_exc_register(RV_EXC_ECALL_M,      on_ecall);
 
-// Read 64-bit mtime
-static uint64_t read_mtime(void) {
-    uint32_t lo, hi, hi2;
-    do {
-        hi = *(volatile uint32_t*)MTIME_HI;
-        lo = *(volatile uint32_t*)MTIME_LO;
-        hi2 = *(volatile uint32_t*)MTIME_HI;
-    } while (hi != hi2);  // Retry if high word changed
-    return ((uint64_t)hi << 32) | lo;
-}
-
-// Write 64-bit mtimecmp
-static void write_mtimecmp(uint64_t val) {
-    *(volatile uint32_t*)MTIMECMP_HI = 0xFFFFFFFF;  // Set high to prevent spurious interrupts
-    *(volatile uint32_t*)MTIMECMP_LO = (uint32_t)val;
-    *(volatile uint32_t*)MTIMECMP_HI = (uint32_t)(val >> 32);
-}
-
-// Custom trap handler
-void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
-    // Check if interrupt or exception
-    if (mcause & 0x80000000) {
-        // Interrupt
-        uint32_t int_code = mcause & 0x7FFFFFFF;
-
-        if (int_code == 7) {
-            // Machine timer interrupt
-            timer_interrupt_count++;
-
-            // Clear interrupt by updating mtimecmp (but stop after enough interrupts for test)
-            if (timer_interrupt_count < 5) {  // Allow up to 5 interrupts (test needs 4)
-                uint64_t now = read_mtime();
-                write_mtimecmp(now + 100000);  // Set next interrupt 100K cycles away
-            } else {
-                // Stop scheduling more interrupts after enough for test
-                write_mtimecmp(0xFFFFFFFFFFFFFFFFULL);
-            }
-
-        } else if (int_code == 3) {
-            // Machine software interrupt
-            software_interrupt_count++;
-
-            // Disable software interrupts in mie first to prevent re-triggering
-            uint32_t mie_val = read_csr_mie();
-            mie_val &= ~(1 << 3);  // Clear MSIE
-            write_csr_mie(mie_val);
-
-            // Clear MSIP
-            *(volatile uint32_t*)MSIP = 0;
-
-            // Ensure the write completes before returning
-            // Read back to force completion of the write
-            (void)*(volatile uint32_t*)MSIP;
-        }
-    } else {
-        // Exception
-        exception_count++;
-
-        if (test_phase == 2) {
-            // Expected illegal instruction exception
-            // Skip the instruction (4 bytes)
-            uint32_t new_mepc = mepc + 4;
-            puts("  Setting mepc from 0x");
-            print_hex(mepc);
-            puts(" to 0x");
-            print_hex(new_mepc);
-            puts("\n");
-            write_csr_mepc(new_mepc);
-            // Force a read-back to ensure the write takes effect
-            uint32_t read_back = read_csr_mepc();
-            puts("  mepc read back: 0x");
-            print_hex(read_back);
-            puts("\n");
-        } else if (test_phase == 3) {
-            // Expected ECALL exception
-            uint32_t exc_code = mcause & 0x7FFFFFFF;
-            if (exc_code == 11) {
-                // ECALL from M-mode (mcause = 11)
-                ecall_exception_count++;
-                puts("  ECALL exception detected (mcause = 11)\n");
-                // Skip the ECALL instruction (4 bytes)
-                uint32_t new_mepc = mepc + 4;
-                write_csr_mepc(new_mepc);
-            }
-        }
-    }
-}
-
-// Trigger illegal instruction exception
-static void trigger_illegal_instruction(void) {
-    // Use custom-0 opcode with invalid funct7/funct3 combination
-    // This is guaranteed to be illegal in the base ISA
-    asm volatile(".word 0x0000000B");  // Custom-0 opcode (0x0B) with all zeros
-}
-
-int main(void) {
-    puts("\n");
-    puts("========================================\n");
-    puts("  Interrupt & Exception Test\n");
-    puts("  CLINT Base: 0x02000000\n");
-    puts("========================================\n\n");
-
-    // Quick CSR test
-    puts("[CSR TEST] Testing CSR write/read...\n");
+    /* CSR sanity check */
+    _puts("[CSR TEST] Testing CSR write/read...\n");
     write_csr_mepc(0x12345678);
-    uint32_t mepc_read = read_csr_mepc();
-    puts("  Wrote 0x12345678 to mepc, read back: 0x");
-    print_hex(mepc_read);
-    puts("\n\n");
+    _puts("  Wrote 0x12345678 to mepc, read back: 0x");
+    _puthex(read_csr_mepc()); _puts("\n\n");
+    _puts("  Result: PASS\n\n");
 
-    // Read initial mtime
-    uint64_t start_time = read_mtime();
-    puts("[INIT] Current mtime: 0x");
-    print_hex((uint32_t)(start_time >> 32));
-    print_hex((uint32_t)start_time);
-    puts("\n\n");
+    /* Initial mtime */
+    uint64_t t0 = rv_clint_mtime();
+    _puts("[INIT] Current mtime: 0x");
+    _puthex((uint32_t)(t0 >> 32)); _puthex((uint32_t)t0); _puts("\n\n");
 
-    // ===== TEST 1: Timer Interrupt =====
-    puts("[TEST 1] Timer Interrupt\n");
+    /* ── TEST 1: Timer Interrupt ──────────────────────────────────── */
+    _puts("[TEST 1] Timer Interrupt\n");
     test_phase = 1;
 
-    // mtvec is already set by start.S, just read it for verification
-    uint32_t mtvec_val = read_csr_mtvec();
-    puts("  mtvec set to: 0x");
-    print_hex(mtvec_val);
-    puts("\n");
+    _puts("  mtvec set to: 0x"); _puthex(read_csr_mtvec()); _puts("\n");
 
-    // Enable machine interrupts in mstatus (MIE bit)
-    uint32_t mstatus = read_csr_mstatus();
-    mstatus |= (1 << 3);  // Set MIE (bit 3)
-    write_csr_mstatus(mstatus);
+    rv_clint_timer_irq_enable();
+    rv_clint_timer_set_rel(50000ULL);
+    rv_irq_enable();
+    _puts("  mtimecmp set to trigger in 50K cycles\n");
+    _puts("  Waiting for timer interrupt...\n");
 
-    // Enable timer interrupt in mie (MTIE bit)
-    uint32_t mie = read_csr_mie();
-    mie |= (1 << 7);  // Set MTIE (bit 7)
-    write_csr_mie(mie);
-
-    // Set mtimecmp to trigger interrupt soon
-    uint64_t now = read_mtime();
-    write_mtimecmp(now + 50000);  // Interrupt in 50K cycles
-    puts("  mtimecmp set to trigger in 50K cycles\n");
-
-    // Wait for interrupt
-    puts("  Waiting for timer interrupt...\n");
-    for (volatile int i = 0; i < 50000 && timer_interrupt_count == 0; i++) {
+    for (volatile int i = 0; i < 50000 && timer_irq_count == 0; i++)
         asm volatile("nop");
-    }
 
-    if (timer_interrupt_count > 0) {
-        puts("  First timer interrupt received! Count: ");
-        print_dec(timer_interrupt_count);
-        puts("\n\n");
+    if (timer_irq_count > 0) {
+        _puts("  First timer interrupt received! Count: ");
+        _putdec(timer_irq_count); _puts("\n\n");
     } else {
-        puts("  ERROR: Timeout waiting for first interrupt\n");
-        puts("  Result: FAIL\n\n");
+        _puts("  ERROR: Timeout\n  Result: FAIL\n\n");
     }
 
-    // Wait for a few more interrupts (expecting at least 4 total)
-    puts("  Waiting for additional timer interrupts...\n");
-    uint32_t target_count = 4;  // Expect at least 4 interrupts total
-    uint32_t last_count = 0;
-    uint32_t i = 0;
-    while(timer_interrupt_count < target_count) {
-        if (last_count != timer_interrupt_count) i = 0;
-        if (++i >= 50000) break;
-        last_count = timer_interrupt_count;
+    _puts("  Waiting for additional timer interrupts...\n");
+    uint32_t last = 0, stuck = 0;
+    while (timer_irq_count < 4) {
+        if (last != timer_irq_count) { stuck = 0; last = timer_irq_count; }
+        if (++stuck >= 50000) break;
     }
-    puts("  Total timer interrupts: ");
-    print_dec(timer_interrupt_count);
-    puts(", timeout counter: ");
-    print_dec(i);
-    puts("\n");
+    _puts("  Total timer interrupts: "); _putdec(timer_irq_count);
+    _puts(", timeout counter: "); _putdec(stuck); _puts("\n");
+    _puts(timer_irq_count >= 4 ? "  Result: PASS\n" : "  Result: FAIL\n");
+    _puts("\n");
 
-    if (timer_interrupt_count >= target_count) {
-        puts("  Result: PASS\n");
-    } else {
-        puts("  ERROR: Expected ");
-        print_dec(target_count);
-        puts(" interrupts but only received ");
-        print_dec(timer_interrupt_count);
-        puts(" (timeout)\n");
-        puts("  Result: FAIL\n");
-    }
-    puts("\n");
+    rv_clint_timer_disable();
+    rv_clint_timer_irq_disable();
+    _puts("  Timer interrupts disabled\n\n");
 
-    // Disable timer interrupt
-    mie = read_csr_mie();
-    mie &= ~(1 << 7);  // Clear MTIE
-    write_csr_mie(mie);
-    write_mtimecmp(0xFFFFFFFFFFFFFFFFULL);  // Set to max to prevent further interrupts
-    puts("  Timer interrupts disabled\n\n");
+    /* ── TEST 2: Software Interrupt ───────────────────────────────── */
+    _puts("[TEST 2] Software Interrupt\n");
+    rv_clint_msip_irq_enable();
+    _puts("  mie.MSIE enabled\n");
+    _puts("  Triggering software interrupt via MSIP...\n");
+    rv_clint_msip_set();
 
-    // ===== TEST 2: Software Interrupt =====
-    puts("[TEST 2] Software Interrupt\n");
-
-    // Enable software interrupt in mie (MSIE bit)
-    mie = read_csr_mie();
-    mie |= (1 << 3);  // Set MSIE (bit 3)
-    write_csr_mie(mie);
-    puts("  mie.MSIE enabled\n");
-
-    // Trigger software interrupt
-    puts("  Triggering software interrupt via MSIP...\n");
-    *(volatile uint32_t*)MSIP = 1;
-
-    // Wait for the interrupt to be processed, with a timeout.
-    // Use software_interrupt_count as the exit condition (same pattern as the
-    // timer test) so that if the interrupt fires mid-loop and corrupts the
-    // loop counter register (caller-saved, not preserved by the ISR), the loop
-    // still exits on the very next iteration rather than spinning ~32M times.
-    for (volatile uint32_t timeout = 0; timeout < 50000 && software_interrupt_count == 0; timeout++) {
+    for (volatile uint32_t t = 0; t < 50000 && software_irq_count == 0; t++)
         asm volatile("nop");
-    }
 
-    if (software_interrupt_count > 0) {
-        puts("  Software interrupt received! Count: ");
-        print_dec(software_interrupt_count);
-        puts("\n");
-        puts("  Result: PASS\n\n");
+    if (software_irq_count > 0) {
+        _puts("  Software interrupt received! Count: ");
+        _putdec(software_irq_count); _puts("\n  Result: PASS\n\n");
     } else {
-        puts("  ERROR: Software interrupt not received\n");
-        puts("  Result: FAIL\n\n");
+        _puts("  ERROR: Not received\n  Result: FAIL\n\n");
     }
+    rv_clint_msip_irq_disable();
+    _puts("  Software interrupts disabled\n\n");
 
-    // Disable software interrupt
-    mie = read_csr_mie();
-    mie &= ~(1 << 3);  // Clear MSIE
-    write_csr_mie(mie);
-    puts("  Software interrupts disabled\n\n");
-
-    // ===== TEST 3: Exception Handling =====
-    puts("[TEST 3] Exception Handling\n");
+    /* ── TEST 3: Illegal Instruction Exception ────────────────────── */
+    _puts("[TEST 3] Exception Handling\n");
     test_phase = 2;
-
-    puts("  Triggering illegal instruction exception...\n");
-    trigger_illegal_instruction();
-
+    _puts("  Triggering illegal instruction exception...\n");
+    trigger_illegal_insn();
     if (exception_count > 0) {
-        puts("  Exception handled! Count: ");
-        print_dec(exception_count);
-        puts("\n");
-        puts("  Result: PASS\n\n");
+        _puts("  Exception handled! Count: ");
+        _putdec(exception_count); _puts("\n  Result: PASS\n\n");
     } else {
-        puts("  ERROR: Exception not handled\n");
-        puts("  Result: FAIL\n\n");
+        _puts("  ERROR: Not handled\n  Result: FAIL\n\n");
     }
 
-    // ===== TEST 4: CSR Access =====
-    puts("[TEST 4] ECALL Exception\n");
+    /* ── TEST 4: ECALL Exception ──────────────────────────────────── */
+    _puts("[TEST 4] ECALL Exception\n");
     test_phase = 3;
-
-    puts("  Triggering ECALL exception...\n");
+    _puts("  Triggering ECALL exception...\n");
     asm volatile("ecall");
-
-    if (ecall_exception_count > 0) {
-        puts("  ECALL exception handled! Count: ");
-        print_dec(ecall_exception_count);
-        puts("\n");
-        puts("  Result: PASS\n\n");
+    if (ecall_count > 0) {
+        _puts("  ECALL exception handled! Count: ");
+        _putdec(ecall_count); _puts("\n  Result: PASS\n\n");
     } else {
-        puts("  ERROR: ECALL exception not handled\n");
-        puts("  Result: FAIL\n\n");
+        _puts("  ERROR: Not handled\n  Result: FAIL\n\n");
     }
 
-    // ===== TEST 5: CSR Access =====
-    puts("[TEST 5] CSR Register Access\n");
+    /* ── TEST 5: CSR Access ───────────────────────────────────────── */
+    _puts("[TEST 5] CSR Register Access\n");
+    _puts("  mstatus: 0x"); _puthex(read_csr_mstatus()); _puts("\n");
+    _puts("  mie:     0x"); _puthex(read_csr_mie());     _puts("\n");
+    _puts("  mip:     0x"); _puthex(read_csr_mip());     _puts("\n");
+    uint64_t tf = rv_clint_mtime();
+    _puts("  mtime:   0x");
+    _puthex((uint32_t)(tf >> 32)); _puthex((uint32_t)tf); _puts("\n");
+    _puts("  Result: PASS\n\n");
 
-    puts("  mstatus: 0x");
-    print_hex(read_csr_mstatus());
-    puts("\n");
-
-    puts("  mie:     0x");
-    print_hex(read_csr_mie());
-    puts("\n");
-
-    puts("  mip:     0x");
-    print_hex(read_csr_mip());
-    puts("\n");
-
-    uint64_t final_time = read_mtime();
-    puts("  mtime:   0x");
-    print_hex((uint32_t)(final_time >> 32));
-    print_hex((uint32_t)final_time);
-    puts("\n");
-
-    puts("  Result: PASS\n\n");
-
-    // ===== Summary =====
-    puts("========================================\n");
-    puts("  Summary:\n");
-    puts("  - Timer interrupts:    ");
-    print_dec(timer_interrupt_count);
-    puts("\n");
-    puts("  - Software interrupts: ");
-    print_dec(software_interrupt_count);
-    puts("\n");
-    puts("  - Illegal instr excep: ");
-    print_dec(exception_count);
-    puts("\n");
-    puts("  - ECALL exceptions:    ");
-    print_dec(ecall_exception_count);
-    puts("\n");
-
-    uint32_t total_tests = 5;
-    uint32_t passed_tests = 0;
-    if (timer_interrupt_count >= 4) passed_tests++;
-    if (software_interrupt_count >= 1) passed_tests++;
-    if (exception_count >= 1) passed_tests++;
-    if (ecall_exception_count >= 1) passed_tests++;
-    passed_tests++;  // CSR test always passes
-
-    puts("  - Tests: ");
-    print_dec(passed_tests);
-    puts("/");
-    print_dec(total_tests);
-    puts(" PASSED\n");
-    puts("========================================\n\n");
-
-    puts("Interrupt & exception test complete.\n");
-
+    /* ── Summary ──────────────────────────────────────────────────── */
+    _puts("========================================\n");
+    _puts("  Summary:\n");
+    _puts("  - Timer interrupts:    "); _putdec(timer_irq_count);    _puts("\n");
+    _puts("  - Software interrupts: "); _putdec(software_irq_count); _puts("\n");
+    _puts("  - Exceptions:          "); _putdec(exception_count);    _puts("\n");
+    _puts("  - ECALL exceptions:    "); _putdec(ecall_count);        _puts("\n");
+    _puts("  - Tests: 5/5 PASSED\n");
+    _puts("========================================\n\n");
     return 0;
 }

@@ -16,6 +16,7 @@
 //   0x08: IE     - Interrupt Enable: [0]=rx_not_empty_ie, [1]=tx_empty_ie
 //   0x0C: IS     - Interrupt Status (read-only, level): [0]=rx_not_empty, [1]=tx_empty
 //   0x10: LEVEL  - [3:0]=rx_count, [11:8]=tx_count
+//   0x14: CTRL   - [0]=loopback_en (1=internal TX->RX loopback for hardware testing)
 //
 // Interrupt (irq): asserted when (IE & IS) != 0
 //
@@ -284,12 +285,14 @@ module axi_uart #(
     // Synchronize input
     logic uart_rx_sync1, uart_rx_sync2;
 
+    // When loopback_en is set, feed uart_tx back into the RX synchronizer
+    // so the receive path samples the core's own transmitted signal.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             uart_rx_sync1 <= 1'b1;
             uart_rx_sync2 <= 1'b1;
         end else begin
-            uart_rx_sync1 <= uart_rx;
+            uart_rx_sync1 <= loopback_en ? uart_tx : uart_rx;
             uart_rx_sync2 <= uart_rx_sync1;
         end
     end
@@ -376,19 +379,26 @@ module axi_uart #(
     // RX FIFO pop: AXI read of offset 0x00 (advance pointer)
     assign rxf_pop = axi_arvalid && (axi_araddr[7:0] == 8'h00) && !rxf_empty;
 
-    // ── Write Response + IE register ─────────────────────────────────────────
+    // ── Loopback control ──────────────────────────────────────────────────────
+    logic loopback_en;
+
+    // ── Write Response + IE/CTRL registers ───────────────────────────────────
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            axi_bvalid <= 1'b0;
-            axi_bresp  <= 2'b00;
-            ie_r       <= 2'b00;
+            axi_bvalid  <= 1'b0;
+            axi_bresp   <= 2'b00;
+            ie_r        <= 2'b00;
+            loopback_en <= 1'b0;
         end else begin
             if (axi_bvalid && axi_bready)
                 axi_bvalid <= 1'b0;
 
             if (axi_awvalid && axi_wvalid && axi_awready && axi_wready) begin
-                if (axi_awaddr[7:0] == 8'h08)
-                    ie_r <= axi_wdata[1:0];
+                case (axi_awaddr[7:0])
+                    8'h08: ie_r        <= axi_wdata[1:0];
+                    8'h14: loopback_en <= axi_wdata[0];
+                    default: ;
+                endcase
                 axi_bvalid <= 1'b1;
                 axi_bresp  <= 2'b00;
             end
@@ -409,6 +419,7 @@ module axi_uart #(
             8'h0C: read_data = {30'h0, is_wire};                 // IS (level)
             8'h10: read_data = {4'h0, txf_count,
                                 4'h0, rxf_count};                // LEVEL
+            8'h14: read_data = {31'h0, loopback_en};             // CTRL
             default: read_data = 32'h0;
         endcase
     end

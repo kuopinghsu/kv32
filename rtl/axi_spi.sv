@@ -12,6 +12,7 @@
 //         [0]: Enable (1=enable SPI, 0=disable)
 //         [1]: CPOL (Clock Polarity: 0=idle low, 1=idle high)
 //         [2]: CPHA (Clock Phase: 0=sample on leading edge, 1=trailing edge)
+//         [3]: Loopback Enable (1=internal MOSI->MISO loopback for hardware testing)
 //         [7:4]: CS (Chip Select, active low)
 //   0x04: Clock Divider (SCLK = CLK / (2 * (DIV + 1)))
 //   0x08: TX Data   - write: push to TX FIFO (read: returns 0)
@@ -162,6 +163,7 @@ module axi_spi #(
     logic        spi_enable;
     logic        cpol;          // Clock polarity
     logic        cpha;          // Clock phase
+    logic        loopback_en;   // Internal MOSI->MISO loopback
     logic [3:0]  cs_select;     // Chip select
 
     // Clock divider
@@ -190,6 +192,11 @@ module axi_spi #(
     logic        busy;
     logic        tx_ready;
 
+    // When loopback_en is set, MOSI is fed back to MISO internally,
+    // bypassing the external spi_miso pin.
+    logic spi_miso_in;
+    assign spi_miso_in = loopback_en ? spi_mosi : spi_miso;
+
     // TX FIFO feeds the state machine: pop when IDLE and FIFO not empty
     assign txf_pop = (state == IDLE) && !txf_empty && spi_enable;
     assign tx_valid = txf_pop;
@@ -215,6 +222,7 @@ module axi_spi #(
             spi_enable  <= 1'b0;
             cpol        <= 1'b0;
             cpha        <= 1'b0;
+            loopback_en <= 1'b0;
             cs_select   <= 4'b1111;
             clk_div     <= 16'd49;  // Default: 1MHz SPI at 100MHz system clock
             ie_r        <= 2'b00;
@@ -227,10 +235,11 @@ module axi_spi #(
             if (axi_awvalid && axi_wvalid) begin
                 case (axi_awaddr[15:0])
                     CTRL_OFFSET: begin
-                        spi_enable <= axi_wdata[0];
-                        cpol       <= axi_wdata[1];
-                        cpha       <= axi_wdata[2];
-                        cs_select  <= axi_wdata[7:4];
+                        spi_enable  <= axi_wdata[0];
+                        cpol        <= axi_wdata[1];
+                        cpha        <= axi_wdata[2];
+                        loopback_en <= axi_wdata[3];
+                        cs_select   <= axi_wdata[7:4];
                     end
                     DIV_OFFSET: clk_div <= axi_wdata[15:0];
                     IE_OFFSET:  ie_r    <= axi_wdata[1:0];
@@ -257,7 +266,7 @@ module axi_spi #(
                 axi_rvalid <= 1'b1;
                 axi_rresp  <= 2'b00;
                 case (axi_araddr[15:0])
-                    CTRL_OFFSET: axi_rdata <= {24'h0, cs_select, 1'b0, cpha, cpol, spi_enable};
+                    CTRL_OFFSET: axi_rdata <= {24'h0, cs_select, loopback_en, cpha, cpol, spi_enable};
                     DIV_OFFSET:  axi_rdata <= {16'h0, clk_div};
                     TX_OFFSET:   axi_rdata <= 32'h0;             // TX-only, read returns 0
                     RX_OFFSET:   axi_rdata <= {24'h0, rxf_mem[rxf_rd_ptr]}; // RX pop
@@ -316,7 +325,7 @@ module axi_spi #(
                         sclk_int <= ~sclk_int;
                         if (cpha == 0) begin
                             if (sclk_int == cpol)
-                                shift_reg_rx <= {shift_reg_rx[6:0], spi_miso};
+                                shift_reg_rx <= {shift_reg_rx[6:0], spi_miso_in};
                             else begin
                                 shift_reg_tx <= {shift_reg_tx[6:0], 1'b0};
                                 bit_counter  <= bit_counter + 1;
@@ -326,7 +335,7 @@ module axi_spi #(
                             if (sclk_int == cpol)
                                 shift_reg_tx <= {shift_reg_tx[6:0], 1'b0};
                             else begin
-                                shift_reg_rx <= {shift_reg_rx[6:0], spi_miso};
+                                shift_reg_rx <= {shift_reg_rx[6:0], spi_miso_in};
                                 bit_counter  <= bit_counter + 1;
                                 if (bit_counter >= 4'd7) state <= FINISH;
                             end

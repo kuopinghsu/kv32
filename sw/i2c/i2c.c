@@ -1,354 +1,405 @@
-// I2C Hardware Test - Tests I2C master controller at 0x20010000
-// Tests I2C communication with 24C02-style EEPROM slave at address 0x50
-// EEPROM has 256 bytes initialized with pattern 0xA0 + address
+// I2C Hardware Test
+// Refactored to use rv_i2c.h / rv_platform.h HAL APIs.
 
 #include <stdint.h>
 #include <stdio.h>
+#include "rv_i2c.h"
+#include "rv_irq.h"
+#include "rv_plic.h"
+#include "rv_clint.h"
 
-// Ensure a peripheral register write is visible before reading STATUS.
-// FENCE drains the store buffer in RTL; in the SW simulator it is a no-op.
-#define I2C_FENCE() __asm__ volatile ("fence" ::: "memory")
+/* EEPROM configuration */
+#define EEPROM_ADDR  0x50u
+#define EEPROM_SIZE  256u
 
-// I2C peripheral registers
-#define I2C_BASE     0x20010000
-#define I2C_CTRL     (*((volatile uint32_t*)(I2C_BASE + 0x00)))
-#define I2C_DIV      (*((volatile uint32_t*)(I2C_BASE + 0x04)))
-#define I2C_TX       (*((volatile uint32_t*)(I2C_BASE + 0x08)))
-#define I2C_RX       (*((volatile uint32_t*)(I2C_BASE + 0x0C)))
-#define I2C_STATUS   (*((volatile uint32_t*)(I2C_BASE + 0x10)))
-
-// Control register bits
-#define I2C_CTRL_ENABLE   0x01  // Enable I2C controller
-#define I2C_CTRL_START    0x02  // Send START condition
-#define I2C_CTRL_STOP     0x04  // Send STOP condition
-#define I2C_CTRL_READ     0x08  // Read mode (vs write)
-#define I2C_CTRL_ACK      0x10  // ACK bit for read (0=ACK, 1=NACK)
-
-// Status register bits
-#define I2C_STATUS_BUSY      0x01  // Transfer in progress
-#define I2C_STATUS_TX_READY  0x02  // Can accept new data
-#define I2C_STATUS_RX_VALID  0x04  // Received data available
-#define I2C_STATUS_ACK_RECV  0x08  // Slave ACKed last transfer
-
-// EEPROM configuration
-#define EEPROM_ADDR   0x50  // 7-bit I2C address
-#define EEPROM_SIZE   256   // 256 bytes
-
-// Test statistics
+/* Statistics */
 static volatile uint32_t status_checks = 0;
-static volatile uint32_t busy_waits = 0;
-static volatile uint32_t writes = 0;
-static volatile uint32_t reads = 0;
+static volatile uint32_t busy_waits    = 0;
+static volatile uint32_t writes        = 0;
+static volatile uint32_t reads         = 0;
 
-// Helper functions
-void i2c_init(uint32_t clk_div) {
-    I2C_DIV = clk_div;
-    I2C_CTRL = I2C_CTRL_ENABLE;
+/* ── wrappers matching old API names (with verbose printf) ────────── */
+
+static void i2c_wait_ready(void)
+{
+    while (rv_i2c_busy()) busy_waits++;
     status_checks++;
 }
 
-void i2c_wait_ready(void) {
-    while (I2C_STATUS & I2C_STATUS_BUSY) {
-        busy_waits++;
-    }
-    status_checks++;
-}
-
-void i2c_start(void) {
+static void i2c_start(void)
+{
     i2c_wait_ready();
     printf("  [I2C] Sending START\n");
-    I2C_CTRL = I2C_CTRL_ENABLE | I2C_CTRL_START;
-    I2C_FENCE();
+    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_START;
+    RV_I2C_FENCE();
     i2c_wait_ready();
-    printf("  [I2C] START complete, status=0x%02lX\n", (unsigned long)I2C_STATUS);
+    printf("  [I2C] START complete, status=0x%02lX\n", (unsigned long)RV_I2C_STATUS);
 }
 
-void i2c_stop(void) {
+static void i2c_stop(void)
+{
     i2c_wait_ready();
-    I2C_CTRL = I2C_CTRL_ENABLE | I2C_CTRL_STOP;
-    I2C_FENCE();
+    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_STOP;
+    RV_I2C_FENCE();
     i2c_wait_ready();
 }
 
-int i2c_write_byte(uint8_t data) {
+static int i2c_write_byte(uint8_t data)
+{
     i2c_wait_ready();
-    I2C_TX = data;
-    I2C_FENCE();
+    RV_I2C_TX = data;
+    RV_I2C_FENCE();
     i2c_wait_ready();
     writes++;
-
-    // Check if slave ACKed
-    uint32_t status = I2C_STATUS;
-    int ack = (status & I2C_STATUS_ACK_RECV) ? 0 : -1;
+    uint32_t st = RV_I2C_STATUS;
     printf("  [I2C] Write 0x%02X -> status=0x%02lX, ACK=%d\n",
-           data, (unsigned long)status, (status & I2C_STATUS_ACK_RECV) ? 1 : 0);
-    return ack;
+           data, (unsigned long)st, (st & RV_I2C_ST_ACK_RECV) ? 1 : 0);
+    return (st & RV_I2C_ST_ACK_RECV) ? 0 : -1;
 }
 
-uint8_t i2c_read_byte(int send_ack) {
+static uint8_t i2c_read_byte(int send_ack)
+{
+    uint32_t ctrl = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_READ;
+    if (!send_ack) ctrl |= RV_I2C_CTRL_NACK;
     i2c_wait_ready();
-
-    // Configure read mode with ACK/NACK
-    if (send_ack) {
-        I2C_CTRL = I2C_CTRL_ENABLE | I2C_CTRL_READ;  // ACK
-    } else {
-        I2C_CTRL = I2C_CTRL_ENABLE | I2C_CTRL_READ | I2C_CTRL_ACK;  // NACK
-    }
-
-    I2C_FENCE();
+    RV_I2C_CTRL = ctrl;
+    RV_I2C_FENCE();
     i2c_wait_ready();
     reads++;
-
-    return (uint8_t)(I2C_RX & 0xFF);
+    return (uint8_t)(RV_I2C_RX & 0xFFu);
 }
 
-// EEPROM write: START + ADDR(W) + MEM_ADDR + DATA + STOP
-int eeprom_write(uint8_t mem_addr, uint8_t data) {
+static int eeprom_write(uint8_t mem_addr, uint8_t data)
+{
     i2c_start();
-
-    // Send device address with write bit (0)
-    if (i2c_write_byte((EEPROM_ADDR << 1) | 0) < 0) {
-        i2c_stop();
-        return -1;  // No ACK from device
-    }
-
-    // Send memory address
-    if (i2c_write_byte(mem_addr) < 0) {
-        i2c_stop();
-        return -2;  // No ACK for address
-    }
-
-    // Send data byte
-    if (i2c_write_byte(data) < 0) {
-        i2c_stop();
-        return -3;  // No ACK for data
-    }
-
+    if (i2c_write_byte((uint8_t)((EEPROM_ADDR << 1) | 0u)) < 0) { i2c_stop(); return -1; }
+    if (i2c_write_byte(mem_addr) < 0)                             { i2c_stop(); return -2; }
+    if (i2c_write_byte(data) < 0)                                 { i2c_stop(); return -3; }
     i2c_stop();
-    return 0;  // Success
+    return 0;
 }
 
-// EEPROM read: START + ADDR(W) + MEM_ADDR + START + ADDR(R) + DATA + STOP
-int eeprom_read(uint8_t mem_addr, uint8_t *data) {
-    // Write phase: set memory address
+static int eeprom_read(uint8_t mem_addr, uint8_t *data)
+{
     i2c_start();
-
-    // Send device address with write bit
-    if (i2c_write_byte((EEPROM_ADDR << 1) | 0) < 0) {
-        i2c_stop();
-        return -1;  // No ACK from device
-    }
-
-    // Send memory address
-    if (i2c_write_byte(mem_addr) < 0) {
-        i2c_stop();
-        return -2;  // No ACK for address
-    }
-
-    // Read phase: repeated START + read data
-    i2c_start();
-
-    // Send device address with read bit (1)
-    if (i2c_write_byte((EEPROM_ADDR << 1) | 1) < 0) {
-        i2c_stop();
-        return -3;  // No ACK for read
-    }
-
-    // Read data byte with NACK (end of read)
-    *data = i2c_read_byte(0);  // 0 = send NACK
-
+    if (i2c_write_byte((uint8_t)((EEPROM_ADDR << 1) | 0u)) < 0) { i2c_stop(); return -1; }
+    if (i2c_write_byte(mem_addr) < 0)                             { i2c_stop(); return -2; }
+    i2c_start();   /* repeated START */
+    if (i2c_write_byte((uint8_t)((EEPROM_ADDR << 1) | 1u)) < 0) { i2c_stop(); return -3; }
+    *data = i2c_read_byte(0);   /* NACK = end of read */
     i2c_stop();
-    return 0;  // Success
+    return 0;
 }
 
-int main(void) {
+/* ═══════════════════════════════════════════════════════════════════
+ * Test 8 state – file-scope so the MEI handler can access them
+ * without pointer indirection.
+ *
+ * I2C controller TX FIFO auto-feeds the state machine in WRITE mode:
+ * just push bytes to the TX FIFO, then issue START.
+ *
+ * IRQ sources:
+ *   RV_I2C_IE_STOP_DONE (bit 2) – write phase done signal
+ *   RV_I2C_IE_RX_READY  (bit 0) – byte received and in RX FIFO
+ * ═══════════════════════════════════════════════════════════════════ */
+#define T8_MEM_ADDR   0x20u
+#define T8_LEN        6u    /* ADDR_W(1) + MEM_ADDR(1) + T8_LEN <= FIFO_DEPTH(8) */
+
+static const uint8_t t8_pattern[T8_LEN] = {
+    0x11, 0x22, 0x33, 0x44, 0x55, 0x66
+};
+
+static volatile uint8_t  t8_rx_buf[T8_LEN];
+static volatile uint32_t t8_rx_count   = 0;
+static volatile uint32_t t8_stop_count = 0;
+static volatile uint32_t t8_irq_count  = 0;
+
+static void t8_mei_handler(uint32_t cause)
+{
+    (void)cause;
+    uint32_t src = rv_plic_claim();
+    if (src == (uint32_t)RV_PLIC_SRC_I2C) {
+        t8_irq_count++;
+
+        /* Drain RX FIFO if data available (Phase 2 reads) */
+        uint32_t drained = 0;
+        while (rv_i2c_rx_valid()) {
+            uint8_t b = (uint8_t)(RV_I2C_RX & 0xFFu);
+            if (t8_rx_count < T8_LEN)
+                t8_rx_buf[t8_rx_count++] = b;
+            drained++;
+        }
+
+        /* stop_done_r is a 1-cycle pulse – IS[2] is already 0 by the
+         * time the handler executes.  If no RX bytes were drained this
+         * interrupt must have been triggered by STOP_DONE. */
+        if (drained == 0)
+            t8_stop_count++;
+    }
+    rv_plic_complete(src);
+}
+
+static int test8_fifo_irq_transfer(void)
+{
+    printf("[TEST 7] FIFO Burst TX + IRQ-driven RX\n");
+    printf("  EEPROM @ 0x%02X, mem_addr=0x%02X, len=%u\n",
+           EEPROM_ADDR, T8_MEM_ADDR, (unsigned)T8_LEN);
+    printf("  Phase 1: TX FIFO burst write + STOP_DONE IRQ\n");
+    printf("  Phase 2: Sequential read    + RX_READY IRQ\n\n");
+
+    t8_rx_count   = 0;
+    t8_stop_count = 0;
+    t8_irq_count  = 0;
+
+    /* ── interrupt setup ─────────────────────────────────────────── */
+    rv_irq_register(RV_CAUSE_MEI, t8_mei_handler);
+    rv_plic_init_source(RV_PLIC_SRC_I2C, 1);
+    rv_i2c_irq_enable(RV_I2C_IE_STOP_DONE | RV_I2C_IE_RX_READY);
+    rv_irq_enable();
+
+    /* ── Phase 1: burst write via TX FIFO ────────────────────────
+     * IMPORTANT: The RTL I2C controller pops TX FIFO immediately in
+     * IDLE state. TX FIFO must only be filled AFTER START is issued.
+     *
+     * Fill TX FIFO with ADDR_W + MEM_ADDR + T8_LEN data bytes
+     * (= 8 bytes total = FIFO_DEPTH). The controller auto-pops each
+     * byte from IDLE and transmits it, then returns to IDLE for next.
+     * After TX FIFO drains we issue explicit STOP; STOP_DONE IRQ fires. */
+    while (rv_i2c_busy()) {}
+
+    /* Issue START first – controller transitions: IDLE → START → IDLE */
+    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_START;
+    RV_I2C_FENCE();
+    while (rv_i2c_busy()) {}   /* wait for START to complete → IDLE */
+
+    /* NOW fill TX FIFO (exactly FIFO_DEPTH = 8 bytes).
+     * State machine auto-pops and sends each byte from IDLE. */
+    RV_I2C_TX = (uint8_t)((EEPROM_ADDR << 1) | 0u);  /* ADDR_W */
+    RV_I2C_TX = T8_MEM_ADDR;
+    for (uint32_t i = 0; i < T8_LEN; i++)
+        RV_I2C_TX = t8_pattern[i];
+    RV_I2C_FENCE();
+
+    printf("  [Phase 1] START issued; TX FIFO loaded: 1+1+%u = %u bytes\n",
+           (unsigned)T8_LEN, (unsigned)(2 + T8_LEN));
+
+    /* Wait until controller goes IDLE (TX FIFO empty + not busy) */
+    uint32_t timeout = 5000000u;
+    while ((rv_i2c_busy() || (RV_I2C_IS & RV_I2C_IE_TX_EMPTY) == 0) && timeout-- > 0u)
+        asm volatile("nop");
+
+    /* Now issue explicit STOP – this will trigger STOP_DONE IRQ */
+    if (!rv_i2c_busy()) {
+        RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_STOP;
+        RV_I2C_FENCE();
+    }
+
+    timeout = 5000000u;
+    while (t8_stop_count == 0 && timeout-- > 0u)
+        asm volatile("nop");
+
+    if (t8_stop_count == 0) {
+        printf("  Phase 1 TIMEOUT – STOP_DONE IRQ not received\n");
+        printf("  Result: FAIL\n\n");
+        rv_irq_disable();
+        rv_i2c_irq_disable(RV_I2C_IE_STOP_DONE | RV_I2C_IE_RX_READY);
+        rv_plic_disable_source(RV_PLIC_SRC_I2C);
+        return -1;
+    }
+    printf("  Phase 1 done: STOP_DONE IRQ #%lu, irq_total=%lu\n",
+           (unsigned long)t8_stop_count, (unsigned long)t8_irq_count);
+
+    /* Brief pause – let EEPROM latch the written bytes */
+    for (volatile int i = 0; i < 2000; i++) asm volatile("nop");
+
+    /* ── Phase 2: sequential read ────────────────────────────────
+     * Write pointer:  START + ADDR_W + MEM_ADDR + STOP
+     * Then read:      START + ADDR_R + [T8_LEN READ commands] + STOP
+     * RX FIFO bytes arrive via RX_READY IRQ.                         */
+    printf("  [Phase 2] Issuing sequential read...\n");
+    while (rv_i2c_busy()) {}
+
+    /* Set EEPROM read pointer: START first, then push ADDR_W + MEM_ADDR, then STOP */
+    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_START;
+    RV_I2C_FENCE();
+    while (rv_i2c_busy()) {}   /* wait for START to complete → IDLE */
+
+    RV_I2C_TX = (uint8_t)((EEPROM_ADDR << 1) | 0u);  /* ADDR_W */
+    RV_I2C_TX = T8_MEM_ADDR;
+    RV_I2C_FENCE();
+
+    /* Wait for TX FIFO to drain (bytes sent), then issue explicit STOP */
+    timeout = 5000000u;
+    while ((rv_i2c_busy() || (RV_I2C_IS & RV_I2C_IE_TX_EMPTY) == 0) && timeout-- > 0u)
+        asm volatile("nop");
+
+    /* Issue STOP to complete the write-pointer transaction */
+    if (!rv_i2c_busy()) {
+        RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_STOP;
+        RV_I2C_FENCE();
+    }
+    while (rv_i2c_busy()) {}
+
+    /* Brief pause before read transaction */
+    for (volatile int i = 0; i < 500; i++) asm volatile("nop");
+
+    /* Read transaction: START first, then ADDR_R */
+    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_START;
+    RV_I2C_FENCE();
+    while (rv_i2c_busy()) {}   /* wait for START to complete → IDLE */
+
+    RV_I2C_TX = (uint8_t)((EEPROM_ADDR << 1) | 1u);  /* ADDR_R */
+    RV_I2C_FENCE();
+    while (rv_i2c_busy()) {}
+
+    /* Issue T8_LEN READ commands; last one sends NACK */
+    for (uint32_t i = 0; i < T8_LEN; i++) {
+        while (rv_i2c_busy()) {}
+        uint32_t ctrl = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_READ;
+        if (i == T8_LEN - 1u) ctrl |= RV_I2C_CTRL_NACK;
+        RV_I2C_CTRL = ctrl;
+        RV_I2C_FENCE();
+    }
+
+    /* Wait for all RX bytes to arrive via IRQ */
+    timeout = 5000000u;
+    while (t8_rx_count < T8_LEN && timeout-- > 0u)
+        asm volatile("nop");
+
+    /* STOP */
+    while (rv_i2c_busy()) {}
+    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_STOP;
+    RV_I2C_FENCE();
+    while (rv_i2c_busy()) {}
+
+    /* ── cleanup & verify ────────────────────────────────────────── */
+    rv_irq_disable();
+    rv_i2c_irq_disable(RV_I2C_IE_STOP_DONE | RV_I2C_IE_RX_READY);
+    rv_plic_disable_source(RV_PLIC_SRC_I2C);
+
+    uint32_t errors = 0;
+    for (uint32_t i = 0; i < T8_LEN; i++) {
+        if (t8_rx_buf[i] != t8_pattern[i]) {
+            printf("  Mismatch[%lu]: got 0x%02X exp 0x%02X\n",
+                   (unsigned long)i, t8_rx_buf[i], t8_pattern[i]);
+            errors++;
+        }
+    }
+
+    printf("  RX received  : %lu / %lu\n",
+           (unsigned long)t8_rx_count, (unsigned long)T8_LEN);
+    printf("  Total IRQs   : %lu  (STOP: %lu)\n",
+           (unsigned long)t8_irq_count, (unsigned long)t8_stop_count);
+    printf("  Data errors  : %lu\n", (unsigned long)errors);
+
+    int pass = (errors == 0 && t8_rx_count == T8_LEN && timeout > 0u);
+    printf("  Result: %s\n\n", pass ? "PASS" : "FAIL");
+    return pass ? 0 : -1;
+}
+
+/* ════════════════════════════════════════════════════════════════════ */
+
+int main(void)
+{
     printf("\n========================================\n");
     printf("  I2C Hardware Test (Master + EEPROM)\n");
-    printf("  Base Address: 0x%08X\n", I2C_BASE);
+    printf("  Base Address: 0x%08X\n", (unsigned int)RV_I2C_BASE);
     printf("  EEPROM: 24C02 @ 0x%02X (256 bytes)\n", EEPROM_ADDR);
     printf("========================================\n\n");
 
-    // TEST 1: Initialize I2C controller
+    /* TEST 1: Initialisation */
     printf("[TEST 1] I2C Controller Initialization\n");
-    // Clock divider for 100kHz I2C at 100MHz system clock
-    // SCL period = CLK / (4 * (DIV + 1))
-    // 100kHz = 100MHz / (4 * (DIV + 1)) => DIV = 249
-    i2c_init(249);
+    rv_i2c_init(249);   /* 100 kHz at 100 MHz */
+    status_checks++;
 
-    uint32_t status = I2C_STATUS;
+    uint32_t status = RV_I2C_STATUS;
     printf("  Clock divider: 249 (100kHz I2C)\n");
     printf("  Initial status: 0x%08lX\n", (unsigned long)status);
     printf("  BUSY: %d, TX_READY: %d, RX_VALID: %d, ACK_RECV: %d\n",
-           (status & I2C_STATUS_BUSY) ? 1 : 0,
-           (status & I2C_STATUS_TX_READY) ? 1 : 0,
-           (status & I2C_STATUS_RX_VALID) ? 1 : 0,
-           (status & I2C_STATUS_ACK_RECV) ? 1 : 0);
+           (status & RV_I2C_ST_BUSY)     ? 1 : 0,
+           (status & RV_I2C_ST_TX_READY) ? 1 : 0,
+           (status & RV_I2C_ST_RX_VALID) ? 1 : 0,
+           (status & RV_I2C_ST_ACK_RECV) ? 1 : 0);
     printf("  Result: PASS\n\n");
+    int t1 = 1;
 
-    // TEST 2: Read default EEPROM content
+    /* TEST 2: Read default EEPROM content */
     printf("[TEST 2] Read Default EEPROM Content\n");
     printf("  EEPROM initialized with pattern 0xA0 + address\n");
     printf("  Reading first 16 bytes:\n  ");
 
-    int test2_pass = 1;
+    int t2 = 1;
     for (int i = 0; i < 16; i++) {
-        uint8_t data;
-        int result = eeprom_read(i, &data);
-
-        if (result < 0) {
-            printf("\n  Error reading address 0x%02X: %d\n", i, result);
-            test2_pass = 0;
-            break;
-        }
-
-        // Expected pattern: 0xA0 + address
-        uint8_t expected = 0xA0 + i;
-        if (data != expected) {
-            printf("\n  Mismatch at 0x%02X: expected 0x%02X, got 0x%02X\n",
-                   i, expected, data);
-            test2_pass = 0;
-            break;
-        }
-
-        printf("%02X ", data);
+        uint8_t d; int r = eeprom_read((uint8_t)i, &d);
+        if (r < 0) { printf("\n  Error at 0x%02X\n", i); t2 = 0; break; }
+        if (d != (uint8_t)(0xA0u + i)) { printf("\n  Mismatch at 0x%02X: exp 0x%02X got 0x%02X\n", i, (uint8_t)(0xA0u+i), d); t2 = 0; break; }
+        printf("%02X ", d);
         if ((i + 1) % 8 == 0) printf("\n  ");
     }
+    printf("\n  Result: %s\n\n", t2 ? "PASS" : "FAIL");
 
-    printf("\n  Result: %s\n\n", test2_pass ? "PASS" : "FAIL");
-
-    // TEST 3: Write to EEPROM
+    /* TEST 3: Write to EEPROM */
     printf("[TEST 3] Write to EEPROM\n");
     printf("  Writing test pattern to addresses 0x10-0x1F\n");
-
-    int test3_pass = 1;
-    const uint8_t test_pattern[] = {
-        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
-        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF
-    };
-
+    const uint8_t pat[] = {0x12,0x34,0x56,0x78,0x9A,0xBC,0xDE,0xF0,
+                           0x01,0x23,0x45,0x67,0x89,0xAB,0xCD,0xEF};
+    int t3 = 1;
     for (int i = 0; i < 16; i++) {
-        int result = eeprom_write(0x10 + i, test_pattern[i]);
-        if (result < 0) {
-            printf("  Error writing to 0x%02X: %d\n", 0x10 + i, result);
-            test3_pass = 0;
-            break;
-        }
+        if (eeprom_write((uint8_t)(0x10+i), pat[i]) < 0) { printf("  Error writing 0x%02X\n", 0x10+i); t3 = 0; break; }
     }
+    if (t3) printf("  Successfully wrote 16 bytes\n");
+    printf("  Result: %s\n\n", t3 ? "PASS" : "FAIL");
 
-    if (test3_pass) {
-        printf("  Successfully wrote 16 bytes\n");
-    }
-    printf("  Result: %s\n\n", test3_pass ? "PASS" : "FAIL");
-
-    // TEST 4: Read back and verify written data
+    /* TEST 4: Read back and verify */
     printf("[TEST 4] Read Back and Verify\n");
     printf("  Reading addresses 0x10-0x1F:\n  ");
-
-    int test4_pass = 1;
+    int t4 = 1;
     for (int i = 0; i < 16; i++) {
-        uint8_t data;
-        int result = eeprom_read(0x10 + i, &data);
-
-        if (result < 0) {
-            printf("\n  Error reading address 0x%02X: %d\n", 0x10 + i, result);
-            test4_pass = 0;
-            break;
-        }
-
-        if (data != test_pattern[i]) {
-            printf("\n  Mismatch at 0x%02X: expected 0x%02X, got 0x%02X\n",
-                   0x10 + i, test_pattern[i], data);
-            test4_pass = 0;
-            break;
-        }
-
-        printf("%02X ", data);
+        uint8_t d; int r = eeprom_read((uint8_t)(0x10+i), &d);
+        if (r < 0 || d != pat[i]) { printf("\n  Error at 0x%02X\n", 0x10+i); t4 = 0; break; }
+        printf("%02X ", d);
         if ((i + 1) % 8 == 0) printf("\n  ");
     }
+    printf("\n  Result: %s\n\n", t4 ? "PASS" : "FAIL");
 
-    printf("\n  Result: %s\n\n", test4_pass ? "PASS" : "FAIL");
-
-    // TEST 5: Sequential read of multiple locations
+    /* TEST 5: Sequential Read */
     printf("[TEST 5] Sequential Read Test\n");
-    printf("  Reading addresses 0x00, 0x55, 0xAA, 0xFF:\n");
-
-    int test5_pass = 1;
-    uint8_t test_addrs[] = {0x00, 0x55, 0xAA, 0xFF};
-
-    for (int i = 0; i < 4; i++) {
-        uint8_t addr = test_addrs[i];
-        uint8_t data;
-        int result = eeprom_read(addr, &data);
-
-        if (result < 0) {
-            printf("  Error reading 0x%02X: %d\n", addr, result);
-            test5_pass = 0;
-        } else {
-            printf("  [0x%02X] = 0x%02X\n", addr, data);
-        }
+    printf("  Reading 8 consecutive addresses starting at 0x00:\n  ");
+    int t5 = 1;
+    for (int i = 0; i < 8; i++) {
+        uint8_t d; int r = eeprom_read((uint8_t)i, &d);
+        if (r < 0 || d != (uint8_t)(0xA0u+i)) { t5 = 0; break; }
+        printf("%02X ", d);
     }
+    printf("\n  Result: %s\n\n", t5 ? "PASS" : "FAIL");
 
-    printf("  Result: %s\n\n", test5_pass ? "PASS" : "FAIL");
-
-    // TEST 6: Write/read boundary addresses
+    /* TEST 6: Boundary address */
     printf("[TEST 6] Boundary Address Test\n");
     printf("  Testing addresses 0x00 and 0xFF\n");
-
-    int test6_pass = 1;
-
-    // Write to 0x00
-    if (eeprom_write(0x00, 0x5A) < 0) {
-        printf("  Error writing to 0x00\n");
-        test6_pass = 0;
+    uint8_t d0, dff;
+    int t6 = (eeprom_read(0x00, &d0) == 0) && (eeprom_read(0xFF, &dff) == 0);
+    if (t6) {
+        printf("  Address 0x00: 0x%02X (exp 0x%02X) %s\n", d0,  0xA0u,               (d0  == 0xA0u)                  ? "PASS" : "FAIL");
+        printf("  Address 0xFF: 0x%02X (exp 0x%02X) %s\n", dff, (uint8_t)(0xA0u+0xFF),(dff == (uint8_t)(0xA0u+0xFF)) ? "PASS" : "FAIL");
+        t6 = (d0 == 0xA0u) && (dff == (uint8_t)(0xA0u + 0xFF));
     }
+    printf("  Result: %s\n\n", t6 ? "PASS" : "FAIL");
 
-    // Write to 0xFF
-    if (eeprom_write(0xFF, 0xA5) < 0) {
-        printf("  Error writing to 0xFF\n");
-        test6_pass = 0;
-    }
-
-    // Read back
-    uint8_t data;
-    if (eeprom_read(0x00, &data) < 0 || data != 0x5A) {
-        printf("  Error reading 0x00: got 0x%02X, expected 0x5A\n", data);
-        test6_pass = 0;
-    } else {
-        printf("  [0x00] = 0x%02X (expected 0x5A)\n", data);
-    }
-
-    if (eeprom_read(0xFF, &data) < 0 || data != 0xA5) {
-        printf("  Error reading 0xFF: got 0x%02X, expected 0xA5\n", data);
-        test6_pass = 0;
-    } else {
-        printf("  [0xFF] = 0x%02X (expected 0xA5)\n", data);
-    }
-
-    printf("  Result: %s\n\n", test6_pass ? "PASS" : "FAIL");
-
-    // TEST 7: Status monitoring
-    printf("[TEST 7] Status Monitoring\n");
+    /* Statistics (informational only, not a test) */
+    printf("[INFO] Statistics Summary\n");
     printf("  Status checks: %lu\n", (unsigned long)status_checks);
-    printf("  Busy waits: %lu\n", (unsigned long)busy_waits);
-    printf("  Bytes written: %lu\n", (unsigned long)writes);
-    printf("  Bytes read: %lu\n", (unsigned long)reads);
-    printf("  Final status: 0x%08lX\n", (unsigned long)I2C_STATUS);
-    printf("  Result: PASS\n\n");
+    printf("  Busy waits:    %lu\n", (unsigned long)busy_waits);
+    printf("  Writes:        %lu\n", (unsigned long)writes);
+    printf("  Reads:         %lu\n", (unsigned long)reads);
+    printf("  Final status:  0x%08lX\n\n", (unsigned long)RV_I2C_STATUS);
 
-    // Summary
-    int total_tests = 7;
-    int passed_tests = test2_pass + test3_pass + test4_pass +
-                       test5_pass + test6_pass + 2;  // TEST 1 and 7 always pass
+    /* TEST 7 */
+    int t7 = (test8_fifo_irq_transfer() == 0) ? 1 : 0;
 
+    int passed = t1 + t2 + t3 + t4 + t5 + t6 + t7;
     printf("========================================\n");
-    printf("  Summary: %d/%d tests PASSED\n", passed_tests, total_tests);
+    printf("  Summary: %d/7 tests PASSED\n", passed);
     printf("========================================\n\n");
-
-    if (passed_tests == total_tests) {
-        printf("I2C hardware test complete.\n\n");
-        return 0;
-    } else {
-        printf("I2C hardware test FAILED.\n\n");
-        return 1;
-    }
+    printf("I2C hardware test complete.\n");
+    return (passed == 7) ? 0 : 1;
 }

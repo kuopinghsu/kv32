@@ -1,170 +1,93 @@
-// SPI Hardware Test - Tests SPI master controller at 0x20020000
-// Tests SPI communication with simulated flash memory devices
-// 4 flash memories (one per CS line), each 4KB initialized with pattern 0xF0 + CS number
+// SPI Hardware Test
+// Refactored to use rv_spi.h / rv_platform.h HAL APIs.
 
 #include <stdint.h>
 #include <stdio.h>
+#include "rv_spi.h"
+#include "rv_irq.h"
+#include "rv_plic.h"
+#include "rv_clint.h"
 
-// SPI peripheral registers
-#define SPI_BASE     0x20020000
-#define SPI_CTRL     (*((volatile uint32_t*)(SPI_BASE + 0x00)))
-#define SPI_DIV      (*((volatile uint32_t*)(SPI_BASE + 0x04)))
-#define SPI_TX       (*((volatile uint32_t*)(SPI_BASE + 0x08)))
-#define SPI_RX       (*((volatile uint32_t*)(SPI_BASE + 0x0C)))
-#define SPI_STATUS   (*((volatile uint32_t*)(SPI_BASE + 0x10)))
+/* Flash commands */
+#define FLASH_CMD_READ  0x03u
 
-// Control register bits
-#define SPI_CTRL_ENABLE   0x01  // Enable SPI controller
-#define SPI_CTRL_CPOL     0x02  // Clock polarity (0=idle low, 1=idle high)
-#define SPI_CTRL_CPHA     0x04  // Clock phase (0=sample on leading, 1=trailing)
-#define SPI_CTRL_CS0      0x10  // Chip select 0 (active low in HW)
-#define SPI_CTRL_CS1      0x20  // Chip select 1
-#define SPI_CTRL_CS2      0x40  // Chip select 2
-#define SPI_CTRL_CS3      0x80  // Chip select 3
-
-// Status register bits
-#define SPI_STATUS_BUSY      0x01  // Transfer in progress
-#define SPI_STATUS_TX_READY  0x02  // Can accept new data
-#define SPI_STATUS_RX_VALID  0x04  // Received data available
-
-// Flash commands
-#define FLASH_CMD_READ    0x03  // Read data
-#define FLASH_CMD_WRITE   0x02  // Write data (not fully implemented in sim)
-#define FLASH_CMD_RDID    0x9F  // Read ID
-
-// Test statistics
+/* Statistics */
 static volatile uint32_t status_checks = 0;
-static volatile uint32_t busy_waits = 0;
-static volatile uint32_t transfers = 0;
+static volatile uint32_t busy_waits    = 0;
+static volatile uint32_t transfers     = 0;
 
-// Helper functions
-void spi_init(uint32_t clk_div, uint8_t mode) {
-    uint32_t ctrl = SPI_CTRL_ENABLE;
+/* ── wrappers matching old API names ──────────────────────────────── */
 
-    // Set clock polarity and phase based on SPI mode
-    // Mode 0: CPOL=0, CPHA=0
-    // Mode 1: CPOL=0, CPHA=1
-    // Mode 2: CPOL=1, CPHA=0
-    // Mode 3: CPOL=1, CPHA=1
-    if (mode & 0x01) ctrl |= SPI_CTRL_CPHA;
-    if (mode & 0x02) ctrl |= SPI_CTRL_CPOL;
-
-    SPI_DIV = clk_div;
-    SPI_CTRL = ctrl | 0xF0;  // All CS high (inactive)
+static void spi_init(uint32_t clk_div, uint8_t mode)
+{
+    rv_spi_init(clk_div, mode);
     status_checks++;
 }
 
-void spi_wait_ready(void) {
-    while (SPI_STATUS & SPI_STATUS_BUSY) {
-        busy_waits++;
-    }
-    status_checks++;
-}
+static void spi_cs_select(uint8_t cs)   { rv_spi_cs_select(cs); }
+static void spi_cs_deselect(void)       { rv_spi_cs_deselect(); }
 
-void spi_cs_select(uint8_t cs) {
-    // CS is active low, so clear the bit for the selected CS
-    uint32_t ctrl = SPI_CTRL;
-    ctrl |= 0xF0;  // Set all CS high first
-    if (cs < 4) {
-        ctrl &= ~(0x10 << cs);  // Clear the selected CS bit (make it low/active)
-    }
-    SPI_CTRL = ctrl;
-}
-
-void spi_cs_deselect(void) {
-    uint32_t ctrl = SPI_CTRL;
-    ctrl |= 0xF0;  // Set all CS high (inactive)
-    SPI_CTRL = ctrl;
-}
-
-uint8_t spi_transfer(uint8_t data) {
-    spi_wait_ready();
-    SPI_TX = data;
-    // Wait until the controller has accepted the TX data and gone busy,
-    // then wait until the transfer is complete (BUSY clears).
-    while (!(SPI_STATUS & SPI_STATUS_BUSY)) {
-        busy_waits++;
-    }
-    while (SPI_STATUS & SPI_STATUS_BUSY) {
-        busy_waits++;
-    }
+static uint8_t spi_transfer(uint8_t data)
+{
+    while (rv_spi_busy()) busy_waits++;
+    RV_SPI_TX = data;
+    while (!rv_spi_busy()) busy_waits++;
+    while (rv_spi_busy())  busy_waits++;
     transfers++;
-
-    // Read received data
-    uint8_t rx = (uint8_t)(SPI_RX & 0xFF);
-    return rx;
+    return (uint8_t)(RV_SPI_RX & 0xFFu);
 }
 
-// Flash read: CS_LOW + CMD(0x03) + ADDR + DATA... + CS_HIGH
-int flash_read(uint8_t cs, uint8_t addr, uint8_t *buf, uint32_t len) {
+/* Flash read: CS_LOW + READ_CMD + ADDR + DATA... + CS_HIGH */
+static int flash_read(uint8_t cs, uint8_t addr, uint8_t *buf, uint32_t len)
+{
     if (cs >= 4 || len == 0) return -1;
-
     spi_cs_select(cs);
-
-    // Send read command
     spi_transfer(FLASH_CMD_READ);
-
-    // Send address (1 byte for simplified flash)
     spi_transfer(addr);
-
-    // Read data bytes
-    for (uint32_t i = 0; i < len; i++) {
-        buf[i] = spi_transfer(0xFF);  // Send dummy byte to clock out data
-    }
-
+    for (uint32_t i = 0; i < len; i++)
+        buf[i] = spi_transfer(0xFFu);
     spi_cs_deselect();
     return 0;
 }
 
-// Test functions
-int test1_init(void) {
+/* ════════════════════════════════════════════════════════════════════ */
+
+int test1_init(void)
+{
     printf("\n[TEST 1] SPI Controller Initialization\n");
+    spi_init(49, RV_SPI_MODE0);
 
-    // Initialize SPI: Mode 0 (CPOL=0, CPHA=0), 1MHz (div=49 at 100MHz)
-    spi_init(49, 0);
-
-    uint32_t ctrl = SPI_CTRL;
-    uint32_t div = SPI_DIV;
-    uint32_t status = SPI_STATUS;
+    uint32_t ctrl   = RV_SPI_CTRL;
+    uint32_t div    = RV_SPI_DIV;
+    uint32_t status = RV_SPI_STATUS;
 
     printf("  Control: 0x%02lX (ENABLE=%ld, CPOL=%ld, CPHA=%ld, CS=0x%lX)\n",
            (unsigned long)ctrl,
-           (unsigned long)(ctrl & SPI_CTRL_ENABLE) ? 1UL : 0UL,
-           (unsigned long)(ctrl & SPI_CTRL_CPOL) ? 1UL : 0UL,
-           (unsigned long)(ctrl & SPI_CTRL_CPHA) ? 1UL : 0UL,
-           (unsigned long)((ctrl >> 4) & 0xF));
+           (unsigned long)((ctrl & RV_SPI_CTRL_ENABLE) ? 1 : 0),
+           (unsigned long)((ctrl & RV_SPI_CTRL_CPOL)   ? 1 : 0),
+           (unsigned long)((ctrl & RV_SPI_CTRL_CPHA)   ? 1 : 0),
+           (unsigned long)((ctrl >> 4) & 0xFu));
     printf("  Clock divider: %lu (1MHz SPI)\n", (unsigned long)div);
     printf("  Initial status: 0x%02lX\n", (unsigned long)status);
     printf("  BUSY: %ld, TX_READY: %ld, RX_VALID: %ld\n",
-           (unsigned long)(status & SPI_STATUS_BUSY) ? 1UL : 0UL,
-           (unsigned long)(status & SPI_STATUS_TX_READY) ? 1UL : 0UL,
-           (unsigned long)(status & SPI_STATUS_RX_VALID) ? 1UL : 0UL);
+           (unsigned long)((status & RV_SPI_ST_BUSY)     ? 1 : 0),
+           (unsigned long)((status & RV_SPI_ST_TX_READY) ? 1 : 0),
+           (unsigned long)((status & RV_SPI_ST_RX_VALID) ? 1 : 0));
 
-    if (!(ctrl & SPI_CTRL_ENABLE)) {
-        printf("  Result: FAIL - Enable bit not set\n");
-        return -1;
-    }
-
-    if (status & SPI_STATUS_BUSY) {
-        printf("  Result: FAIL - Should not be busy\n");
-        return -1;
-    }
-
+    if (!(ctrl & RV_SPI_CTRL_ENABLE)) { printf("  Result: FAIL - Enable not set\n");  return -1; }
+    if (status & RV_SPI_ST_BUSY)      { printf("  Result: FAIL - Should not be busy\n"); return -1; }
     printf("  Result: PASS\n");
     return 0;
 }
 
-int test2_read_flash0(void) {
+int test2_read_flash0(void)
+{
     printf("\n[TEST 2] Read Default Flash 0 Content\n");
     printf("  Flash 0 initialized with address pattern\n");
     printf("  Reading first 16 bytes:\n");
 
     uint8_t buf[16];
-    if (flash_read(0, 0x00, buf, 16) < 0) {
-        printf("  Error reading flash\n");
-        printf("  Result: FAIL\n");
-        return -1;
-    }
+    if (flash_read(0, 0x00, buf, 16) < 0) { printf("  Result: FAIL\n"); return -1; }
 
     printf("  Data: ");
     for (int i = 0; i < 16; i++) {
@@ -172,212 +95,284 @@ int test2_read_flash0(void) {
         if ((i + 1) % 8 == 0) printf("\n        ");
     }
 
-    // Verify pattern (should be sequential: 00, 01, 02... based on address after flash read command)
-    // After sending READ command (0x03) and address (0x00), we read sequential data
-    // The testbench increments address after each read
     int errors = 0;
     for (int i = 0; i < 16; i++) {
-        uint8_t expected = (i & 0xFF);
-        if (buf[i] != expected) {
-            printf("  Mismatch at offset %d: got 0x%02X, expected 0x%02X\n", i, buf[i], expected);
+        if (buf[i] != (uint8_t)i) {
+            printf("  Mismatch at %d: got 0x%02X, expected 0x%02X\n", i, buf[i], (uint8_t)i);
             errors++;
         }
     }
-
-    if (errors > 0) {
-        printf("  Result: FAIL\n");
-        return -1;
-    }
-
-    printf("  Result: PASS\n");
-    return 0;
+    printf("  Result: %s\n", errors ? "FAIL" : "PASS");
+    return errors ? -1 : 0;
 }
 
-int test3_read_multiple_cs(void) {
+int test3_read_multiple_cs(void)
+{
     printf("\n[TEST 3] Read from Multiple Flash Devices\n");
     printf("  Each flash initialized with address pattern\n");
-
     int errors = 0;
     for (uint8_t cs = 0; cs < 4; cs++) {
         uint8_t buf[4];
-
-        if (flash_read(cs, 0x00, buf, 4) < 0) {
-            printf("  Error reading flash CS%d\n", cs);
-            errors++;
-            continue;
-        }
-
+        if (flash_read(cs, 0x00, buf, 4) < 0) { printf("  Error reading CS%d\n", cs); errors++; continue; }
         printf("  CS%d: ", cs);
-        for (int i = 0; i < 4; i++) {
-            printf("%02X ", buf[i]);
-        }
-
-        // Verify pattern (addresses 0,1,2,3)
-        int cs_errors = 0;
-        for (int i = 0; i < 4; i++) {
-            if (buf[i] != (uint8_t)i) {
-                cs_errors++;
-            }
-        }
-
-        if (cs_errors > 0) {
-            printf("(FAIL - expected 00 01 02 03)\n");
-            errors++;
-        } else {
-            printf("(PASS)\n");
-        }
+        int ce = 0;
+        for (int i = 0; i < 4; i++) { printf("%02X ", buf[i]); if (buf[i] != (uint8_t)i) ce++; }
+        printf("(%s)\n", ce ? "FAIL - expected 00 01 02 03" : "PASS");
+        if (ce) errors++;
     }
-
-    if (errors > 0) {
-        printf("  Result: FAIL\n");
-        return -1;
-    }
-
-    printf("  Result: PASS\n");
-    return 0;
+    printf("  Result: %s\n", errors ? "FAIL" : "PASS");
+    return errors ? -1 : 0;
 }
 
-int test4_sequential_read(void) {
+int test4_sequential_read(void)
+{
     printf("\n[TEST 4] Sequential Read from Flash 0\n");
     printf("  Reading addresses 0x00, 0x10, 0x20, 0x30:\n");
-
     uint8_t addrs[] = {0x00, 0x10, 0x20, 0x30};
     int errors = 0;
-
     for (int i = 0; i < 4; i++) {
         uint8_t buf[8];
-        if (flash_read(0, addrs[i], buf, 8) < 0) {
-            printf("  Error reading address 0x%02X\n", addrs[i]);
-            errors++;
-            continue;
-        }
-
+        if (flash_read(0, addrs[i], buf, 8) < 0) { errors++; continue; }
         printf("  [0x%02X]: ", addrs[i]);
+        int ce = 0;
         for (int j = 0; j < 8; j++) {
+            uint8_t exp = (uint8_t)(addrs[i] + j);
             printf("%02X ", buf[j]);
+            if (buf[j] != exp) ce++;
         }
-
-        // Verify pattern (address+j)
-        int addr_errors = 0;
-        for (int j = 0; j < 8; j++) {
-            uint8_t expected = (addrs[i] + j) & 0xFF;
-            if (buf[j] != expected) {
-                addr_errors++;
-            }
-        }
-
-        if (addr_errors > 0) {
-            printf("(FAIL)\n");
-            errors++;
-        } else {
-            printf("(PASS)\n");
-        }
+        printf("(%s)\n", ce ? "FAIL" : "PASS");
+        if (ce) errors++;
     }
-
-    if (errors > 0) {
-        printf("  Result: FAIL\n");
-        return -1;
-    }
-
-    printf("  Result: PASS\n");
-    return 0;
+    printf("  Result: %s\n", errors ? "FAIL" : "PASS");
+    return errors ? -1 : 0;
 }
 
-int test5_single_byte_transfers(void) {
+int test5_single_byte(void)
+{
     printf("\n[TEST 5] Single Byte Transfer Test\n");
     printf("  Testing individual byte transfers with different data:\n");
-
-    spi_cs_select(1);  // Select Flash 1
-
-    uint8_t test_bytes[] = {0x00, 0x55, 0xAA, 0xFF};
+    spi_cs_select(0);
+    spi_transfer(FLASH_CMD_READ);
+    spi_transfer(0x00);
+    uint8_t expected[] = {0x00, 0x01, 0x02, 0x03};
+    int errors = 0;
     for (int i = 0; i < 4; i++) {
-        uint8_t tx = test_bytes[i];
-        uint8_t rx = spi_transfer(tx);
-        printf("  TX: 0x%02X -> RX: 0x%02X\n", tx, rx);
+        uint8_t rx = spi_transfer(0xFFu);
+        if (rx != expected[i]) errors++;
     }
-
     spi_cs_deselect();
-
-    printf("  Result: PASS\n");
-    return 0;
+    printf("  Result: %s\n", errors ? "FAIL" : "PASS");
+    return errors ? -1 : 0;
 }
 
-int test6_mode_test(void) {
+int test6_spi_modes(void)
+{
     printf("\n[TEST 6] SPI Mode Configuration Test\n");
+    const char *names[] = {"Mode 0 (CPOL=0,CPHA=0)", "Mode 1 (CPOL=0,CPHA=1)",
+                           "Mode 2 (CPOL=1,CPHA=0)", "Mode 3 (CPOL=1,CPHA=1)"};
+    int errors = 0;
+    for (int m = 0; m < 4; m++) {
+        rv_spi_init(49, (uint32_t)m);
+        uint32_t ctrl = RV_SPI_CTRL;
+        int cpol = (ctrl & RV_SPI_CTRL_CPOL) ? 1 : 0;
+        int cpha = (ctrl & RV_SPI_CTRL_CPHA) ? 1 : 0;
+        int ok   = (cpol == ((m >> 1) & 1)) && (cpha == (m & 1));
+        printf("  %s: CPOL=%d, CPHA=%d (%s)\n", names[m], cpol, cpha, ok ? "PASS" : "FAIL");
+        if (!ok) errors++;
+    }
+    rv_spi_init(49, RV_SPI_MODE0);   /* restore */
+    printf("  Result: %s\n", errors ? "FAIL" : "PASS");
+    return errors ? -1 : 0;
+}
 
-    uint8_t modes[] = {0, 1, 2, 3};
-    const char *mode_names[] = {"Mode 0 (CPOL=0,CPHA=0)",
-                                 "Mode 1 (CPOL=0,CPHA=1)",
-                                 "Mode 2 (CPOL=1,CPHA=0)",
-                                 "Mode 3 (CPOL=1,CPHA=1)"};
+void print_statistics(void)
+{
+    printf("\n[INFO] Statistics Summary\n");
+    printf("  Status checks: %lu\n", (unsigned long)status_checks);
+    printf("  Busy waits:    %lu\n", (unsigned long)busy_waits);
+    printf("  Transfers:     %lu\n", (unsigned long)transfers);
+    printf("  Final status:  0x%02lX\n\n", (unsigned long)RV_SPI_STATUS);
+}
 
-    for (int i = 0; i < 4; i++) {
-        spi_init(49, modes[i]);
-        uint32_t ctrl = SPI_CTRL;
+/* ═══════════════════════════════════════════════════════════════════ * Test 7: Internal hardware loopback (MOSI→MISO)
+ *
+ * Enables RTL CTRL[3]=loopback_en so MOSI is fed back to MISO inside the
+ * chip (combinatorial path, no external pin).  Each spi_transfer() call
+ * receives back exactly the byte it sent.  Verifies 16 bytes 0xA0..0xAF.
+ * ═══════════════════════════════════════════════════════════════════ */
+static int test7_loopback(void)
+{
+    printf("\n[TEST 7] Internal Hardware Loopback (MOSI->MISO)\n");
+    printf("  Enabling RTL SPI loopback (CTRL[3]=1)\n");
+    rv_spi_loopback_enable();
 
-        uint8_t cpol = (ctrl & SPI_CTRL_CPOL) ? 1 : 0;
-        uint8_t cpha = (ctrl & SPI_CTRL_CPHA) ? 1 : 0;
+    spi_cs_select(0);
+    uint32_t errors = 0;
+    for (uint32_t i = 0; i < 16u; i++) {
+        uint8_t tx = (uint8_t)(0xA0u + i);
+        uint8_t rx = spi_transfer(tx);
+        if (rx != tx) {
+            if (errors < 4)
+                printf("  Mismatch at %lu: sent 0x%02X got 0x%02X\n",
+                       (unsigned long)i, tx, rx);
+            errors++;
+        }
+    }
+    spi_cs_deselect();
 
-        printf("  %s: CPOL=%d, CPHA=%d ", mode_names[i], cpol, cpha);
+    rv_spi_loopback_disable();
+    printf("  Loopback bytes: 16\n");
+    printf("  Errors: %lu\n", (unsigned long)errors);
+    int pass = (errors == 0);
+    printf("  Result: %s\n", pass ? "PASS" : "FAIL");
+    return pass ? 0 : -1;
+}
 
-        // Verify mode settings
-        uint8_t expected_cpol = (modes[i] & 0x02) ? 1 : 0;
-        uint8_t expected_cpha = (modes[i] & 0x01) ? 1 : 0;
+/* ════════════════════════════════════════════════════════════════════ * Test 8: FIFO burst TX + IRQ-driven RX  (SPI flash read)
+ *
+ * Strategy:
+ *  1. CS_SELECT(0), push READ_CMD + ADDR into TX FIFO, then push 64x0xFF
+ *     to clock out flash data — all pipelined back-to-back.
+ *  2. Enable RV_SPI_IE_RX_READY (bit 0) → IRQ fires whenever RX FIFO
+ *     is non-empty.  The PLIC MEI handler drains the RX FIFO each time.
+ *  3. Wait until we have collected all 64 expected bytes.
+ *  4. Verify received data against known flash address pattern.
+ * ═══════════════════════════════════════════════════════════════════ */
+#define T8_FLASH_ADDR   0x00u
+#define T8_DATA_LEN     64u
+#define T8_TX_TOTAL     (2u + T8_DATA_LEN)   /* CMD + ADDR + DATA bytes */
+#define T8_FIFO_DEPTH   8u
 
-        if (cpol == expected_cpol && cpha == expected_cpha) {
-            printf("(PASS)\n");
-        } else {
-            printf("(FAIL)\n");
-            return -1;
+static volatile uint8_t  t8_rx_buf[T8_TX_TOTAL];
+static volatile uint32_t t8_rx_count    = 0;
+static volatile uint32_t t8_irq_count   = 0;
+static volatile uint32_t t8_rx_overflow = 0;
+
+/* RX starts arriving on the 3rd byte (CMD/ADDR are don't-care echoes from
+ * the flash MISO).  We skip the first 2 bytes and keep [2 .. TX_TOTAL-1]. */
+#define T8_RX_SKIP   2u
+
+static void t8_mei_handler(uint32_t cause)
+{
+    (void)cause;
+    uint32_t src = rv_plic_claim();
+    if (src == (uint32_t)RV_PLIC_SRC_SPI) {
+        t8_irq_count++;
+        /* drain complete RX FIFO in one handler invocation */
+        while (rv_spi_rx_valid()) {
+            uint8_t b = (uint8_t)(RV_SPI_RX & 0xFFu);
+            if (t8_rx_count < T8_TX_TOTAL)
+                t8_rx_buf[t8_rx_count++] = b;
+            else
+                t8_rx_overflow++;
+        }
+    }
+    rv_plic_complete(src);
+}
+
+static int test8_fifo_irq_transfer(void)
+{
+    printf("\n[TEST 8] FIFO Burst TX + IRQ-driven RX\n");
+    printf("  Flash 0 @ CS0, reading %lu bytes from address 0x%02X\n",
+           (unsigned long)T8_DATA_LEN, T8_FLASH_ADDR);
+    printf("  TX method: FIFO burst (pack 8 bytes per iteration)\n");
+    printf("  RX method: interrupt-driven (PLIC -> SPI RX IRQ)\n\n");
+
+    /* ── interrupt setup ─────────────────────────────────────────── */
+    t8_rx_count    = 0;
+    t8_irq_count   = 0;
+    t8_rx_overflow = 0;
+
+    rv_irq_register(RV_CAUSE_MEI, t8_mei_handler);
+    rv_plic_init_source(RV_PLIC_SRC_SPI, 1);   /* priority=1, enable, threshold=0, MEIE on */
+    rv_spi_irq_enable(RV_SPI_IE_RX_READY);     /* bit 0: fire while RX FIFO non-empty */
+    rv_irq_enable();
+
+    /* ── TX: 2-byte command header + 64x 0xFF ─────────────────────
+     * The SPI TX FIFO depth is 8.  We fill as many slots as TX_READY
+     * allows each iteration so the SPI state machine runs continuously. */
+    spi_cs_select(0);
+
+    uint32_t tx_sent   = 0;
+    uint32_t tx_bursts = 0;
+    uint32_t t_start   = (uint32_t)rv_clint_mtime();
+
+    /* byte stream: [0]=READ_CMD, [1]=ADDR, [2..65]=0xFF */
+    static const uint8_t tx_hdr[2] = { FLASH_CMD_READ, T8_FLASH_ADDR };
+
+    while (tx_sent < T8_TX_TOTAL) {
+        if (rv_spi_tx_ready()) {
+            uint8_t b = (tx_sent < 2u) ? tx_hdr[tx_sent] : 0xFFu;
+            RV_SPI_TX = b;
+            tx_sent++;
+            if (tx_sent % T8_FIFO_DEPTH == 0 || tx_sent == T8_TX_TOTAL)
+                tx_bursts++;
         }
     }
 
-    // Restore default mode
-    spi_init(49, 0);
+    /* ── wait for all RX bytes to arrive via IRQ ─────────────────── */
+    uint32_t timeout = 5000000u;
+    while (t8_rx_count < T8_TX_TOTAL && timeout-- > 0u)
+        asm volatile("nop");
 
-    printf("  Result: PASS\n");
-    return 0;
+    uint32_t t_end = (uint32_t)rv_clint_mtime();
+
+    /* ── cleanup ─────────────────────────────────────────────────── */
+    spi_cs_deselect();
+    rv_spi_irq_disable(RV_SPI_IE_RX_READY);
+    rv_irq_disable();
+    rv_plic_disable_source(RV_PLIC_SRC_SPI);
+
+    /* ── verify the data bytes (skip first 2 CMD/ADDR echo bytes) ── */
+    uint32_t errors = 0;
+    for (uint32_t i = T8_RX_SKIP; i < T8_TX_TOTAL; i++) {
+        uint8_t exp = (uint8_t)(T8_FLASH_ADDR + (i - T8_RX_SKIP));
+        if (t8_rx_buf[i] != exp) {
+            if (errors < 4)
+                printf("  Mismatch at idx %lu: got 0x%02X exp 0x%02X\n",
+                       (unsigned long)i, t8_rx_buf[i], exp);
+            errors++;
+        }
+    }
+
+    printf("  TX sent      : %lu bytes in %lu bursts\n",
+           (unsigned long)tx_sent, (unsigned long)tx_bursts);
+    printf("  RX received  : %lu / %lu\n",
+           (unsigned long)t8_rx_count, (unsigned long)T8_TX_TOTAL);
+    printf("  IRQ count    : %lu\n", (unsigned long)t8_irq_count);
+    printf("  Data errors  : %lu\n", (unsigned long)errors);
+    printf("  RX overflow  : %lu\n", (unsigned long)t8_rx_overflow);
+    printf("  Cycles       : %lu\n", (unsigned long)(t_end - t_start));
+    printf("  Status       : 0x%02lX\n", (unsigned long)RV_SPI_STATUS);
+
+    int pass = (errors == 0 && t8_rx_overflow == 0 &&
+                t8_rx_count == T8_TX_TOTAL && timeout > 0u);
+    printf("  Result: %s\n", pass ? "PASS" : "FAIL");
+    return pass ? 0 : -1;
 }
 
-int test7_statistics(void) {
-    printf("\n[TEST 7] Statistics Summary\n");
-    printf("  Status checks: %lu\n", (unsigned long)status_checks);
-    printf("  Busy waits: %lu\n", (unsigned long)busy_waits);
-    printf("  SPI transfers: %lu\n", (unsigned long)transfers);
-    printf("  Final status: 0x%02lX\n", (unsigned long)SPI_STATUS);
-
-    printf("  Result: PASS\n");
-    return 0;
-}
-
-int main(void) {
+int main(void)
+{
     printf("\n========================================\n");
     printf("  SPI Hardware Test (Master + Flash)\n");
-    printf("  Base Address: 0x%08lX\n", (unsigned long)SPI_BASE);
-    printf("  Flash: 4x 4KB devices @ CS0-CS3\n");
+    printf("  Base Address: 0x%08X\n", (unsigned int)RV_SPI_BASE);
+    printf("  4 flash memories, each 4KB\n");
     printf("========================================\n");
 
-    int passed = 0;
-    int failed = 0;
+    int t1 = (test1_init()             == 0) ? 1 : 0;
+    int t2 = (test2_read_flash0()      == 0) ? 1 : 0;
+    int t3 = (test3_read_multiple_cs() == 0) ? 1 : 0;
+    int t4 = (test4_sequential_read()  == 0) ? 1 : 0;
+    int t5 = (test5_single_byte()      == 0) ? 1 : 0;
+    int t6 = (test6_spi_modes()        == 0) ? 1 : 0;
+    print_statistics();
+    int t7 = (test7_loopback()           == 0) ? 1 : 0;
+    int t8 = (test8_fifo_irq_transfer()  == 0) ? 1 : 0;
 
-    // Run all tests
-    if (test1_init() == 0) passed++; else failed++;
-    if (test2_read_flash0() == 0) passed++; else failed++;
-    if (test3_read_multiple_cs() == 0) passed++; else failed++;
-    if (test4_sequential_read() == 0) passed++; else failed++;
-    if (test5_single_byte_transfers() == 0) passed++; else failed++;
-    if (test6_mode_test() == 0) passed++; else failed++;
-    if (test7_statistics() == 0) passed++; else failed++;
-
+    int passed = t1 + t2 + t3 + t4 + t5 + t6 + t7 + t8;
     printf("\n========================================\n");
-    printf("  Summary: %d/%d tests PASSED\n", passed, passed + failed);
-    printf("========================================\n");
-
-    if (failed > 0) {
-        printf("\nSPI hardware test FAILED.\n\n");
-        return 1;
-    } else {
-        printf("\nSPI hardware test PASSED!\n\n");
-        return 0;
-    }
+    printf("  Summary: %d/8 tests PASSED\n", passed);
+    printf("========================================\n\n");
+    printf("SPI hardware test %s!\n", (passed == 8) ? "PASSED" : "FAILED");
+    return (passed == 8) ? 0 : 1;
 }

@@ -67,10 +67,10 @@ void MagicDevice::reset() {
 
 uint32_t MagicDevice::read(uint32_t offset, int size) {
     (void)size;
-    if (offset == MAGIC_CONSOLE_REG) {
+    if (offset == RV_MAGIC_CONSOLE_OFF) {
         return 0;
     }
-    if (offset == MAGIC_EXIT_REG) {
+    if (offset == RV_MAGIC_EXIT_OFF) {
         return 0;
     }
     return 0;
@@ -78,13 +78,13 @@ uint32_t MagicDevice::read(uint32_t offset, int size) {
 
 void MagicDevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;
-    if (offset == MAGIC_CONSOLE_REG) {
+    if (offset == RV_MAGIC_CONSOLE_OFF) {
         char c = value & 0xFF;
         std::cout << c << std::flush;
         return;
     }
 
-    if (offset == MAGIC_EXIT_REG) {
+    if (offset == RV_MAGIC_EXIT_OFF) {
         exit_code = (value >> 1) & 0x7FFFFFFF;
         exit_pending = true;
     }
@@ -115,15 +115,16 @@ void UARTDevice::reset() {
     rx_fifo.clear();
     tx_fifo.clear();
     ie_reg = 0;
+    loopback_en = false;
 }
 
-// IS signals (level, read-only)
-//   IS[0] = !rx_fifo.empty()  (rx_not_empty)
-//   IS[1] = tx_fifo.empty()   (tx_empty; always 1 since sim TX is instant)
+// IS signals (level, read-only) – bit layout matches rv_platform.h RV_UART_IE_*
+//   IS[0] = !rx_fifo.empty()  (rx_not_empty  → RV_UART_IE_RX_READY)
+//   IS[1] = tx_fifo.empty()   (tx_empty      → RV_UART_IE_TX_EMPTY; always 1 since sim TX is instant)
 static uint32_t uart_is(const std::vector<uint8_t>& rx_fifo, const std::vector<uint8_t>& tx_fifo) {
     uint32_t r = 0;
-    if (!rx_fifo.empty())       r |= (1u << 0);  // rx_not_empty
-    if (tx_fifo.empty())        r |= (1u << 1);  // tx_empty
+    if (!rx_fifo.empty())  r |= RV_UART_IE_RX_READY;
+    if (tx_fifo.empty())   r |= RV_UART_IE_TX_EMPTY;
     return r;
 }
 
@@ -134,7 +135,7 @@ bool UARTDevice::get_irq() const {
 uint32_t UARTDevice::read(uint32_t offset, int size) {
     (void)size;
     switch (offset) {
-        case UART_DATA_REG:  // RX FIFO pop
+        case RV_UART_DATA_OFF:  // RX FIFO pop
             if (!rx_fifo.empty()) {
                 uint8_t val = rx_fifo.front();
                 rx_fifo.erase(rx_fifo.begin());
@@ -142,28 +143,30 @@ uint32_t UARTDevice::read(uint32_t offset, int size) {
             }
             return 0;
 
-        case UART_STATUS_REG: {
-            // [0] = tx_full (sim TX FIFO is unbounded → never full → 0)
-            // [1] = tx_full (same)
-            // [2] = rx_not_empty
-            // [3] = rx_full
-            bool rx_ne = !rx_fifo.empty();
+        case RV_UART_STATUS_OFF: {
+            // [0]/[1] = tx_full  (sim TX is instant → never full → 0)
+            // [2]     = rx_not_empty  (RV_UART_ST_RX_READY)
+            // [3]     = rx_full       (RV_UART_ST_RX_FULL)
+            bool rx_ne   = !rx_fifo.empty();
             bool rx_full = ((int)rx_fifo.size() >= FIFO_DEPTH);
-            return (rx_full ? 0x08u : 0u) |
-                   (rx_ne  ? 0x04u : 0u);
+            return (rx_full ? RV_UART_ST_RX_FULL  : 0u) |
+                   (rx_ne   ? RV_UART_ST_RX_READY : 0u);
         }
 
-        case UART_IE_REG:
+        case RV_UART_IE_OFF:
             return ie_reg;
 
-        case UART_IS_REG:
+        case RV_UART_IS_OFF:
             return uart_is(rx_fifo, tx_fifo);
 
-        case UART_LEVEL_REG: {
+        case RV_UART_LEVEL_OFF: {
             uint32_t rx_cnt = (uint32_t)rx_fifo.size() & 0x1F;
             uint32_t tx_cnt = (uint32_t)tx_fifo.size() & 0x1F;
             return (tx_cnt << 8) | rx_cnt;
         }
+
+        case RV_UART_CTRL_OFF:   // CTRL register: [0]=loopback_en
+            return loopback_en ? RV_UART_CTRL_LOOPBACK : 0u;
 
         default:
             return 0;
@@ -173,19 +176,29 @@ uint32_t UARTDevice::read(uint32_t offset, int size) {
 void UARTDevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;
     switch (offset) {
-        case UART_DATA_REG: {  // TX FIFO push → print immediately in simulation
+        case RV_UART_DATA_OFF: {  // TX FIFO push → print immediately in simulation
             char c = (char)(value & 0xFF);
             std::cout << c << std::flush;
-            tx_fifo.push_back((uint8_t)c);
+            // Echo TX → RX FIFO in simulation.
+            // When loopback_en is set this matches the RTL internal loopback path.
+            // When loopback_en is clear the sim still echoes to model the external
+            // uart_loopback.sv testbench (always-echo hardware wire in the RTL TB).
+            if ((int)rx_fifo.size() < FIFO_DEPTH)
+                rx_fifo.push_back((uint8_t)c);
             break;
         }
-        // UART_STATUS_REG is read-only
+        // RV_UART_STATUS_OFF is read-only
 
-        case UART_IE_REG:
-            ie_reg = value & 0x03;
+        case RV_UART_IE_OFF:
+            ie_reg = value & (RV_UART_IE_RX_READY | RV_UART_IE_TX_EMPTY);
             break;
 
-        // UART_IS_REG is read-only level; no W1C in simulation
+        // RV_UART_IS_OFF is read-only level; no W1C in simulation
+
+        case RV_UART_CTRL_OFF:  // CTRL register: bit[0] = loopback_en
+            loopback_en = (value & RV_UART_CTRL_LOOPBACK) != 0;
+            break;
+
         default:
             break;
     }
@@ -216,6 +229,8 @@ void I2CDevice::reset() {
     tx_data = 0;
     rx_data = 0;
     tx_valid = false;
+    tx_fifo.clear();
+    rx_fifo.clear();
     busy = false;
     tx_ready = true;
     rx_valid = false;
@@ -238,34 +253,51 @@ void I2CDevice::reset() {
 uint32_t I2CDevice::read(uint32_t offset, int size) {
     (void)size;
     switch (offset) {
-        case I2C_CONTROL_REG:  // Control register
-            return (ack_cmd << 4) | (read_cmd << 3) | (stop_cmd << 2) |
-                   (start_cmd << 1) | i2c_enable;
+        case RV_I2C_CTRL_OFF:  // Control register
+            return (ack_cmd   ? RV_I2C_CTRL_NACK  : 0u) |
+                   (read_cmd  ? RV_I2C_CTRL_READ  : 0u) |
+                   (stop_cmd  ? RV_I2C_CTRL_STOP  : 0u) |
+                   (start_cmd ? RV_I2C_CTRL_START : 0u) |
+                   (i2c_enable ? RV_I2C_CTRL_ENABLE : 0u);
 
-        case I2C_CLKDIV_REG:  // Clock divider
+        case RV_I2C_DIV_OFF:  // Clock divider
             return clk_div;
 
-        case I2C_TXDATA_REG:  // TX data
+        case RV_I2C_TX_OFF:  // TX FIFO (write-only; reading not meaningful)
             return tx_data;
 
-        case I2C_RXDATA_REG:  // RX data
-            rx_valid = false;  // Clear on read
-            return rx_data;
+        case RV_I2C_RX_OFF:  // RX FIFO pop
+            if (!rx_fifo.empty()) {
+                uint8_t val = rx_fifo.front();
+                rx_fifo.erase(rx_fifo.begin());
+                rx_valid = !rx_fifo.empty();
+                return val;
+            }
+            rx_valid = false;
+            return 0;
 
-        case I2C_STATUS_REG:  // Status register
-            // [0]=busy, [1]=tx_ready, [2]=rx_valid, [3]=ack_received
-            return (ack_received << 3) | (rx_valid << 2) | (tx_ready << 1) | busy;
+        case RV_I2C_STATUS_OFF:  // Status register
+            // [0]=busy (RV_I2C_ST_BUSY), [1]=tx_ready (RV_I2C_ST_TX_READY),
+            // [2]=rx_valid (RV_I2C_ST_RX_VALID), [3]=ack_received (RV_I2C_ST_ACK_RECV)
+            rx_valid = !rx_fifo.empty();
+            tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
+            return (ack_received ? RV_I2C_ST_ACK_RECV : 0u) |
+                   (rx_valid     ? RV_I2C_ST_RX_VALID : 0u) |
+                   (tx_ready     ? RV_I2C_ST_TX_READY : 0u) |
+                   (busy         ? RV_I2C_ST_BUSY     : 0u);
 
-        case I2C_IE_REG:  // Interrupt enable
+        case RV_I2C_IE_OFF:  // Interrupt enable
             return ie_reg;
 
-        case I2C_IS_REG:  // Interrupt status (level)
+        case RV_I2C_IS_OFF:  // Interrupt status (level – read-only, matches RTL is_wire)
             {
+                // IS[0] = rx_fifo not empty      (RV_I2C_IE_RX_READY)
+                // IS[1] = tx_fifo empty+not busy (RV_I2C_IE_TX_EMPTY)
+                // IS[2] = stop_done pulse        (RV_I2C_IE_STOP_DONE; latched by PLIC)
                 uint32_t is = 0;
-                if (rx_valid)       is |= (1u << 0);  // rx_not_empty
-                if (!busy)          is |= (1u << 1);  // tx_empty (FIFO effectively empty when idle)
-                if (stop_done)      is |= (1u << 2);  // stop/done
-                stop_done = false;  // clear on IS read (like a W1C)
+                if (!rx_fifo.empty())        is |= RV_I2C_IE_RX_READY;
+                if (tx_fifo.empty() && !busy) is |= RV_I2C_IE_TX_EMPTY;
+                if (stop_done)               is |= RV_I2C_IE_STOP_DONE;
                 return is;
             }
 
@@ -277,19 +309,14 @@ uint32_t I2CDevice::read(uint32_t offset, int size) {
 void I2CDevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;
     switch (offset) {
-        case I2C_CONTROL_REG:  // Control register
-            i2c_enable = value & 0x01;
-            start_cmd = value & 0x02;
-            stop_cmd = value & 0x04;
-            read_cmd = value & 0x08;
-            ack_cmd = value & 0x10;
+        case RV_I2C_CTRL_OFF:  // Control register
+            i2c_enable = (value & RV_I2C_CTRL_ENABLE) != 0;
+            start_cmd  = (value & RV_I2C_CTRL_START)  != 0;
+            stop_cmd   = (value & RV_I2C_CTRL_STOP)   != 0;
+            read_cmd   = (value & RV_I2C_CTRL_READ)   != 0;
+            ack_cmd    = (value & RV_I2C_CTRL_NACK)   != 0;
 
-            // Auto-clear command bits (simulating RTL behavior)
-            if (start_cmd || stop_cmd) {
-                // These will be cleared in next tick
-            }
-
-            // Execute commands
+            // Execute commands (command bits auto-clear at next tick, like RTL)
             if (start_cmd && i2c_enable) {
                 state = State::START;
                 busy = true;
@@ -307,26 +334,23 @@ void I2CDevice::write(uint32_t offset, uint32_t value, int size) {
             }
             break;
 
-        case I2C_CLKDIV_REG:  // Clock divider
+        case RV_I2C_DIV_OFF:  // Clock divider
             clk_div = value & 0xFFFF;
             break;
 
-        case I2C_TXDATA_REG:  // TX data
-            // Accept TX data only when not busy and enabled (matches RTL)
-            if (!busy && i2c_enable) {
-                tx_data = value & 0xFF;
-                tx_valid = true;
-                shift_reg = tx_data;
-                // RTL automatically starts transaction when tx_valid is set
-                // This will be processed in next tick
-            }
+        case RV_I2C_TX_OFF:  // TX FIFO push
+            // Push bytes regardless of i2c_enable state – matches RTL where the
+            // TX FIFO accepts writes at any time; the controller drains it
+            // automatically once enabled and START is issued.
+            if ((int)tx_fifo.size() < FIFO_DEPTH)
+                tx_fifo.push_back(value & 0xFF);
             break;
 
-        case I2C_IE_REG:  // Interrupt enable
-            ie_reg = value & 0x07;
+        case RV_I2C_IE_OFF:  // Interrupt enable
+            ie_reg = value & (RV_I2C_IE_RX_READY | RV_I2C_IE_TX_EMPTY | RV_I2C_IE_STOP_DONE);
             break;
 
-        // I2C_IS_REG is read-only level
+        // RV_I2C_IS_OFF is read-only level
         default:
             break;
     }
@@ -334,13 +358,18 @@ void I2CDevice::write(uint32_t offset, uint32_t value, int size) {
 
 bool I2CDevice::get_irq() const {
     uint32_t is = 0;
-    if (rx_valid)   is |= (1u << 0);
-    if (!busy)      is |= (1u << 1);
-    if (stop_done)  is |= (1u << 2);
+    if (!rx_fifo.empty())          is |= RV_I2C_IE_RX_READY;
+    if (tx_fifo.empty() && !busy)  is |= RV_I2C_IE_TX_EMPTY;
+    if (stop_done)                 is |= RV_I2C_IE_STOP_DONE;
     return (ie_reg & is) != 0;
 }
 
 void I2CDevice::tick() {
+    // stop_done is a 1-cycle pulse – auto-clear at the start of every tick
+    // so it doesn't keep the PLIC IRQ line asserted across multiple cycles.
+    // The PLIC latch fix ensures the single-cycle assertion is still captured.
+    stop_done = false;
+
     // Clear auto-clearing command bits (simulating RTL auto-clear)
     start_cmd = false;
     stop_cmd = false;
@@ -353,15 +382,20 @@ void I2CDevice::tick() {
         return;
     }
 
-    // Match RTL behavior: when tx_valid is set in IDLE, automatically start transaction
-    if (state == State::IDLE && tx_valid) {
+    // Match RTL IDLE behaviour: when TX FIFO has data and not busy, automatically
+    // pop the next byte and start the appropriate transfer.
+    if (state == State::IDLE && !tx_fifo.empty()) {
+        tx_data = tx_fifo.front();
+        tx_fifo.erase(tx_fifo.begin());
+        tx_valid = true;
+        shift_reg = tx_data;
         if (read_cmd) {
             state = State::READ;
         } else {
             state = State::WRITE;
         }
         busy = true;
-        tx_ready = false;
+        tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
     }
 
     if (!busy)
@@ -382,7 +416,9 @@ void I2CDevice::process_i2c_transaction() {
             // START condition executed
             state = State::IDLE;
             busy = false;
-            tx_ready = true;
+            tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
+            // NOTE: do NOT reset eeprom_addr_set here – a repeated START
+            // (read phase) must keep the address set by the prior write phase.
             break;
 
         case State::WRITE:
@@ -392,17 +428,19 @@ void I2CDevice::process_i2c_transaction() {
             tx_valid = false;
             state = State::IDLE;
             busy = false;
-            tx_ready = true;
+            tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
             break;
 
         case State::READ:
-            // Read byte from EEPROM
+            // Read byte from EEPROM and push to RX FIFO
             rx_data = handle_eeprom_read();
-            rx_valid = true;
+            if ((int)rx_fifo.size() < FIFO_DEPTH)
+                rx_fifo.push_back(rx_data);
+            rx_valid = !rx_fifo.empty();
             tx_valid = false;
             state = State::IDLE;
             busy = false;
-            tx_ready = true;
+            tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
             break;
 
         case State::STOP:
@@ -410,9 +448,10 @@ void I2CDevice::process_i2c_transaction() {
             // Reset address tracking so the next transaction's write-phase
             // will correctly re-set the EEPROM memory pointer.
             eeprom_addr_set = false;
-            stop_done = true;   // level signal; cleared when IS is read
+            stop_done = true;   // 1-cycle pulse; auto-cleared at start of next tick()
             state = State::IDLE;
             busy = false;
+            tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
             break;
 
         default:
@@ -464,6 +503,7 @@ void SPIDevice::reset() {
     spi_enable = false;
     cpol = false;
     cpha = false;
+    loopback_en = false;
     clk_div = 99;  // Default: 1MHz at 100MHz
     clk_counter = 0;
     tx_data = 0;
@@ -489,29 +529,34 @@ void SPIDevice::reset() {
         flash_addr[cs] = 0;
         flash_addr_set[cs] = false;
         flash_addr_bytes[cs] = 0;
+        flash_cmd[cs] = 0;
     }
 }
 
 bool SPIDevice::get_irq() const {
     uint32_t is = 0;
-    if (!rx_fifo.empty())   is |= (1u << 0);  // rx_not_empty
-    if (tx_valid == false)  is |= (1u << 1);  // tx_empty
+    if (!rx_fifo.empty())  is |= RV_SPI_IE_RX_READY;
+    if (!tx_valid)         is |= RV_SPI_IE_TX_EMPTY;
     return (ie_reg & is) != 0;
 }
 
 uint32_t SPIDevice::read(uint32_t offset, int size) {
     (void)size;
     switch (offset) {
-        case SPI_CONTROL_REG:  // Control register
-            return (chip_select << 4) | (cpha << 2) | (cpol << 1) | spi_enable;
+        case RV_SPI_CTRL_OFF:  // Control register
+            return ((chip_select & 0xFu) << 4) |
+                   (loopback_en ? RV_SPI_CTRL_LOOPBACK : 0u) |
+                   (cpha       ? RV_SPI_CTRL_CPHA   : 0u) |
+                   (cpol       ? RV_SPI_CTRL_CPOL   : 0u) |
+                   (spi_enable ? RV_SPI_CTRL_ENABLE : 0u);
 
-        case SPI_CLKDIV_REG:  // Clock divider
+        case RV_SPI_DIV_OFF:  // Clock divider
             return clk_div;
 
-        case SPI_TXDATA_REG:  // TX data (write-only in RTL; return 0)
+        case RV_SPI_TX_OFF:  // TX FIFO (write-only in RTL; return 0)
             return 0;
 
-        case SPI_RXDATA_REG:  // RX FIFO pop
+        case RV_SPI_RX_OFF:  // RX FIFO pop
             if (!rx_fifo.empty()) {
                 uint8_t val = rx_fifo.front();
                 rx_fifo.erase(rx_fifo.begin());
@@ -521,20 +566,20 @@ uint32_t SPIDevice::read(uint32_t offset, int size) {
             rx_valid = false;
             return 0;
 
-        case SPI_STATUS_REG:  // Status register
-            // [0]=busy, [1]=tx_ready(!full), [2]=rx_valid(!empty),
-            // [3]=tx_empty, [4]=rx_full
-            return (rx_valid ? 0x04u : 0u) |
-                   (!busy   ? 0x02u : 0u) |  // tx_ready ≈ !busy
-                   (busy    ? 0x01u : 0u);
+        case RV_SPI_STATUS_OFF:  // Status register
+            // [0]=busy (RV_SPI_ST_BUSY), [1]=tx_ready (RV_SPI_ST_TX_READY),
+            // [2]=rx_valid (RV_SPI_ST_RX_VALID)
+            return (rx_valid ? RV_SPI_ST_RX_VALID  : 0u) |
+                   (!busy    ? RV_SPI_ST_TX_READY  : 0u) |
+                   (busy     ? RV_SPI_ST_BUSY      : 0u);
 
-        case SPI_IE_REG:
+        case RV_SPI_IE_OFF:
             return ie_reg;
 
-        case SPI_IS_REG: {
+        case RV_SPI_IS_OFF: {
             uint32_t is = 0;
-            if (!rx_fifo.empty())   is |= (1u << 0);
-            if (!busy)              is |= (1u << 1);
+            if (!rx_fifo.empty())  is |= RV_SPI_IE_RX_READY;
+            if (!busy)             is |= RV_SPI_IE_TX_EMPTY;
             return is;
         }
 
@@ -546,25 +591,27 @@ uint32_t SPIDevice::read(uint32_t offset, int size) {
 void SPIDevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;
     switch (offset) {
-        case SPI_CONTROL_REG:  // Control register
-            spi_enable = value & 0x01;
-            cpol = value & 0x02;
-            cpha = value & 0x04;
+        case RV_SPI_CTRL_OFF:  // Control register
+            spi_enable  = (value & RV_SPI_CTRL_ENABLE)   != 0;
+            cpol        = (value & RV_SPI_CTRL_CPOL)     != 0;
+            cpha        = (value & RV_SPI_CTRL_CPHA)     != 0;
+            loopback_en = (value & RV_SPI_CTRL_LOOPBACK) != 0;
             chip_select = (value >> 4) & 0x0F;
-            // Reset flash state when CS changes
+            // Reset flash state when CS de-selects
             for (int cs = 0; cs < 4; cs++) {
                 if (chip_select & (1 << cs)) {
                     flash_addr_set[cs] = false;
                     flash_addr_bytes[cs] = 0;
+                    flash_cmd[cs] = 0;
                 }
             }
             break;
 
-        case SPI_CLKDIV_REG:  // Clock divider
+        case RV_SPI_DIV_OFF:  // Clock divider
             clk_div = value & 0xFFFF;
             break;
 
-        case SPI_TXDATA_REG:  // TX FIFO push
+        case RV_SPI_TX_OFF:  // TX FIFO push
             if (!busy && spi_enable) {
                 tx_data = value & 0xFF;
                 tx_valid = true;
@@ -576,11 +623,11 @@ void SPIDevice::write(uint32_t offset, uint32_t value, int size) {
             }
             break;
 
-        case SPI_IE_REG:
-            ie_reg = value & 0x03;
+        case RV_SPI_IE_OFF:
+            ie_reg = value & (RV_SPI_IE_RX_READY | RV_SPI_IE_TX_EMPTY);
             break;
 
-        // SPI_RXDATA_REG and SPI_IS_REG are read-only
+        // RV_SPI_RX_OFF and RV_SPI_IS_OFF are read-only
         default:
             break;
     }
@@ -600,26 +647,33 @@ void SPIDevice::tick() {
 void SPIDevice::process_spi_transfer() {
     // Simplified SPI transfer for simulation
     if (state == State::TRANSFER) {
-        // Determine which CS is active (0 = active)
-        int active_cs = -1;
-        for (int cs = 0; cs < 4; cs++) {
-            if (!(chip_select & (1 << cs))) {
-                active_cs = cs;
-                break;
-            }
-        }
-
         uint8_t recv;
-        if (active_cs >= 0) {
-            // Handle flash command/data
-            if (!flash_addr_set[active_cs]) {
-                handle_flash_command(active_cs, tx_data);
-                recv = 0xFF;  // dummy byte while sending command/addr
-            } else {
-                recv = handle_flash_read(active_cs);
-            }
+
+        if (loopback_en) {
+            // Internal loopback: MOSI bit-pattern comes straight back as MISO.
+            // Matches RTL axi_spi.sv when CTRL[3]=1.
+            recv = tx_data;
         } else {
-            recv = 0xFF;  // No device selected
+            // Normal mode: route through the simulated flash slave.
+            // Determine which CS is active (0 = active)
+            int active_cs = -1;
+            for (int cs = 0; cs < 4; cs++) {
+                if (!(chip_select & (1 << cs))) {
+                    active_cs = cs;
+                    break;
+                }
+            }
+
+            if (active_cs >= 0) {
+                if (!flash_addr_set[active_cs]) {
+                    handle_flash_command(active_cs, tx_data);
+                    recv = 0xFF;  // dummy byte while sending command/addr
+                } else {
+                    recv = handle_flash_data(active_cs, tx_data);
+                }
+            } else {
+                recv = 0xFF;  // No device selected
+            }
         }
 
         rx_data = recv;
@@ -642,20 +696,30 @@ void SPIDevice::handle_flash_command(int cs, uint8_t cmd) {
     if (flash_addr_bytes[cs] == 0) {
         // This is the command byte
         if (cmd == 0x03 || cmd == 0x02) {
+            flash_cmd[cs] = cmd;
             flash_addr_bytes[cs] = 1;
         }
     } else if (flash_addr_bytes[cs] == 1) {
-        // This is the address (simplified: 1 byte address for 256 byte space)
+        // This is the address (1-byte, covers 256-byte space)
         flash_addr[cs] = cmd;
         flash_addr_set[cs] = true;
         flash_addr_bytes[cs] = 0;
     }
 }
 
-uint8_t SPIDevice::handle_flash_read(int cs) {
-    uint8_t data = flash_memory[cs][flash_addr[cs] & 0xFFF];
-    flash_addr[cs] = (flash_addr[cs] + 1) & 0xFFF;
-    return data;
+uint8_t SPIDevice::handle_flash_data(int cs, uint8_t tx_byte) {
+    uint32_t addr = flash_addr[cs] & 0xFFFu;
+    uint8_t recv;
+    if (flash_cmd[cs] == 0x02) {
+        // Write command: store the byte, return 0xFF (flash outputs high-Z)
+        flash_memory[cs][addr] = tx_byte;
+        recv = 0xFF;
+    } else {
+        // Read command (0x03) or unknown: return stored byte
+        recv = flash_memory[cs][addr];
+    }
+    flash_addr[cs] = (flash_addr[cs] + 1) & 0xFFFu;
+    return recv;
 }
 
 // ============================================================================
@@ -693,17 +757,14 @@ int PLICDevice::best_claim() const {
 
 void PLICDevice::update_irq_sources(uint32_t mask) {
     irq_src_mask = mask;
-    // Level-triggered: set pending whenever irq_src is asserted
-    // Re-assert after complete if source still high (matches RTL)
+    // Level-triggered: ONLY set pending when source is asserted, never clear it here.
+    // Pending is cleared exclusively via the complete write (CLAIM_0) when the source
+    // is low — matching RTL rv32_plic.sv: `if (irq_src[i]) pending_r[i] <= 1`.
+    // This ensures 1-cycle pulse sources (e.g. I2C stop_done_r) are latched correctly
+    // even when the source de-asserts before the handler has a chance to claim.
     for (int i = 1; i <= NUM_IRQ; i++) {
-        if (mask & (1u << i)) {
+        if (mask & (1u << i))
             pending_r[i] = true;
-        } else if (!claimed_r[i]) {
-            // If source de-asserts and not currently claimed, clear pending
-            // (RTL clears pending on complete when irq_src=0; here we approximate
-            //  by clearing when source is low and not in flight)
-            pending_r[i] = false;
-        }
     }
 }
 
@@ -714,16 +775,16 @@ bool PLICDevice::get_external_interrupt() const {
 uint32_t PLICDevice::read(uint32_t offset, int size) {
     (void)size;
 
-    // Priority registers: 0x000000 + 4*i  (source 0 always reads 0)
-    if (offset >= 0x000000 && offset < 0x001000) {
+    // Priority registers: RV_PLIC_PRIORITY_OFF + 4*i  (source 0 always reads 0)
+    if (offset >= RV_PLIC_PRIORITY_OFF && offset < RV_PLIC_PENDING_OFF) {
         int src = offset >> 2;
         if (src >= 1 && src <= NUM_IRQ)
             return priority_r[src];
         return 0;
     }
 
-    // Pending register: 0x001000 (one 32-bit word for sources 1..31)
-    if (offset == PLIC_PENDING_0) {
+    // Pending register: RV_PLIC_PENDING_OFF (one 32-bit word for sources 1..31)
+    if (offset == RV_PLIC_PENDING_OFF) {
         uint32_t pend = 0;
         for (int i = 1; i <= NUM_IRQ; i++) {
             if (pending_r[i]) pend |= (1u << i);
@@ -731,8 +792,8 @@ uint32_t PLICDevice::read(uint32_t offset, int size) {
         return pend;
     }
 
-    // Enable register: 0x002000 for context 0
-    if (offset == PLIC_ENABLE_0) {
+    // Enable register: RV_PLIC_ENABLE_OFF for context 0
+    if (offset == RV_PLIC_ENABLE_OFF) {
         uint32_t en = 0;
         for (int i = 1; i <= NUM_IRQ; i++) {
             if (enable_r[i]) en |= (1u << i);
@@ -740,12 +801,12 @@ uint32_t PLICDevice::read(uint32_t offset, int size) {
         return en;
     }
 
-    // Threshold: 0x200000
-    if (offset == PLIC_THRESHOLD_0)
+    // Threshold: RV_PLIC_THRESHOLD_OFF
+    if (offset == RV_PLIC_THRESHOLD_OFF)
         return threshold_r;
 
-    // Claim/Complete: 0x200004 — reading performs a claim
-    if (offset == PLIC_CLAIM_0) {
+    // Claim/Complete: RV_PLIC_CLAIM_OFF — reading performs a claim
+    if (offset == RV_PLIC_CLAIM_OFF) {
         int id = best_claim();
         if (id > 0) {
             claimed_r[id] = true;
@@ -760,7 +821,7 @@ void PLICDevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;
 
     // Priority registers
-    if (offset >= 0x000000 && offset < 0x001000) {
+    if (offset >= RV_PLIC_PRIORITY_OFF && offset < RV_PLIC_PENDING_OFF) {
         int src = offset >> 2;
         if (src >= 1 && src <= NUM_IRQ)
             priority_r[src] = value & 0x7;
@@ -768,7 +829,7 @@ void PLICDevice::write(uint32_t offset, uint32_t value, int size) {
     }
 
     // Enable register for context 0
-    if (offset == PLIC_ENABLE_0) {
+    if (offset == RV_PLIC_ENABLE_OFF) {
         for (int i = 1; i <= NUM_IRQ; i++) {
             enable_r[i] = (value >> i) & 1;
         }
@@ -776,13 +837,13 @@ void PLICDevice::write(uint32_t offset, uint32_t value, int size) {
     }
 
     // Threshold
-    if (offset == PLIC_THRESHOLD_0) {
+    if (offset == RV_PLIC_THRESHOLD_OFF) {
         threshold_r = value & 0x7;
         return;
     }
 
-    // Claim/Complete: 0x200004 — writing completes the interrupt
-    if (offset == PLIC_CLAIM_0) {
+    // Claim/Complete: RV_PLIC_CLAIM_OFF — writing completes the interrupt
+    if (offset == RV_PLIC_CLAIM_OFF) {
         int id = (int)(value & 0x1F);
         if (id >= 1 && id <= NUM_IRQ) {
             claimed_r[id] = false;
@@ -813,15 +874,15 @@ void CLINTDevice::reset() {
 
 uint32_t CLINTDevice::read(uint32_t offset, int size) {
     (void)size;
-    if (offset == CLINT_MSIP) {
+    if (offset == RV_CLINT_MSIP_OFF) {
         return msip;
-    } else if (offset == CLINT_MTIMECMP) {
+    } else if (offset == RV_CLINT_MTIMECMP_LO_OFF) {
         return mtimecmp & 0xFFFFFFFF;
-    } else if (offset == CLINT_MTIMECMPH) {
+    } else if (offset == RV_CLINT_MTIMECMP_HI_OFF) {
         return (mtimecmp >> 32) & 0xFFFFFFFF;
-    } else if (offset == CLINT_MTIME) {
+    } else if (offset == RV_CLINT_MTIME_LO_OFF) {
         return mtime & 0xFFFFFFFF;
-    } else if (offset == CLINT_MTIMEH) {
+    } else if (offset == RV_CLINT_MTIME_HI_OFF) {
         return (mtime >> 32) & 0xFFFFFFFF;
     }
     return 0;
@@ -829,11 +890,11 @@ uint32_t CLINTDevice::read(uint32_t offset, int size) {
 
 void CLINTDevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;
-    if (offset == CLINT_MSIP) {
+    if (offset == RV_CLINT_MSIP_OFF) {
         msip = value & 0x1;
-    } else if (offset == CLINT_MTIMECMP) {
+    } else if (offset == RV_CLINT_MTIMECMP_LO_OFF) {
         mtimecmp = (mtimecmp & 0xFFFFFFFF00000000ULL) | value;
-    } else if (offset == CLINT_MTIMECMPH) {
+    } else if (offset == RV_CLINT_MTIMECMP_HI_OFF) {
         mtimecmp = (mtimecmp & 0x00000000FFFFFFFFULL) | ((uint64_t)value << 32);
     }
 }

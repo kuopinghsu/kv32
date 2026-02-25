@@ -5,21 +5,27 @@
 #include <errno.h>
 
 #include "csr.h"
+#include "rv_platform.h"
+
+// HTIF tohost/fromhost symbols (defined in linker script / crt0)
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern volatile unsigned long long tohost;
+extern volatile unsigned long long fromhost;
+#ifdef __cplusplus
+}
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// tohost/fromhost for HTIF (Host-Target Interface) - used by Spike
-// Must be 64-bit even on RV32
-extern volatile unsigned long long tohost;
-extern volatile unsigned long long fromhost;
-
 // Magic console address - write character to output (for RTL/rv32sim)
-#define CONSOLE_MAGIC_ADDR 0xFFFFFFF4
+// Use RV_MAGIC_CONSOLE_ADDR from rv_platform.h (= RV_MAGIC_BASE + RV_MAGIC_CONSOLE_OFF)
 
 // Memory-mapped console magic address
-volatile unsigned int* const console_putc = (unsigned int*)CONSOLE_MAGIC_ADDR;
+volatile unsigned int* const console_putc = (unsigned int*)RV_MAGIC_CONSOLE_ADDR;
 
 // HTIF device numbers
 #define HTIF_DEV_SYSCALL 0
@@ -116,8 +122,9 @@ void *_sbrk(int incr) {
 // Exit program by writing to tohost
 void _exit(int status) {
     // Also write to magic exit address as fallback (for testbenches without tohost support)
-    volatile unsigned int* exit_addr = (volatile unsigned int*)0xFFFFFFF0;
-    *exit_addr = status;
+    // Encoding: (status << 1) | 1  matches HTIF and rv_magic_exit() in rv_platform.h
+    volatile unsigned int* exit_addr = (volatile unsigned int*)RV_MAGIC_EXIT_ADDR;
+    *exit_addr = (status == 0) ? 1u : (((unsigned int)status << 1) | 1u);
 
     // tohost protocol: write (exit_code << 1) | 1
     // For exit, we write (status << 1) | 1
