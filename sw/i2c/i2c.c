@@ -12,13 +12,13 @@
 #define EEPROM_ADDR  0x50u
 #define EEPROM_SIZE  256u
 
+#define VERBOSE 0
+
 /* Statistics */
 static volatile uint32_t status_checks = 0;
 static volatile uint32_t busy_waits    = 0;
 static volatile uint32_t writes        = 0;
 static volatile uint32_t reads         = 0;
-
-/* ── wrappers matching old API names (with verbose printf) ────────── */
 
 static void i2c_wait_ready(void)
 {
@@ -29,11 +29,11 @@ static void i2c_wait_ready(void)
 static void i2c_start(void)
 {
     i2c_wait_ready();
-    printf("  [I2C] Sending START\n");
+    if (VERBOSE) printf("  [I2C] Sending START\n");
     RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_START;
     RV_I2C_FENCE();
     i2c_wait_ready();
-    printf("  [I2C] START complete, status=0x%02lX\n", (unsigned long)RV_I2C_STATUS);
+    if (VERBOSE) printf("  [I2C] START complete, status=0x%02lX\n", (unsigned long)RV_I2C_STATUS);
 }
 
 static void i2c_stop(void)
@@ -52,7 +52,7 @@ static int i2c_write_byte(uint8_t data)
     i2c_wait_ready();
     writes++;
     uint32_t st = RV_I2C_STATUS;
-    printf("  [I2C] Write 0x%02X -> status=0x%02lX, ACK=%d\n",
+    if (VERBOSE) printf("  [I2C] Write 0x%02X -> status=0x%02lX, ACK=%d\n",
            data, (unsigned long)st, (st & RV_I2C_ST_ACK_RECV) ? 1 : 0);
     return (st & RV_I2C_ST_ACK_RECV) ? 0 : -1;
 }
@@ -139,7 +139,7 @@ static void t8_mei_handler(uint32_t cause)
     rv_plic_complete(src);
 }
 
-static int test8_fifo_irq_transfer(void)
+static int test7_fifo_irq_transfer(void)
 {
     printf("[TEST 7] FIFO Burst TX + IRQ-driven RX\n");
     printf("  EEPROM @ 0x%02X, mem_addr=0x%02X, len=%u\n",
@@ -394,7 +394,7 @@ int main(void)
     printf("  Final status:  0x%08lX\n\n", (unsigned long)RV_I2C_STATUS);
 
     /* TEST 7 */
-    int t7 = (test8_fifo_irq_transfer() == 0) ? 1 : 0;
+    int t7 = (test7_fifo_irq_transfer() == 0) ? 1 : 0;
 
     int passed = t1 + t2 + t3 + t4 + t5 + t6 + t7;
     printf("========================================\n");
