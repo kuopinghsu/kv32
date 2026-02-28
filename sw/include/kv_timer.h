@@ -59,7 +59,7 @@ static inline void kv_timer_start(int timer_num, uint32_t period, uint16_t presc
     KV_TIMER_COUNT(timer_num) = 0;
     KV_TIMER_COMPARE1(timer_num) = 0;           /* Not used in simple timer mode */
     KV_TIMER_COMPARE2(timer_num) = period - 1;
-    KV_TIMER_CTRL(timer_num) = KV_TIMER_CTRL_EN | 
+    KV_TIMER_CTRL(timer_num) = KV_TIMER_CTRL_EN |
                                 KV_TIMER_CTRL_INT_EN |
                                 KV_TIMER_CTRL_PRESCALE(prescale);
 }
@@ -71,7 +71,7 @@ static inline void kv_timer_start_dual(int timer_num, uint32_t compare1, uint32_
     if (int_en) {
         ctrl |= KV_TIMER_CTRL_INT_EN;
     }
-    
+
     KV_TIMER_CTRL(timer_num) = 0;  /* Disable first */
     KV_TIMER_COUNT(timer_num) = 0;
     KV_TIMER_COMPARE1(timer_num) = compare1;    /* Mid-period interrupt */
@@ -100,11 +100,11 @@ static inline uint32_t kv_timer_get_count(int timer_num)
  */
 static inline void kv_timer_pwm_start(int timer_num, uint32_t period, uint32_t duty, uint16_t prescale)
 {
-    uint32_t ctrl = KV_TIMER_CTRL_EN | 
-                    KV_TIMER_CTRL_PWM_EN | 
+    uint32_t ctrl = KV_TIMER_CTRL_EN |
+                    KV_TIMER_CTRL_PWM_EN |
                     KV_TIMER_CTRL_PWM_POL |  /* Active high */
                     KV_TIMER_CTRL_PRESCALE(prescale);
-    
+
     KV_TIMER_CTRL(timer_num) = 0;  /* Disable first */
     KV_TIMER_COUNT(timer_num) = 0;
     KV_TIMER_COMPARE1(timer_num) = duty;      /* Falling edge (PWM goes low) */

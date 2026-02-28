@@ -22,7 +22,7 @@ package ddr4_axi4_pkg;
         AXI_BURST_WRAP  = 2'b10,
         AXI_BURST_RSVD  = 2'b11
     } axi_burst_t;
-    
+
     //=========================================================================
     // AXI4 Response Types
     //=========================================================================
@@ -32,7 +32,7 @@ package ddr4_axi4_pkg;
         AXI_RESP_SLVERR = 2'b10,
         AXI_RESP_DECERR = 2'b11
     } axi_resp_t;
-    
+
     //=========================================================================
     // AXI4 Size Encoding
     //=========================================================================
@@ -46,7 +46,7 @@ package ddr4_axi4_pkg;
         AXI_SIZE_64B  = 3'b110,   // 64 bytes
         AXI_SIZE_128B = 3'b111    // 128 bytes
     } axi_size_t;
-    
+
     //=========================================================================
     // DDR4 Speed Grades (MHz)
     //=========================================================================
@@ -59,7 +59,7 @@ package ddr4_axi4_pkg;
         DDR4_2933 = 2933,
         DDR4_3200 = 3200
     } ddr4_speed_t;
-    
+
     //=========================================================================
     // DDR4 Timing Parameters Structure
     //=========================================================================
@@ -81,13 +81,13 @@ package ddr4_axi4_pkg;
         int CL;       // CAS latency (cycles)
         int CWL;      // CAS write latency (cycles)
     } ddr4_timing_t;
-    
+
     //=========================================================================
     // DDR4 Timing Lookup Function
     //=========================================================================
     function automatic ddr4_timing_t get_ddr4_timing(ddr4_speed_t speed);
         ddr4_timing_t timing;
-        
+
         case (speed)
             DDR4_1600: begin
                 timing.tCK     = 1250;
@@ -107,7 +107,7 @@ package ddr4_axi4_pkg;
                 timing.CL      = 11;
                 timing.CWL     = 9;
             end
-            
+
             DDR4_2133: begin
                 timing.tCK     = 937;
                 timing.tRCD    = 14;
@@ -126,7 +126,7 @@ package ddr4_axi4_pkg;
                 timing.CL      = 15;
                 timing.CWL     = 11;
             end
-            
+
             DDR4_2400: begin
                 timing.tCK     = 833;
                 timing.tRCD    = 14;
@@ -145,7 +145,7 @@ package ddr4_axi4_pkg;
                 timing.CL      = 17;
                 timing.CWL     = 12;
             end
-            
+
             DDR4_2666: begin
                 timing.tCK     = 750;
                 timing.tRCD    = 14;
@@ -164,7 +164,7 @@ package ddr4_axi4_pkg;
                 timing.CL      = 19;
                 timing.CWL     = 14;
             end
-            
+
             DDR4_3200: begin
                 timing.tCK     = 625;
                 timing.tRCD    = 14;
@@ -183,7 +183,7 @@ package ddr4_axi4_pkg;
                 timing.CL      = 22;
                 timing.CWL     = 16;
             end
-            
+
             default: begin
                 // Default to DDR4-2400
                 timing.tCK     = 833;
@@ -204,10 +204,10 @@ package ddr4_axi4_pkg;
                 timing.CWL     = 12;
             end
         endcase
-        
+
         return timing;
     endfunction
-    
+
     //=========================================================================
     // Memory Density Parameters
     //=========================================================================
@@ -219,14 +219,14 @@ package ddr4_axi4_pkg;
         int columns;
         int page_size_bytes;
     } ddr4_density_t;
-    
+
     function automatic ddr4_density_t get_ddr4_density(int density_gb, int dq_width);
         ddr4_density_t params;
-        
+
         params.density_gb = density_gb;
         params.banks = 16;        // DDR4 has 16 banks (4 bank groups x 4 banks)
         params.bank_groups = 4;
-        
+
         case (density_gb)
             1: begin
                 params.rows = 32768;
@@ -253,21 +253,21 @@ package ddr4_axi4_pkg;
                 params.columns = 1024;
             end
         endcase
-        
+
         params.page_size_bytes = (params.columns * dq_width) / 8;
-        
+
         return params;
     endfunction
-    
+
     //=========================================================================
     // Utility Functions
     //=========================================================================
-    
+
     // Convert nanoseconds to clock cycles
     function automatic int ns_to_cycles(int ns, int tck_ps);
         return (ns * 1000 + tck_ps - 1) / tck_ps;  // Round up
     endfunction
-    
+
     // Calculate wrap boundary
     function automatic logic [31:0] calc_wrap_boundary(
         logic [31:0] addr,
@@ -278,12 +278,12 @@ package ddr4_axi4_pkg;
         wrap_size = (1 << size) * (len + 1);
         return (addr / wrap_size) * wrap_size;
     endfunction
-    
+
     // Check if burst length is valid for WRAP
     function automatic logic is_valid_wrap_len(logic [7:0] len);
         return (len == 1 || len == 3 || len == 7 || len == 15);
     endfunction
-    
+
     // Calculate number of bytes per beat from size
     function automatic int size_to_bytes(logic [2:0] size);
         return 1 << size;

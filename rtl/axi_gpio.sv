@@ -106,7 +106,7 @@ module axi_gpio #(
     // ========================================================================
     // Determine how many 32-bit register banks are needed
     localparam int NUM_REG_BANKS = (NUM_PINS + 31) / 32;  // Ceiling division
-    
+
     // Capability register (read-only)
     localparam logic [15:0] GPIO_VERSION = 16'h0001;       // Version 0.1
     localparam logic [31:0] CAPABILITY_REG = {GPIO_VERSION, 8'(NUM_REG_BANKS), 8'(NUM_PINS)};
@@ -129,7 +129,7 @@ module axi_gpio #(
 
     // Extend gpio_i to register banks (unused pins = 0)
     logic [31:0] gpio_i_padded [NUM_REG_BANKS];
-    
+
     // ========================================================================
     // Per-Bank Input Synchronization and Loopback (using generate)
     // ========================================================================
@@ -182,7 +182,7 @@ module axi_gpio #(
             // Edge detection
             always_comb begin
                 for (int i = 0; i < 32; i++) begin
-                    edge_detected[bank][i] = trigger_r[bank][i] && (polarity_r[bank][i] ? 
+                    edge_detected[bank][i] = trigger_r[bank][i] && (polarity_r[bank][i] ?
                                                 (gpio_i_sync2[bank][i] && !gpio_i_prev[bank][i]) :  // rising
                                                 (!gpio_i_sync2[bank][i] && gpio_i_prev[bank][i]));  // falling
                 end
@@ -293,10 +293,10 @@ module axi_gpio #(
     // Register address decoding
     wire [1:0] bank_sel = axi_araddr[3:2];  // Which bank (0-3)
     wire [3:0] reg_sel  = axi_araddr[7:4];  // Which register type (0-9)
-    
+
     always_comb begin
         rdata_next = 32'h0;
-        
+
         // Capability register is global, not per-bank
         if (reg_sel == 4'hA) begin
             rdata_next = CAPABILITY_REG;  // 0xA0: CAPABILITY
@@ -322,7 +322,7 @@ module axi_gpio #(
     // Debug register type names as localparam strings
     `ifdef DEBUG
     localparam string REG_NAMES[10] = '{
-        "DATA_OUT", "SET", "CLEAR", "DATA_IN", "DIR", 
+        "DATA_OUT", "SET", "CLEAR", "DATA_IN", "DIR",
         "IE", "TRIGGER", "POLARITY", "IS", "LOOPBACK"
     };
     `endif
@@ -332,7 +332,7 @@ module axi_gpio #(
     // ========================================================================
     wire [1:0] wr_bank_sel = axi_awaddr[3:2];  // Which bank (0-3)
     wire [3:0] wr_reg_sel  = axi_awaddr[7:4];  // Which register type (0-9)
-    
+
     generate
         for (bank = 0; bank < NUM_REG_BANKS; bank++) begin : gen_reg_write
             always_ff @(posedge clk or negedge rst_n) begin
@@ -348,7 +348,7 @@ module axi_gpio #(
                     // Edge detection updates status register
                     `ifdef DEBUG
                     if (|edge_detected[bank]) begin
-                        `DEBUG2(("[GPIO] Bank%0d Edge detected: edges=0x%h is_old=0x%h is_new=0x%h", 
+                        `DEBUG2(("[GPIO] Bank%0d Edge detected: edges=0x%h is_old=0x%h is_new=0x%h",
                                 bank, edge_detected[bank], is_r[bank], is_r[bank] | edge_detected[bank]));
                     end
                     `endif
@@ -389,7 +389,7 @@ module axi_gpio #(
             localparam int BANK_LOW  = bank * 32;
             localparam int BANK_HIGH = ((bank+1) * 32 <= NUM_PINS) ? (bank+1) * 32 - 1 : NUM_PINS - 1;
             localparam int BANK_PINS = BANK_HIGH - BANK_LOW + 1;
-            
+
             assign gpio_o[BANK_HIGH:BANK_LOW]  = data_out_r[bank][BANK_PINS-1:0];
             assign gpio_oe[BANK_HIGH:BANK_LOW] = dir_r[bank][BANK_PINS-1:0];
         end

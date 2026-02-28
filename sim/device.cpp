@@ -1169,7 +1169,7 @@ void GPIODevice::tick() {
     // Input synchronization (2-stage)
     for (int i = 0; i < MAX_BANKS; i++) {
         uint32_t gpio_i_ext = 0;
-        
+
         // Apply loopback: when loopback enabled, use output data instead of external input
         for (int bit = 0; bit < 32; bit++) {
             if (loopback_r[i] & (1u << bit)) {
@@ -1180,10 +1180,10 @@ void GPIODevice::tick() {
                     gpio_i_ext |= (1u << bit);
             }
         }
-        
+
         // Two-stage synchronization
         gpio_i_sync[i] = gpio_i_ext;
-        
+
         // Edge detection
         for (int bit = 0; bit < 32; bit++) {
             uint32_t mask = (1u << bit);
@@ -1191,7 +1191,7 @@ void GPIODevice::tick() {
             bool prev = (gpio_i_prev[i] & mask) != 0;
             bool trig = (trigger_r[i] & mask) != 0;     // 1=edge, 0=level
             bool pol = (polarity_r[i] & mask) != 0;     // 1=rising/high, 0=falling/low
-            
+
             if (trig) {
                 // Edge-triggered
                 bool edge = pol ? (curr && !prev) : (!curr && prev);
@@ -1200,7 +1200,7 @@ void GPIODevice::tick() {
                 }
             }
         }
-        
+
         gpio_i_prev[i] = gpio_i_sync[i];
     }
 }
@@ -1212,7 +1212,7 @@ bool GPIODevice::get_irq() const {
             uint32_t mask = (1u << bit);
             bool trig = (trigger_r[i] & mask) != 0;
             bool pol = (polarity_r[i] & mask) != 0;
-            
+
             if (trig) {
                 // Edge-triggered: sticky status
                 if (is_r[i] & mask)
@@ -1224,7 +1224,7 @@ bool GPIODevice::get_irq() const {
                     int_pending |= mask;
             }
         }
-        
+
         if (ie_r[i] & int_pending)
             return true;
     }
@@ -1241,7 +1241,7 @@ uint32_t GPIODevice::read(uint32_t offset, int size) {
     (void)size;  // Always 32-bit
     uint32_t bank = (offset >> 2) & 3;
     uint32_t reg = offset >> 4;
-    
+
     switch (reg) {
     case 0x0: return data_out_r[bank];       // DATA_OUT
     case 0x1: return data_out_r[bank];       // SET (read returns current DATA_OUT)
@@ -1262,7 +1262,7 @@ void GPIODevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;  // Always 32-bit
     uint32_t bank = (offset >> 2) & 3;
     uint32_t reg = offset >> 4;
-    
+
     switch (reg) {
     case 0x0: data_out_r[bank] = value; break;                     // DATA_OUT
     case 0x1: data_out_r[bank] |= value; break;                    // SET (W1S)
@@ -1307,7 +1307,7 @@ void TimerDevice::tick() {
     for (int i = 0; i < NUM_TIMERS; i++) {
         if (!ch[i].timer_en)
             continue;
-        
+
         // Prescaler
         bool timer_tick = false;
         if (ch[i].prescale_cnt >= ch[i].prescale) {
@@ -1316,17 +1316,17 @@ void TimerDevice::tick() {
         } else {
             ch[i].prescale_cnt++;
         }
-        
+
         if (!timer_tick)
             continue;
-        
+
         // Compare matches
         bool compare1_match = (ch[i].count_r == ch[i].compare1_r);
         bool compare2_match = (ch[i].count_r == ch[i].compare2_r);
-        
+
         // Counter reload
         bool reload = compare2_match;
-        
+
         // Update counter
         if (reload) {
             ch[i].count_r = 0;
@@ -1334,7 +1334,7 @@ void TimerDevice::tick() {
         } else {
             ch[i].count_r++;
         }
-        
+
         // PWM output generation
         if (ch[i].pwm_en) {
             if (compare1_match) {
@@ -1346,7 +1346,7 @@ void TimerDevice::tick() {
         } else {
             ch[i].pwm_output_raw = false;
         }
-        
+
         // Interrupt generation (both COMPARE1 and COMPARE2 can trigger)
         if ((compare1_match || compare2_match) && ch[i].int_en) {
             int_status_r |= (1u << i);
@@ -1366,7 +1366,7 @@ bool TimerDevice::get_pwm_output(int timer_num) const {
 
 uint32_t TimerDevice::read(uint32_t offset, int size) {
     (void)size;  // Always 32-bit
-    
+
     // Global registers
     if (offset == KV_TIMER_INT_STATUS_OFF) {
         return int_status_r;
@@ -1377,14 +1377,14 @@ uint32_t TimerDevice::read(uint32_t offset, int size) {
     if (offset == KV_TIMER_CAP_OFF) {  // CAPABILITY (RO): [7:0]=NUM_CHANNELS, [15:8]=COUNTER_WIDTH, [31:16]=VERSION
         return (0x0001u << 16) | (32u << 8) | NUM_TIMERS;  // v0.0001, 32-bit, 4 timers
     }
-    
+
     // Per-channel registers
     uint32_t timer_num = offset / KV_TIMER_CH_STRIDE;
     uint32_t reg_off = offset % KV_TIMER_CH_STRIDE;
-    
+
     if (timer_num >= NUM_TIMERS)
         return 0;
-    
+
     switch (reg_off) {
     case KV_TIMER_COUNT_OFF:    return ch[timer_num].count_r;
     case KV_TIMER_COMPARE1_OFF: return ch[timer_num].compare1_r;
@@ -1396,7 +1396,7 @@ uint32_t TimerDevice::read(uint32_t offset, int size) {
 
 void TimerDevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;  // Always 32-bit
-    
+
     // Global registers
     if (offset == KV_TIMER_INT_STATUS_OFF) {
         int_status_r &= ~value;  // W1C
@@ -1406,14 +1406,14 @@ void TimerDevice::write(uint32_t offset, uint32_t value, int size) {
         int_enable_r = value & 0xFu;  // 4 timers
         return;
     }
-    
+
     // Per-channel registers
     uint32_t timer_num = offset / KV_TIMER_CH_STRIDE;
     uint32_t reg_off = offset % KV_TIMER_CH_STRIDE;
-    
+
     if (timer_num >= NUM_TIMERS)
         return;
-    
+
     switch (reg_off) {
     case KV_TIMER_COUNT_OFF:
         ch[timer_num].count_r = value;
@@ -1432,7 +1432,7 @@ void TimerDevice::write(uint32_t offset, uint32_t value, int size) {
         ch[timer_num].int_en   = (value & (1u << 3)) != 0;
         ch[timer_num].pwm_pol  = (value & (1u << 4)) != 0;
         ch[timer_num].prescale = (value >> 16) & 0xFFFFu;
-        
+
         // Reset prescaler counter when disabled
         if (!ch[timer_num].timer_en) {
             ch[timer_num].prescale_cnt = 0;

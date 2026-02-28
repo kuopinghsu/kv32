@@ -444,7 +444,7 @@ class GPIODevice : public Device {
 private:
     static const int MAX_PINS = 128;
     static const int MAX_BANKS = 4;
-    
+
     uint32_t data_out_r[MAX_BANKS];      // Output data
     uint32_t dir_r[MAX_BANKS];           // Direction (1=output, 0=input)
     uint32_t ie_r[MAX_BANKS];            // Interrupt enable
@@ -452,10 +452,10 @@ private:
     uint32_t polarity_r[MAX_BANKS];      // Polarity
     uint32_t is_r[MAX_BANKS];            // Interrupt status
     uint32_t loopback_r[MAX_BANKS];      // Loopback enable
-    
+
     uint32_t gpio_i_sync[MAX_BANKS];     // Synchronized input (2-stage)
     uint32_t gpio_i_prev[MAX_BANKS];     // Previous input for edge detection
-    
+
     uint32_t external_input[MAX_BANKS];  // External pin input
 
 public:
@@ -470,7 +470,7 @@ public:
 
     // IRQ: asserted when any enabled interrupt is pending
     bool get_irq() const;
-    
+
     // Set external input pins (for testing)
     void set_external_input(uint32_t bank, uint32_t value);
 };
@@ -482,27 +482,27 @@ public:
 class TimerDevice : public Device {
 private:
     static const int NUM_TIMERS = 4;
-    
+
     struct TimerChannel {
         uint32_t count_r;           // Counter value
         uint32_t compare1_r;        // Compare 1 (interrupt / PWM set)
         uint32_t compare2_r;        // Compare 2 (PWM clear + reload)
         uint32_t ctrl_r;            // Control register
-        
+
         // Decoded control bits
         bool     timer_en;
         bool     pwm_en;
         bool     int_en;
         bool     pwm_pol;
         uint16_t prescale;
-        
+
         // Prescaler counter
         uint16_t prescale_cnt;
-        
+
         // PWM output state
         bool     pwm_output_raw;
     };
-    
+
     TimerChannel ch[NUM_TIMERS];
     uint32_t int_status_r;              // Global interrupt status (W1C)
     uint32_t int_enable_r;              // Global interrupt enable
@@ -519,7 +519,7 @@ public:
 
     // IRQ: asserted when (int_status_r & int_enable_r) != 0
     bool get_irq() const;
-    
+
     // Get PWM output state (for testing)
     bool get_pwm_output(int timer_num) const;
 };

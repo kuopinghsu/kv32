@@ -73,15 +73,15 @@ static inline int kv_dma_ch_wait(int ch)
 static inline int kv_dma_1d_copy(int ch, uint32_t src, uint32_t dst, uint32_t bytes)
 {
     kv_dma_ch_reset(ch);
-    
+
     KV_DMA_CH_REG(ch, KV_DMA_CH_SRC_OFF)   = src;
     KV_DMA_CH_REG(ch, KV_DMA_CH_DST_OFF)   = dst;
     KV_DMA_CH_REG(ch, KV_DMA_CH_XFER_OFF)  = bytes;
-    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF)  = KV_DMA_CTRL_EN | 
-                                               KV_DMA_CTRL_MODE_1D | 
-                                               KV_DMA_CTRL_SRC_INC | 
+    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF)  = KV_DMA_CTRL_EN |
+                                               KV_DMA_CTRL_MODE_1D |
+                                               KV_DMA_CTRL_SRC_INC |
                                                KV_DMA_CTRL_DST_INC;
-    
+
     kv_dma_ch_start(ch);
     return kv_dma_ch_wait(ch);
 }
@@ -89,23 +89,23 @@ static inline int kv_dma_1d_copy(int ch, uint32_t src, uint32_t dst, uint32_t by
 /* ─── 2D strided transfer ─────────────────────────────────────────── */
 
 /* Setup and execute 2-D strided copy */
-static inline int kv_dma_2d_copy(int ch, uint32_t src, uint32_t dst, 
+static inline int kv_dma_2d_copy(int ch, uint32_t src, uint32_t dst,
                                   uint32_t row_bytes, uint32_t num_rows,
                                   uint32_t src_stride, uint32_t dst_stride)
 {
     kv_dma_ch_reset(ch);
-    
+
     KV_DMA_CH_REG(ch, KV_DMA_CH_SRC_OFF)      = src;
     KV_DMA_CH_REG(ch, KV_DMA_CH_DST_OFF)      = dst;
     KV_DMA_CH_REG(ch, KV_DMA_CH_XFER_OFF)     = row_bytes;
     KV_DMA_CH_REG(ch, KV_DMA_CH_SSTRIDE_OFF)  = src_stride;
     KV_DMA_CH_REG(ch, KV_DMA_CH_DSTRIDE_OFF)  = dst_stride;
     KV_DMA_CH_REG(ch, KV_DMA_CH_ROWCNT_OFF)   = num_rows;
-    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF)     = KV_DMA_CTRL_EN | 
-                                                 KV_DMA_CTRL_MODE_2D | 
-                                                 KV_DMA_CTRL_SRC_INC | 
+    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF)     = KV_DMA_CTRL_EN |
+                                                 KV_DMA_CTRL_MODE_2D |
+                                                 KV_DMA_CTRL_SRC_INC |
                                                  KV_DMA_CTRL_DST_INC;
-    
+
     kv_dma_ch_start(ch);
     return kv_dma_ch_wait(ch);
 }
@@ -119,7 +119,7 @@ static inline int kv_dma_3d_copy(int ch, uint32_t src, uint32_t dst,
                                   uint32_t src_pstride, uint32_t dst_pstride)
 {
     kv_dma_ch_reset(ch);
-    
+
     KV_DMA_CH_REG(ch, KV_DMA_CH_SRC_OFF)       = src;
     KV_DMA_CH_REG(ch, KV_DMA_CH_DST_OFF)       = dst;
     KV_DMA_CH_REG(ch, KV_DMA_CH_XFER_OFF)      = row_bytes;
@@ -129,11 +129,11 @@ static inline int kv_dma_3d_copy(int ch, uint32_t src, uint32_t dst,
     KV_DMA_CH_REG(ch, KV_DMA_CH_SPSTRIDE_OFF)  = src_pstride;
     KV_DMA_CH_REG(ch, KV_DMA_CH_DPSTRIDE_OFF)  = dst_pstride;
     KV_DMA_CH_REG(ch, KV_DMA_CH_PLANECNT_OFF)  = num_planes;
-    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF)      = KV_DMA_CTRL_EN | 
-                                                  KV_DMA_CTRL_MODE_3D | 
-                                                  KV_DMA_CTRL_SRC_INC | 
+    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF)      = KV_DMA_CTRL_EN |
+                                                  KV_DMA_CTRL_MODE_3D |
+                                                  KV_DMA_CTRL_SRC_INC |
                                                   KV_DMA_CTRL_DST_INC;
-    
+
     kv_dma_ch_start(ch);
     return kv_dma_ch_wait(ch);
 }
@@ -144,12 +144,12 @@ static inline int kv_dma_3d_copy(int ch, uint32_t src, uint32_t dst,
 static inline int kv_dma_sg_copy(int ch, uint32_t sg_addr, uint32_t sg_count)
 {
     kv_dma_ch_reset(ch);
-    
+
     KV_DMA_CH_REG(ch, KV_DMA_CH_SGADDR_OFF) = sg_addr;
     KV_DMA_CH_REG(ch, KV_DMA_CH_SGCNT_OFF)  = sg_count;
-    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF)   = KV_DMA_CTRL_EN | 
+    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF)   = KV_DMA_CTRL_EN |
                                                KV_DMA_CTRL_MODE_SG;
-    
+
     kv_dma_ch_start(ch);
     return kv_dma_ch_wait(ch);
 }
@@ -162,7 +162,7 @@ static inline void kv_dma_enable_irq(int ch)
     uint32_t ctrl = KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF);
     ctrl |= KV_DMA_CTRL_IE;
     KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF) = ctrl;
-    
+
     uint32_t irq_en = KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF);
     irq_en |= (1u << ch);
     KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) = irq_en;
@@ -174,7 +174,7 @@ static inline void kv_dma_disable_irq(int ch)
     uint32_t ctrl = KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF);
     ctrl &= ~KV_DMA_CTRL_IE;
     KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF) = ctrl;
-    
+
     uint32_t irq_en = KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF);
     irq_en &= ~(1u << ch);
     KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) = irq_en;
