@@ -163,4 +163,32 @@ static inline int kv_timer_is_int_pending(int timer_num)
 #define KV_TIMER_PRESCALE(clock_hz, period, freq_hz) \
     (((clock_hz) / ((period) * (freq_hz))) - 1)
 
+/* ─── capability register ────────────────────────────────────────── */
+
+#define KV_TIMER_CAP    KV_REG32(KV_TIMER_BASE, KV_TIMER_CAP_OFF)
+
+/* Read capability register (hardware configuration) */
+static inline uint32_t kv_timer_get_capability(void)
+{
+    return KV_TIMER_CAP;
+}
+
+/* Get number of timer channels from capability register */
+static inline uint32_t kv_timer_get_num_channels(void)
+{
+    return (KV_TIMER_CAP >> 8) & 0xFF;  // [15:8]
+}
+
+/* Get counter width from capability register */
+static inline uint32_t kv_timer_get_counter_width(void)
+{
+    return KV_TIMER_CAP & 0xFF;  // [7:0]
+}
+
+/* Get Timer version from capability register */
+static inline uint32_t kv_timer_get_version(void)
+{
+    return (KV_TIMER_CAP >> 16) & 0xFFFF;  // [31:16]
+}
+
 #endif /* KV_TIMER_H */

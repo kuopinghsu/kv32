@@ -8,9 +8,9 @@
 :source-highlighter: rouge
 :imagesdir: .
 :version: 1.0
-:revdate: 2026-02-25
+:revdate: 2026-02-28
 :author: KV32 SoC Project
-:email: kv32@example.com
+:email: kuoping.hsu@gmail.com
 
 [abstract]
 == Abstract
@@ -86,6 +86,22 @@ Portability:: Works with both RTL simulation and software simulators (kv32sim, S
 | `csr.h`
 | CSR Access
 | Control and Status Register read/write functions
+
+| `kv_dma.h`
+| DMA Controller
+| DMA controller driver (channel management, 1D/2D/3D/SG transfers, IRQ, performance)
+
+| `kv_timer.h`
+| Timer/PWM
+| Timer/PWM driver (polling and interrupt modes)
+
+| `kv_gpio.h`
+| GPIO
+| General-Purpose I/O driver
+
+| `kv_cap.h`
+| Capability Constants
+| Expected capability register values for all peripherals (derived from RTL parameters)
 |===
 
 '''
@@ -160,6 +176,96 @@ Example usage:
 ----
 uint32_t status = KV_REG32(KV_UART_BASE, KV_UART_STATUS_OFF);
 KV_REG32(KV_UART_BASE, KV_UART_DATA_OFF) = 0x41; // Write 'A'
+----
+
+'''
+
+== Capability Register Definitions (`kv_cap.h`)
+
+=== Overview
+
+The `kv_cap.h` header provides compile-time constants that mirror the RTL `CAPABILITY_REG`
+localparams for each peripheral. These values can be compared at runtime against the
+hardware capability register to verify RTL and SDK are in sync.
+
+Include this header in any file that reads capability registers:
+
+[source,c]
+----
+#include "kv_cap.h"
+----
+
+=== Capability Register Layout
+
+[cols="2,3,6"]
+|===
+| Peripheral | Bit Layout | Expected Value
+
+| UART
+| `[31:16]` VERSION, `[15:8]` RX_FIFO_DEPTH, `[7:0]` TX_FIFO_DEPTH
+| `0x00011010` (v0.0001, FIFO=16)
+
+| I2C
+| `[31:16]` VERSION, `[15:8]` RX_FIFO_DEPTH, `[7:0]` TX_FIFO_DEPTH
+| `0x00010808` (v0.0001, FIFO=8)
+
+| SPI
+| `[31:16]` VERSION, `[23:20]` NUM_CS, `[19:16]` RX_FIFO(4-bit), `[7:0]` TX_FIFO_DEPTH
+| `0x00014808` (v0.0001, 4 CS, FIFO=8)
+
+| DMA
+| `[31:16]` VERSION, `[15:8]` NUM_CHANNELS, `[7:0]` MAX_BURST_LEN
+| `0x00010410` (v0.0001, 4 ch, burst=16)
+
+| GPIO
+| `[31:16]` VERSION, `[15:8]` NUM_BANKS, `[7:0]` NUM_PINS
+| `0x00010104` (v0.0001, 1 bank, 4 pins)
+
+| Timer
+| `[31:16]` VERSION, `[15:8]` NUM_CHANNELS, `[7:0]` COUNTER_WIDTH
+| `0x00010420` (v0.0001, 4 ch, 32-bit)
+|===
+
+=== Constants
+
+[source,c]
+----
+/* UART */
+#define KV_CAP_UART_VERSION        0x0001u
+#define KV_CAP_UART_TX_FIFO_DEPTH  16u
+#define KV_CAP_UART_RX_FIFO_DEPTH  16u
+#define KV_CAP_UART_VALUE          0x00011010u
+
+/* I2C */
+#define KV_CAP_I2C_VERSION         0x0001u
+#define KV_CAP_I2C_TX_FIFO_DEPTH   8u
+#define KV_CAP_I2C_RX_FIFO_DEPTH   8u
+#define KV_CAP_I2C_VALUE           0x00010808u
+
+/* SPI */
+#define KV_CAP_SPI_VERSION         0x0001u
+#define KV_CAP_SPI_NUM_CS          4u
+#define KV_CAP_SPI_TX_FIFO_DEPTH   8u
+#define KV_CAP_SPI_RX_FIFO_DEPTH   8u
+#define KV_CAP_SPI_VALUE           0x00014808u
+
+/* DMA */
+#define KV_CAP_DMA_VERSION         0x0001u
+#define KV_CAP_DMA_NUM_CHANNELS    4u
+#define KV_CAP_DMA_MAX_BURST_LEN   16u
+#define KV_CAP_DMA_VALUE           0x00010410u
+
+/* GPIO */
+#define KV_CAP_GPIO_VERSION        0x0001u
+#define KV_CAP_GPIO_NUM_PINS       4u
+#define KV_CAP_GPIO_NUM_BANKS      1u
+#define KV_CAP_GPIO_VALUE          0x00010104u
+
+/* Timer */
+#define KV_CAP_TIMER_VERSION        0x0001u
+#define KV_CAP_TIMER_NUM_CHANNELS   4u
+#define KV_CAP_TIMER_COUNTER_WIDTH  32u
+#define KV_CAP_TIMER_VALUE          0x00010420u
 ----
 
 '''
@@ -346,6 +452,28 @@ void kv_uart_loopback_disable(void);
 
 Enable internal TX→RX loopback for hardware testing. Transmitted bytes are fed back to the RX path without leaving the chip.
 
+==== Capability Register
+
+[source,c]
+----
+uint32_t kv_uart_get_capability(void);    // Full 32-bit capability register
+uint32_t kv_uart_get_tx_fifo_depth(void); // TX FIFO depth in bytes
+uint32_t kv_uart_get_rx_fifo_depth(void); // RX FIFO depth in bytes
+uint32_t kv_uart_get_version(void);       // Hardware version [31:16]
+----
+
+Reads the read-only capability register at offset `KV_UART_CAP_OFF` (`0x18`).
+Compare against `KV_CAP_UART_VALUE` from `kv_cap.h` to verify hardware matches SDK.
+
+[source,c]
+----
+#include "kv_cap.h"
+uint32_t cap = kv_uart_get_capability();
+printf("UART cap: 0x%08X (expected 0x%08X)\n", cap, KV_CAP_UART_VALUE);
+printf("TX FIFO: %u  RX FIFO: %u\n",
+       kv_uart_get_tx_fifo_depth(), kv_uart_get_rx_fifo_depth());
+----
+
 '''
 
 == SPI Driver API
@@ -531,6 +659,28 @@ void kv_spi_loopback_enable(void);
 void kv_spi_loopback_disable(void);
 ----
 
+==== Capability Register
+
+[source,c]
+----
+uint32_t kv_spi_get_capability(void);    // Full 32-bit capability register
+uint32_t kv_spi_get_tx_fifo_depth(void); // TX FIFO depth
+uint32_t kv_spi_get_rx_fifo_depth(void); // RX FIFO depth
+uint32_t kv_spi_get_num_cs(void);        // Number of chip-select lines
+uint32_t kv_spi_get_version(void);       // Hardware version [31:16]
+----
+
+Reads the read-only capability register at offset `KV_SPI_CAP_OFF` (`0x1C`).
+Compare against `KV_CAP_SPI_VALUE` from `kv_cap.h`.
+
+[source,c]
+----
+#include "kv_cap.h"
+uint32_t cap = kv_spi_get_capability();
+printf("SPI cap: 0x%08X  CS=%u TX_FIFO=%u\n",
+       cap, kv_spi_get_num_cs(), kv_spi_get_tx_fifo_depth());
+----
+
 '''
 
 == I2C Driver API
@@ -694,6 +844,27 @@ uint32_t kv_i2c_irq_status(void);
 * `KV_I2C_IE_TX_EMPTY` (bit 1): TX FIFO empty
 * `KV_I2C_IE_STOP_DONE` (bit 2): STOP condition completed
 
+==== Capability Register
+
+[source,c]
+----
+uint32_t kv_i2c_get_capability(void);    // Full 32-bit capability register
+uint32_t kv_i2c_get_tx_fifo_depth(void); // TX FIFO depth
+uint32_t kv_i2c_get_rx_fifo_depth(void); // RX FIFO depth
+uint32_t kv_i2c_get_version(void);       // Hardware version [31:16]
+----
+
+Reads the read-only capability register at offset `KV_I2C_CAP_OFF` (`0x1C`).
+Compare against `KV_CAP_I2C_VALUE` from `kv_cap.h`.
+
+[source,c]
+----
+#include "kv_cap.h"
+uint32_t cap = kv_i2c_get_capability();
+printf("I2C cap: 0x%08X  TX_FIFO=%u  RX_FIFO=%u\n",
+       cap, kv_i2c_get_tx_fifo_depth(), kv_i2c_get_rx_fifo_depth());
+----
+
 '''
 
 == DMA Controller API
@@ -702,7 +873,7 @@ uint32_t kv_i2c_irq_status(void);
 
 The DMA controller (`axi_dma.sv`) provides high-performance data transfers with:
 
-* 8 independent channels
+* 4 independent channels
 * Multiple transfer modes: 1D, 2D strided, 3D planar, scatter-gather
 * Configurable source/destination address increment
 * Interrupt generation on completion or error
@@ -827,6 +998,11 @@ Each channel has registers at `KV_DMA_BASE + channel * 0x40`:
 | PERF_WR_BYTES
 | R/W
 | Total bytes written
+
+| `0xF0C`
+| CAPABILITY
+| RO
+| Hardware capability: `{VERSION[31:16], NUM_CHANNELS[15:8], MAX_BURST_LEN[7:0]}`
 |===
 
 === Control Register Bits
@@ -887,83 +1063,485 @@ Each channel has registers at `KV_DMA_BASE + channel * 0x40`:
 
 ==== 1D Transfer Mode
 
-Simple linear memory copy:
+Simple linear memory copy using `kv_dma_1d_copy()`:
 
 [source,c]
 ----
-// Copy 1024 bytes from src to dst
-KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF) = src_addr;
-KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF) = dst_addr;
-KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 1024;
-KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
-    KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_1D |
-    KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_START;
+#include "kv_dma.h"
 
-// Wait for completion
-while (KV_DMA_CH_REG(0, KV_DMA_CH_STAT_OFF) & KV_DMA_STAT_BUSY) {}
+// Copy 1024 bytes from src to dst on channel 0, then verify done
+int ret = kv_dma_1d_copy(0, src_addr, dst_addr, 1024);
+if (ret != 0) { /* AXI error */ }
+kv_dma_ch_reset(0);  // Clear DONE/ERR flags
+----
+
+For non-blocking use, set up the channel manually and call `kv_dma_ch_start()`:
+
+[source,c]
+----
+kv_dma_ch_reset(0);
+KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF)  = src_addr;
+KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF)  = dst_addr;
+KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 1024;
+KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_1D
+                                       | KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC;
+kv_dma_ch_start(0);
+// ... do other work ...
+kv_dma_ch_wait(0);   // Blocks until done or error
+kv_dma_ch_reset(0);
 ----
 
 ==== 2D Strided Transfer Mode
 
-Copy rectangular regions with different pitches:
+Copy rectangular regions with different pitches using `kv_dma_2d_copy()`:
 
 [source,c]
 ----
-// Copy 640x480 image with padding
-// Source: 640 bytes/row, stride 1024
-// Dest:   640 bytes/row, stride 800
-KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF) = src_addr;
-KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF) = dst_addr;
-KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 640;        // Bytes per row
-KV_DMA_CH_REG(0, KV_DMA_CH_SSTRIDE_OFF) = 1024;    // Source row stride
-KV_DMA_CH_REG(0, KV_DMA_CH_DSTRIDE_OFF) = 800;     // Dest row stride
-KV_DMA_CH_REG(0, KV_DMA_CH_ROWCNT_OFF) = 480;      // Number of rows
-KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
-    KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_2D |
-    KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_START;
+// Copy 640x480 image; src stride=1024 bytes/row, dst stride=800 bytes/row
+int ret = kv_dma_2d_copy(0,
+    src_addr, dst_addr,
+    640,   /* row_bytes  */
+    480,   /* num_rows   */
+    1024,  /* src_stride */
+    800);  /* dst_stride */
+kv_dma_ch_reset(0);
 ----
 
 ==== 3D Planar Transfer Mode
 
-Copy 3D data structures (e.g., video frames):
+Copy 3D data structures (e.g., video frames) using `kv_dma_3d_copy()`:
 
 [source,c]
 ----
 // Copy video buffer: 640x480x3 (RGB planes)
-KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF) = src_addr;
-KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF) = dst_addr;
-KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 640;           // Bytes per row
-KV_DMA_CH_REG(0, KV_DMA_CH_SSTRIDE_OFF) = 640;        // Source row stride
-KV_DMA_CH_REG(0, KV_DMA_CH_DSTRIDE_OFF) = 640;        // Dest row stride
-KV_DMA_CH_REG(0, KV_DMA_CH_ROWCNT_OFF) = 480;         // Rows per plane
-KV_DMA_CH_REG(0, KV_DMA_CH_SPSTRIDE_OFF) = 307200;    // Source plane stride
-KV_DMA_CH_REG(0, KV_DMA_CH_DPSTRIDE_OFF) = 307200;    // Dest plane stride
-KV_DMA_CH_REG(0, KV_DMA_CH_PLANECNT_OFF) = 3;         // Number of planes
-KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
-    KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_3D |
-    KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_START;
+// Each plane: 640 bytes/row, 480 rows; planes packed contiguously
+int ret = kv_dma_3d_copy(0,
+    src_addr, dst_addr,
+    640,    /* row_bytes    */
+    480,    /* num_rows     */
+    3,      /* num_planes   */
+    640,    /* src_stride   */
+    640,    /* dst_stride   */
+    307200, /* src_pstride  */
+    307200  /* dst_pstride  */);
+kv_dma_ch_reset(0);
+----
+
+==== Scatter-Gather Transfer Mode
+
+Process a descriptor list using `kv_dma_sg_copy()`:
+
+[source,c]
+----
+typedef struct {
+    uint32_t src_addr;
+    uint32_t dst_addr;
+    uint32_t xfer_cnt;
+    uint32_t mode_ctrl;  /* [3]=dst_inc, [2]=src_inc, [1:0]=mode */
+} sg_desc_t;
+
+__attribute__((aligned(16))) sg_desc_t descs[3] = {
+    { src + 0,  dst + 0,  512, 0x0C },
+    { src + 512, dst + 512, 256, 0x0C },
+    { src + 768, dst + 768, 256, 0x0C },
+};
+
+int ret = kv_dma_sg_copy(0, (uint32_t)(uintptr_t)descs, 3);
+kv_dma_ch_reset(0);
+----
+
+=== SDK API Functions
+
+==== Channel Lifecycle
+
+[source,c]
+----
+void    kv_dma_ch_reset(int ch);    // Disable channel, clear DONE/ERR
+void    kv_dma_ch_start(int ch);    // Set START bit (arms transfer)
+void    kv_dma_ch_stop(int ch);     // Set STOP bit (aborts transfer)
+int     kv_dma_ch_busy(int ch);     // Returns 1 if BUSY
+int     kv_dma_ch_done(int ch);     // Returns 1 if DONE
+int     kv_dma_ch_error(int ch);    // Returns 1 if ERR
+int     kv_dma_ch_wait(int ch);     // Block until complete; returns 0 or -1 (error)
+----
+
+==== High-Level Transfer Functions
+
+[source,c]
+----
+// 1D linear copy: resets ch, programs registers, starts, waits; returns 0 or -1
+int kv_dma_1d_copy(int ch, uint32_t src, uint32_t dst, uint32_t bytes);
+
+// 2D strided copy
+int kv_dma_2d_copy(int ch, uint32_t src, uint32_t dst,
+                   uint32_t row_bytes, uint32_t num_rows,
+                   uint32_t src_stride, uint32_t dst_stride);
+
+// 3D planar copy
+int kv_dma_3d_copy(int ch, uint32_t src, uint32_t dst,
+                   uint32_t row_bytes, uint32_t num_rows, uint32_t num_planes,
+                   uint32_t src_stride, uint32_t dst_stride,
+                   uint32_t src_pstride, uint32_t dst_pstride);
+
+// Scatter-gather from descriptor list
+int kv_dma_sg_copy(int ch, uint32_t sg_addr, uint32_t sg_count);
+----
+
+All high-level functions call `kv_dma_ch_wait()` internally and return `0` on success
+or `-1` on AXI error. The caller must call `kv_dma_ch_reset()` afterwards to clear
+the DONE flag.
+
+==== Interrupt Functions
+
+[source,c]
+----
+void     kv_dma_enable_irq(int ch);          // Set IE in CTRL + global IRQ_EN bit
+void     kv_dma_disable_irq(int ch);         // Clear IE in CTRL + global IRQ_EN bit
+uint32_t kv_dma_get_irq_status(void);        // Read IRQ_STAT (one bit per channel)
+void     kv_dma_clear_irq(int ch);           // W1C clear IRQ_STAT bit for channel
+----
+
+==== Performance Counter Functions
+
+[source,c]
+----
+void     kv_dma_perf_enable(void);           // Enable cycle/byte counting
+void     kv_dma_perf_disable(void);          // Stop counting
+void     kv_dma_perf_reset(void);            // Reset counters and re-enable
+uint32_t kv_dma_perf_get_cycles(void);       // Cycles elapsed
+uint32_t kv_dma_perf_get_rd_bytes(void);     // Total bytes read
+uint32_t kv_dma_perf_get_wr_bytes(void);     // Total bytes written
+----
+
+==== Identification and Capability
+
+[source,c]
+----
+uint32_t kv_dma_get_id(void);                // Read ID register (0xD4A00100)
+uint32_t kv_dma_get_capability(void);        // Full 32-bit capability register
+uint32_t kv_dma_get_num_channels(void);      // Number of DMA channels [15:8]
+uint32_t kv_dma_get_max_burst_len(void);     // Maximum AXI burst length [7:0]
+uint32_t kv_dma_get_version(void);           // Hardware version [31:16]
+----
+
+[source,c]
+----
+#include "kv_cap.h"
+uint32_t cap = kv_dma_get_capability();
+printf("DMA cap: 0x%08X  ch=%u burst=%u\n",
+       cap, kv_dma_get_num_channels(), kv_dma_get_max_burst_len());
 ----
 
 === Performance Monitoring
 
 [source,c]
 ----
-// Enable performance counters
-KV_DMA_GLB_REG(KV_DMA_PERF_CTRL_OFF) = 0x3; // Reset + enable
+#include "kv_dma.h"
 
-// Start DMA transfer
-// ...
+// Reset and enable performance counters
+kv_dma_perf_reset();
 
-// Wait for completion
-// ...
+// Start a 1D copy (blocking)
+kv_dma_1d_copy(0, src_addr, dst_addr, 4096);
+kv_dma_ch_reset(0);
+
+// Stop counting so results are stable
+kv_dma_perf_disable();
 
 // Read statistics
-uint32_t cycles = KV_DMA_GLB_REG(KV_DMA_PERF_CYCLES_OFF);
-uint32_t rd_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_RD_BYTES_OFF);
-uint32_t wr_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_WR_BYTES_OFF);
+uint32_t cycles   = kv_dma_perf_get_cycles();
+uint32_t rd_bytes = kv_dma_perf_get_rd_bytes();
+uint32_t wr_bytes = kv_dma_perf_get_wr_bytes();
 
-// Calculate throughput
-float mbps = (float)(rd_bytes + wr_bytes) / cycles * sys_clk_hz / 1e6;
+printf("DMA: %u cycles, %u rd, %u wr\n", cycles, rd_bytes, wr_bytes);
+----
+
+'''
+
+== Timer Driver API
+
+=== Overview
+
+The Timer (`axi_timer.sv`) provides 4 independent 32-bit up-counters with PWM output,
+prescaler, dual compare, and per-channel interrupt support.
+
+Base Address:: `0x2005_0000` (KV_TIMER_BASE)
+PLIC Source:: 6 (KV_PLIC_SRC_TIMER)
+Header:: `kv_timer.h`
+
+=== Register Map
+
+Each timer channel occupies 0x20 bytes starting at `BASE + channel * 0x20`.
+
+[cols="2,1,1,5"]
+|===
+| Register | Offset | Access | Description
+
+| COUNT
+| 0x00
+| R/W
+| Current counter value (resets on COMPARE2 match)
+
+| COMPARE1
+| 0x04
+| R/W
+| Compare 1 threshold (interrupt / PWM rising edge)
+
+| COMPARE2
+| 0x08
+| R/W
+| Compare 2 threshold (period end + reload)
+
+| CTRL
+| 0x0C
+| R/W
+| Control register (see bit table below)
+|===
+
+Global registers (shared across all channels):
+
+[cols="2,1,1,5"]
+|===
+| Register | Offset | Access | Description
+
+| INT_STATUS
+| 0x80
+| W1C
+| Interrupt status — one bit per channel (bits 3:0)
+
+| INT_ENABLE
+| 0x84
+| R/W
+| Interrupt enable — one bit per channel (bits 3:0)
+
+| CAPABILITY
+| 0x88
+| RO
+| `{VERSION[31:16], NUM_CHANNELS[15:8], COUNTER_WIDTH[7:0]}`
+|===
+
+CTRL bit fields:
+
+[cols="1,1,5"]
+|===
+| Bit | Name | Description
+
+| 0 | EN | Timer enable
+| 1 | PWM_EN | PWM mode enable
+| 3 | INT_EN | Interrupt enable
+| 4 | PWM_POL | PWM polarity (1 = active high)
+| [31:16] | PRESCALE | Clock prescaler (counts at clock / (PRESCALE + 1))
+|===
+
+=== API Functions
+
+==== Initialization
+
+[source,c]
+----
+void kv_timer_init(void);                           // Disable all channels, clear counters
+void kv_timer_init_irq(uint32_t timer_mask);        // Enable per-channel global IRQ (bits 3:0)
+----
+
+==== Timer Mode
+
+[source,c]
+----
+// Start timer ch; period in ticks (counter resets at period-1); prescale divides clock
+void kv_timer_start(int ch, uint32_t period, uint16_t prescale);
+
+// Start timer with dual compare (compare1 = mid-period, period = end)
+void kv_timer_start_dual(int ch, uint32_t compare1, uint32_t period,
+                         uint16_t prescale, int int_en);
+
+void     kv_timer_stop(int ch);                     // Disable timer channel
+uint32_t kv_timer_get_count(int ch);                // Read current counter
+----
+
+==== PWM Mode
+
+[source,c]
+----
+// Start PWM: goes high at 0, low at duty, reloads at period-1
+void kv_timer_pwm_start(int ch, uint32_t period, uint32_t duty, uint16_t prescale);
+
+// Update duty cycle without restarting
+void kv_timer_pwm_set_duty(int ch, uint32_t period, uint32_t duty);
+
+void kv_timer_pwm_stop(int ch);                     // Stop PWM output
+----
+
+==== Interrupt Handling
+
+[source,c]
+----
+uint32_t kv_timer_get_int_status(void);             // Read INT_STATUS (bits 3:0)
+void     kv_timer_clear_int(uint32_t mask);         // W1C clear (pass bit mask)
+int      kv_timer_is_int_pending(int ch);           // Returns 1 if ch interrupt pending
+----
+
+==== Capability Register
+
+[source,c]
+----
+uint32_t kv_timer_get_capability(void);             // Full 32-bit capability register
+uint32_t kv_timer_get_num_channels(void);           // [15:8] — number of timer channels
+uint32_t kv_timer_get_counter_width(void);          // [7:0]  — counter width in bits
+uint32_t kv_timer_get_version(void);                // [31:16] — hardware version
+----
+
+[source,c]
+----
+#include "kv_cap.h"
+#include "kv_timer.h"
+uint32_t cap = kv_timer_get_capability();
+assert(cap == KV_CAP_TIMER);   // 0x00010420: v1, 4 channels, 32-bit
+printf("Timer: ch=%u width=%u\\n",
+       kv_timer_get_num_channels(),   // 4
+       kv_timer_get_counter_width()); // 32
+----
+
+=== Usage Example
+
+[source,c]
+----
+#include "kv_timer.h"
+#include "kv_plic.h"
+
+volatile int ticks = 0;
+
+void plic_timer_isr(void) {
+    ticks++;
+    kv_timer_clear_int(1 << 0);   // Clear channel 0 interrupt
+}
+
+int main(void) {
+    kv_timer_init();
+
+    // Generate 1 kHz interrupt (50 MHz clock, prescale=0, period=50000)
+    kv_timer_init_irq(0x1);       // Enable channel 0 global IRQ
+    kv_timer_start(0, 50000, 0);  // period=50000 ticks
+
+    kv_plic_set_priority(KV_PLIC_SRC_TIMER, 1);
+    kv_plic_enable_source(KV_PLIC_SRC_TIMER);
+    kv_irq_enable();
+
+    while (ticks < 100) {}        // Wait for 100 ms
+    kv_timer_stop(0);
+    kv_magic_exit(0);
+}
+----
+
+'''
+
+== GPIO Driver API
+
+=== Overview
+
+The GPIO controller (`axi_gpio.sv`) provides 4 independent 32-pin banks with
+configurable direction, atomic set/clear, edge/level interrupt detection,
+and per-bank loopback mode for testing.
+
+Base Address:: `0x2004_0000` (KV_GPIO_BASE)
+PLIC Source:: 5 (KV_PLIC_SRC_GPIO)
+Header:: `kv_gpio.h`
+
+=== Register Map
+
+Register banks are organized per pin-bank (banks 0–3, 32 pins each).
+
+[cols="2,1,1,5"]
+|===
+| Register | Bank-0 Offset | Access | Description
+
+| DATA_OUT | 0x00–0x0C | R/W | Output data (bank 0–3 at +0,+4,+8,+C)
+| SET      | 0x10–0x1C | WO  | Atomic set bits (write-1-to-set)
+| CLEAR    | 0x20–0x2C | WO  | Atomic clear bits (write-1-to-clear)
+| DATA_IN  | 0x30–0x3C | RO  | Input data (read current pin state)
+| DIR      | 0x40–0x4C | R/W | Direction (1=output, 0=input)
+| IE       | 0x50–0x5C | R/W | Interrupt enable mask
+| TRIGGER  | 0x60–0x6C | R/W | Trigger mode (1=edge, 0=level)
+| POLARITY | 0x70–0x7C | R/W | Polarity (edge: 1=rising; level: 1=high)
+| IS       | 0x80–0x8C | W1C | Interrupt status
+| LOOPBACK | 0x90–0x9C | R/W | Loopback enable (output → input path)
+| CAPABILITY | 0xA0    | RO  | `{VERSION[31:16], NUM_BANKS[15:8], NUM_PINS[7:0]}`
+|===
+
+=== API Functions
+
+==== Initialization
+
+[source,c]
+----
+void kv_gpio_init(void);                            // All inputs, IRQ off, loopback off
+----
+
+==== Direction and Output
+
+[source,c]
+----
+void     kv_gpio_set_dir(uint32_t bank, uint32_t mask);   // Set direction bits
+uint32_t kv_gpio_get_dir(uint32_t bank);                  // Read direction
+void     kv_gpio_write(uint32_t bank, uint32_t value);    // Write output register
+uint32_t kv_gpio_read_out(uint32_t bank);                 // Read output register
+void     kv_gpio_set(uint32_t bank, uint32_t mask);       // Atomic set (W1S)
+void     kv_gpio_clear(uint32_t bank, uint32_t mask);     // Atomic clear (W1C)
+void     kv_gpio_toggle(uint32_t bank, uint32_t mask);    // Toggle output bits
+----
+
+==== Input
+
+[source,c]
+----
+uint32_t kv_gpio_read(uint32_t bank);                     // Read current pin state
+----
+
+==== Interrupt Configuration
+
+[source,c]
+----
+void     kv_gpio_set_ie(uint32_t bank, uint32_t mask);       // Enable IRQ on pins
+uint32_t kv_gpio_read_ie(uint32_t bank);
+void     kv_gpio_set_trigger(uint32_t bank, uint32_t mask);  // 1=edge, 0=level
+uint32_t kv_gpio_read_trigger(uint32_t bank);
+void     kv_gpio_set_polarity(uint32_t bank, uint32_t mask); // 1=rising/high, 0=falling/low
+uint32_t kv_gpio_read_polarity(uint32_t bank);
+----
+
+==== Interrupt Status
+
+[source,c]
+----
+uint32_t kv_gpio_get_is(uint32_t bank);                   // Read interrupt status
+void     kv_gpio_clear_is(uint32_t bank, uint32_t mask);  // W1C clear IRQ bits
+----
+
+==== Loopback
+
+[source,c]
+----
+void     kv_gpio_set_loopback(uint32_t bank, uint32_t mask);  // Route out→in (testing)
+uint32_t kv_gpio_read_loopback(uint32_t bank);
+----
+
+==== Capability Register
+
+[source,c]
+----
+uint32_t kv_gpio_get_capability(void);  // Full 32-bit capability register
+uint32_t kv_gpio_get_num_pins(void);    // [7:0]  — pins per bank
+uint32_t kv_gpio_get_num_banks(void);   // [15:8] — number of banks
+uint32_t kv_gpio_get_version(void);     // [31:16] — hardware version
+----
+
+[source,c]
+----
+#include "kv_cap.h"
+#include "kv_gpio.h"
+uint32_t cap = kv_gpio_get_capability();
+assert(cap == KV_CAP_GPIO);   // 0x00010104: v1, 1 bank, 4 pins
+printf("GPIO: banks=%u pins_per_bank=%u\\n",
+       kv_gpio_get_num_banks(), kv_gpio_get_num_pins());
 ----
 
 '''
@@ -997,6 +1575,14 @@ Base Address:: `0x0C00_0000` (KV_PLIC_BASE)
 | 4
 | DMA
 | DMA channel done or error
+
+| 5
+| GPIO
+| GPIO pin interrupt (any bank)
+
+| 6
+| Timer
+| Timer channel interrupt (any channel)
 |===
 
 === API Functions
@@ -1600,6 +2186,7 @@ int main(void) {
 [source,c]
 ----
 #include "kv_platform.h"
+#include "kv_dma.h"
 
 #define DMA_CHANNEL 0
 #define DATA_SIZE 4096
@@ -1607,46 +2194,35 @@ int main(void) {
 __attribute__((aligned(4))) uint8_t src_buffer[DATA_SIZE];
 __attribute__((aligned(4))) uint8_t dst_buffer[DATA_SIZE];
 
-void dma_memcpy(void *dst, const void *src, uint32_t len) {
-    // Configure DMA channel 0 for 1D transfer
-    KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_SRC_OFF) = (uint32_t)src;
-    KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_DST_OFF) = (uint32_t)dst;
-    KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_XFER_OFF) = len;
-
-    // Reset and enable performance counters
-    KV_DMA_GLB_REG(KV_DMA_PERF_CTRL_OFF) = 0x3;
-
-    // Start transfer
-    KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_CTRL_OFF) =
-        KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_1D |
-        KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_START;
-
-    // Wait for completion
-    while (KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_STAT_OFF) & KV_DMA_STAT_BUSY);
-
-    // Check for errors
-    uint32_t stat = KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_STAT_OFF);
-    if (stat & KV_DMA_STAT_ERR) {
-        kv_magic_exit(1);
-    }
-
-    // Clear done flag
-    KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
-}
-
 int main(void) {
     // Initialize source buffer
     for (int i = 0; i < DATA_SIZE; i++) {
         src_buffer[i] = i & 0xFF;
     }
 
-    // Perform DMA copy
-    dma_memcpy(dst_buffer, src_buffer, DATA_SIZE);
+    // Reset and enable performance counters
+    kv_dma_perf_reset();
+
+    // Perform DMA copy using SDK (blocking 1D transfer)
+    int ret = kv_dma_1d_copy(DMA_CHANNEL,
+                             (uint32_t)src_buffer,
+                             (uint32_t)dst_buffer,
+                             DATA_SIZE);
+    kv_dma_ch_reset(DMA_CHANNEL);  // Clear DONE flag
+
+    if (ret != 0) {
+        kv_magic_exit(1);  // AXI error
+    }
+
+    // Stop counting so results are stable
+    kv_dma_perf_disable();
 
     // Read performance counters
-    uint32_t cycles = KV_DMA_GLB_REG(KV_DMA_PERF_CYCLES_OFF);
-    uint32_t rd_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_RD_BYTES_OFF);
-    uint32_t wr_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_WR_BYTES_OFF);
+    uint32_t cycles   = kv_dma_perf_get_cycles();
+    uint32_t rd_bytes = kv_dma_perf_get_rd_bytes();
+    uint32_t wr_bytes = kv_dma_perf_get_wr_bytes();
+
+    printf("DMA: %u cycles, %u rd, %u wr\n", cycles, rd_bytes, wr_bytes);
 
     // Verify data
     for (int i = 0; i < DATA_SIZE; i++) {
@@ -1717,6 +2293,7 @@ Common runtime files in `sw/common/`:
 | IS | 0x0C | Interrupt status (W1C)
 | LEVEL | 0x10 | Baud rate divisor
 | CTRL | 0x14 | LOOPBACK(0)
+| CAP  | 0x18 | Capability (RO): `{VERSION[31:16], TX_DEPTH[15:8], RX_DEPTH[7:0]}`
 |===
 
 === SPI Registers
@@ -1732,6 +2309,7 @@ Common runtime files in `sw/common/`:
 | STATUS | 0x10 | BUSY(0), TX_READY(1), RX_VALID(2)
 | IE | 0x14 | Interrupt enable
 | IS | 0x18 | Interrupt status (W1C)
+| CAP | 0x1C | Capability (RO): `{VERSION[31:16], TX_DEPTH[15:8], RX_DEPTH[7:0]}`
 |===
 
 === I2C Registers
@@ -1747,6 +2325,7 @@ Common runtime files in `sw/common/`:
 | STATUS | 0x10 | BUSY(0), TX_READY(1), RX_VALID(2), ACK_RECV(3)
 | IE | 0x14 | Interrupt enable
 | IS | 0x18 | Interrupt status (W1C)
+| CAP | 0x1C | Capability (RO): `{VERSION[31:16], TX_DEPTH[15:8], RX_DEPTH[7:0]}`
 |===
 
 === DMA Channel Registers
@@ -1763,6 +2342,57 @@ Common runtime files in `sw/common/`:
 | SSTRIDE | 0x14 | Source stride (2D/3D)
 | DSTRIDE | 0x18 | Destination stride (2D/3D)
 | ROWCNT | 0x1C | Row count (2D/3D)
+| SPSTRIDE | 0x20 | Source plane stride (3D)
+| DPSTRIDE | 0x24 | Destination plane stride (3D)
+| PLANECNT | 0x28 | Plane count (3D)
+| SG_ADDR  | 0x2C | Scatter-gather descriptor list base address
+| SG_COUNT | 0x30 | Number of scatter-gather descriptors
+|===
+
+=== Timer Registers
+
+Per-channel registers (channel _n_ at `BASE + n * 0x20`):
+
+[cols="2,1,5"]
+|===
+| Register | Offset | Description
+
+| COUNT      | 0x00 | Current counter value (up-counter)
+| COMPARE1   | 0x04 | Compare 1: mid-period interrupt / PWM falling edge
+| COMPARE2   | 0x08 | Compare 2: period end (auto-reload)
+| CTRL       | 0x0C | EN(0), PWM_EN(1), INT_EN(3), PWM_POL(4), PRESCALE[31:16]
+|===
+
+Global registers:
+
+[cols="2,1,5"]
+|===
+| Register | Offset | Description
+
+| INT_STATUS | 0x80 | Interrupt status W1C (bits 3:0 = channels 3:0)
+| INT_ENABLE | 0x84 | Interrupt enable (bits 3:0)
+| CAPABILITY | 0x88 | Capability (RO): `{VERSION[31:16], NUM_CHANNELS[15:8], COUNTER_WIDTH[7:0]}`
+|===
+
+=== GPIO Registers
+
+All registers are replicated per bank (bank _b_ at offset `b * 4` within group):
+
+[cols="2,1,5"]
+|===
+| Register     | Base Offset | Description
+
+| DATA_OUT 0–3 | 0x00–0x0C | Output data
+| SET 0–3      | 0x10–0x1C | Atomic set (write-1-to-set)
+| CLEAR 0–3    | 0x20–0x2C | Atomic clear (write-1-to-clear)
+| DATA_IN 0–3  | 0x30–0x3C | Input pin state (RO)
+| DIR 0–3      | 0x40–0x4C | Direction (1=output, 0=input)
+| IE 0–3       | 0x50–0x5C | Interrupt enable
+| TRIGGER 0–3  | 0x60–0x6C | Trigger (1=edge, 0=level)
+| POLARITY 0–3 | 0x70–0x7C | Polarity (edge: 1=rising; level: 1=high)
+| IS 0–3       | 0x80–0x8C | Interrupt status (W1C)
+| LOOPBACK 0–3 | 0x90–0x9C | Loopback mode (output → input)
+| CAPABILITY   | 0xA0      | Capability (RO): `{VERSION[31:16], NUM_BANKS[15:8], NUM_PINS[7:0]}`
 |===
 
 '''

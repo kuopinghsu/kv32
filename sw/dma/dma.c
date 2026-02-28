@@ -16,12 +16,12 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "kv_platform.h"
+#include "kv_dma.h"
+#include "kv_cap.h"
 #include "kv_plic.h"
 #include "kv_irq.h"
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
-
-#define KV_DMA_FENCE()  __asm__ volatile ("fence" ::: "memory")
 
 static int g_pass, g_fail;
 
@@ -66,7 +66,7 @@ static void dma_mei_handler(uint32_t cause)
     (void)cause;
     uint32_t src = kv_plic_claim();
     if (src == (uint32_t)KV_PLIC_SRC_DMA) {
-        uint32_t irq = KV_DMA_GLB_REG(KV_DMA_IRQ_STAT_OFF);
+        uint32_t irq = kv_dma_get_irq_status();
         g_irq_stat = irq;
         /* Capture channel-level status before W1C clearing ch_done/ch_err */
         for (int ch = 0; ch < 4; ch++) {
@@ -74,8 +74,11 @@ static void dma_mei_handler(uint32_t cause)
                 g_ch_stat[ch] = KV_DMA_CH_REG(ch, KV_DMA_CH_STAT_OFF);
         }
         g_irq_fired = 1;
-        /* W1C clear: clears ch_done[i] and ch_err[i] for each set bit */
-        KV_DMA_GLB_REG(KV_DMA_IRQ_STAT_OFF) = irq;
+        /* W1C clear: one bit per fired channel */
+        for (int ch = 0; ch < 4; ch++) {
+            if (irq & (1u << ch))
+                kv_dma_clear_irq(ch);
+        }
     }
     kv_plic_complete(src);
 }
@@ -86,48 +89,6 @@ static void dma_setup_irq(void)
     kv_irq_register(KV_CAUSE_MEI, dma_mei_handler);
     kv_plic_init_source(KV_PLIC_SRC_DMA, 1);
     kv_irq_enable();
-}
-
-/* ── channel helpers ─────────────────────────────────────────────────────── */
-
-/* Disable channel and clear any stale done/err flags. */
-static void dma_ch_reset(int ch)
-{
-    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF) = 0;
-    KV_DMA_CH_REG(ch, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE | KV_DMA_STAT_ERR;
-    KV_DMA_FENCE();
-}
-
-/*
- * Configure and kick a 1-D transfer.
- * use_irq=1 → enable per-channel IE bit (caller must also set IRQ_EN).
- */
-static void dma_start_1d(int ch, uint32_t src, uint32_t dst,
-                         uint32_t len, int use_irq)
-{
-    uint32_t ctrl = KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC |
-                    KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_MODE_1D;
-    if (use_irq) ctrl |= KV_DMA_CTRL_IE;
-
-    KV_DMA_CH_REG(ch, KV_DMA_CH_SRC_OFF)  = src;
-    KV_DMA_CH_REG(ch, KV_DMA_CH_DST_OFF)  = dst;
-    KV_DMA_CH_REG(ch, KV_DMA_CH_XFER_OFF) = len;
-    KV_DMA_FENCE();
-    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF) = ctrl | KV_DMA_CTRL_START;
-    KV_DMA_FENCE();
-}
-
-/*
- * Poll channel STAT until DONE or ERR; returns 1=done, -1=error, 0=timeout.
- */
-static int dma_poll_done(int ch, uint32_t timeout)
-{
-    for (uint32_t i = 0; i < timeout; i++) {
-        uint32_t stat = KV_DMA_CH_REG(ch, KV_DMA_CH_STAT_OFF);
-        if (stat & KV_DMA_STAT_ERR)  return -1;
-        if (stat & KV_DMA_STAT_DONE) return  1;
-    }
-    return 0; /* timeout */
 }
 
 /* Count byte mismatches; print the first few. */
@@ -151,7 +112,7 @@ static int dma_verify(const uint8_t *expected, const uint8_t *got,
 /* ========================================================================== */
 static void test1_id(void)
 {
-    uint32_t id = KV_DMA_GLB_REG(KV_DMA_ID_OFF);
+    uint32_t id = kv_dma_get_id();
     if (id == 0xD4A00100U) {
         TEST_PASS(1);
     } else {
@@ -168,22 +129,16 @@ static void test2_1d_poll(void)
     volatile uint8_t *s = (volatile uint8_t *)buf_src0;
     volatile uint8_t *d = (volatile uint8_t *)buf_dst0;
     for (int i = 0; i < 64; i++) { s[i] = (uint8_t)(0xAA ^ i); d[i] = 0; }
-    KV_DMA_FENCE();
+    __asm__ volatile("fence" ::: "memory");
 
-    dma_ch_reset(0);
-    dma_start_1d(0, (uint32_t)(uintptr_t)buf_src0,
-                    (uint32_t)(uintptr_t)buf_dst0, 64, 0);
+    int r = kv_dma_1d_copy(0, (uint32_t)(uintptr_t)buf_src0,
+                               (uint32_t)(uintptr_t)buf_dst0, 64);
+    kv_dma_ch_reset(0);
 
-    int r = dma_poll_done(0, 1000000);
-    if (r <= 0) {
-        TEST_FAIL(2, r == 0 ? "timeout" : "AXI error");
-        dma_ch_reset(0);
+    if (r != 0) {
+        TEST_FAIL(2, "AXI error");
         return;
     }
-    KV_DMA_CH_REG(0, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
-    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = 0;
-    KV_DMA_FENCE();
-
     int e = dma_verify(buf_src0, buf_dst0, 64, "1D-poll");
     if (e == 0) TEST_PASS(2); else TEST_FAIL(2, "data mismatch");
 }
@@ -196,40 +151,42 @@ static void test3_1d_irq(void)
     volatile uint8_t *s = (volatile uint8_t *)buf_src1;
     volatile uint8_t *d = (volatile uint8_t *)buf_dst1;
     for (int i = 0; i < 128; i++) { s[i] = (uint8_t)(0x5A + i); d[i] = 0; }
-    KV_DMA_FENCE();
+    __asm__ volatile("fence" ::: "memory");
 
     g_irq_fired = 0;
     g_irq_stat  = 0;
     g_ch_stat[1]= 0;
 
-    /* Enable global IRQ for channel 1 */
-    KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) |= (1u << 1);
-    dma_ch_reset(1);
-    dma_start_1d(1, (uint32_t)(uintptr_t)buf_src1,
-                    (uint32_t)(uintptr_t)buf_dst1, 128, 1 /* IE */);
+    kv_dma_ch_reset(1);
+    KV_DMA_CH_REG(1, KV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)buf_src1;
+    KV_DMA_CH_REG(1, KV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)buf_dst1;
+    KV_DMA_CH_REG(1, KV_DMA_CH_XFER_OFF) = 128;
+    KV_DMA_CH_REG(1, KV_DMA_CH_CTRL_OFF) = KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC |
+                                            KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_MODE_1D;
+    kv_dma_enable_irq(1);   /* sets IE in CTRL + enables IRQ_EN bit 1 */
+    kv_dma_ch_start(1);
+    __asm__ volatile("fence" ::: "memory");
 
     uint32_t to = 2000000;
     while (!g_irq_fired && --to);
 
     if (!g_irq_fired) {
         TEST_FAIL(3, "IRQ never fired");
-        dma_ch_reset(1);
-        KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) &= ~(1u << 1);
+        kv_dma_ch_reset(1);
+        kv_dma_disable_irq(1);
         return;
     }
     if (!(g_irq_stat & (1u << 1))) {
         printf("  IRQ_STAT=0x%08lx, expected bit 1 set\n", (unsigned long)g_irq_stat);
         TEST_FAIL(3, "wrong IRQ_STAT");
-        dma_ch_reset(1);
-        KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) &= ~(1u << 1);
+        kv_dma_ch_reset(1);
+        kv_dma_disable_irq(1);
         return;
     }
 
-    /* IRQ handler already W1C-cleared IRQ_STAT (and ch_done/ch_err).
-     * Disable channel and clean up. */
-    KV_DMA_CH_REG(1, KV_DMA_CH_CTRL_OFF) = 0;
-    KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF)   &= ~(1u << 1);
-    KV_DMA_FENCE();
+    /* IRQ handler already W1C-cleared IRQ_STAT. Disable channel and clean up. */
+    kv_dma_ch_reset(1);
+    kv_dma_disable_irq(1);
 
     int e = dma_verify(buf_src1, buf_dst1, 128, "1D-irq");
     if (e == 0) TEST_PASS(3); else TEST_FAIL(3, "data mismatch");
@@ -250,31 +207,19 @@ static void test4_2d(void)
     volatile uint8_t *d = (volatile uint8_t *)buf_dst2;
     for (int i = 0; i < 128; i++) { s[i] = (uint8_t)(0x10 + i); }
     for (int i = 0; i < 64;  i++) { d[i] = 0; }
-    KV_DMA_FENCE();
+    __asm__ volatile("fence" ::: "memory");
 
-    dma_ch_reset(2);
-    KV_DMA_CH_REG(2, KV_DMA_CH_SRC_OFF)     = (uint32_t)(uintptr_t)buf_src2;
-    KV_DMA_CH_REG(2, KV_DMA_CH_DST_OFF)     = (uint32_t)(uintptr_t)buf_dst2;
-    KV_DMA_CH_REG(2, KV_DMA_CH_XFER_OFF)    = 16;   /* bytes per row */
-    KV_DMA_CH_REG(2, KV_DMA_CH_SSTRIDE_OFF) = 32;   /* src row stride */
-    KV_DMA_CH_REG(2, KV_DMA_CH_DSTRIDE_OFF) = 16;   /* dst row stride (packed) */
-    KV_DMA_CH_REG(2, KV_DMA_CH_ROWCNT_OFF)  = 4;    /* number of rows */
-    KV_DMA_FENCE();
-    KV_DMA_CH_REG(2, KV_DMA_CH_CTRL_OFF) =
-        KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC |
-        KV_DMA_CTRL_MODE_2D | KV_DMA_CTRL_START;
-    KV_DMA_FENCE();
+    /* 4 rows × 16 bytes/row; src_stride=32, dst_stride=16 */
+    int r = kv_dma_2d_copy(2,
+                (uint32_t)(uintptr_t)buf_src2,
+                (uint32_t)(uintptr_t)buf_dst2,
+                16, 4, 32, 16);
+    kv_dma_ch_reset(2);
 
-    int r = dma_poll_done(2, 1000000);
-    if (r <= 0) {
-        TEST_FAIL(4, r == 0 ? "timeout" : "AXI error");
-        dma_ch_reset(2);
+    if (r != 0) {
+        TEST_FAIL(4, "AXI error");
         return;
     }
-    KV_DMA_CH_REG(2, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
-    KV_DMA_CH_REG(2, KV_DMA_CH_CTRL_OFF) = 0;
-    KV_DMA_FENCE();
-
     int errs = 0;
     for (int row = 0; row < 4; row++) {
         for (int b = 0; b < 16; b++) {
@@ -311,34 +256,19 @@ static void test5_3d(void)
     volatile uint8_t *d = (volatile uint8_t *)buf_dst3;
     for (int i = 0; i < 128; i++) { s[i] = (uint8_t)(0x20 + i); }
     for (int i = 0; i < 32;  i++) { d[i] = 0; }
-    KV_DMA_FENCE();
+    __asm__ volatile("fence" ::: "memory");
 
-    dma_ch_reset(3);
-    KV_DMA_CH_REG(3, KV_DMA_CH_SRC_OFF)      = (uint32_t)(uintptr_t)buf_src3;
-    KV_DMA_CH_REG(3, KV_DMA_CH_DST_OFF)      = (uint32_t)(uintptr_t)buf_dst3;
-    KV_DMA_CH_REG(3, KV_DMA_CH_XFER_OFF)     = 8;   /* bytes per row */
-    KV_DMA_CH_REG(3, KV_DMA_CH_SSTRIDE_OFF)  = 16;  /* src row stride */
-    KV_DMA_CH_REG(3, KV_DMA_CH_DSTRIDE_OFF)  = 8;   /* dst row stride (packed) */
-    KV_DMA_CH_REG(3, KV_DMA_CH_ROWCNT_OFF)   = 2;   /* rows per plane */
-    KV_DMA_CH_REG(3, KV_DMA_CH_SPSTRIDE_OFF) = 64;  /* src plane stride */
-    KV_DMA_CH_REG(3, KV_DMA_CH_DPSTRIDE_OFF) = 16;  /* dst plane stride (packed) */
-    KV_DMA_CH_REG(3, KV_DMA_CH_PLANECNT_OFF) = 2;   /* number of planes */
-    KV_DMA_FENCE();
-    KV_DMA_CH_REG(3, KV_DMA_CH_CTRL_OFF) =
-        KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC |
-        KV_DMA_CTRL_MODE_3D | KV_DMA_CTRL_START;
-    KV_DMA_FENCE();
+    /* 2 planes × 2 rows × 8 bytes; src_stride=16 dst_stride=8 src_pstride=64 dst_pstride=16 */
+    int r = kv_dma_3d_copy(3,
+                (uint32_t)(uintptr_t)buf_src3,
+                (uint32_t)(uintptr_t)buf_dst3,
+                8, 2, 2, 16, 8, 64, 16);
+    kv_dma_ch_reset(3);
 
-    int r = dma_poll_done(3, 1000000);
-    if (r <= 0) {
-        TEST_FAIL(5, r == 0 ? "timeout" : "AXI error");
-        dma_ch_reset(3);
+    if (r != 0) {
+        TEST_FAIL(5, "AXI error");
         return;
     }
-    KV_DMA_CH_REG(3, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
-    KV_DMA_CH_REG(3, KV_DMA_CH_CTRL_OFF) = 0;
-    KV_DMA_FENCE();
-
     struct { int src_off; int dst_off; int len; const char *lab; } spans[] = {
         {  0,  0, 8, "p0r0" },
         { 16,  8, 8, "p0r1" },
@@ -373,7 +303,7 @@ static void test6_sg(void)
     volatile uint8_t *s = (volatile uint8_t *)buf_sg_src;
     volatile uint8_t *d = (volatile uint8_t *)buf_sg_dst;
     for (int i = 0; i < 64; i++) { s[i] = (uint8_t)(0x30 + i); d[i] = 0; }
-    KV_DMA_FENCE();
+    __asm__ volatile("fence" ::: "memory");
 
     /* mode_ctrl: src_inc[2]=1, dst_inc[3]=1, mode[1:0]=00 → 0x0C */
     sg_descs[0].src_addr  = (uint32_t)(uintptr_t)(buf_sg_src +  0);
@@ -390,26 +320,15 @@ static void test6_sg(void)
     sg_descs[2].dst_addr  = (uint32_t)(uintptr_t)(buf_sg_dst + 48);
     sg_descs[2].xfer_cnt  = 16;
     sg_descs[2].mode_ctrl = 0x0Cu;
-    KV_DMA_FENCE();
+    __asm__ volatile("fence" ::: "memory");
 
-    dma_ch_reset(0);
-    KV_DMA_CH_REG(0, KV_DMA_CH_SGADDR_OFF) = (uint32_t)(uintptr_t)sg_descs;
-    KV_DMA_CH_REG(0, KV_DMA_CH_SGCNT_OFF)  = 3;
-    KV_DMA_FENCE();
-    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
-        KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_SG | KV_DMA_CTRL_START;
-    KV_DMA_FENCE();
+    int r = kv_dma_sg_copy(0, (uint32_t)(uintptr_t)sg_descs, 3);
+    kv_dma_ch_reset(0);
 
-    int r = dma_poll_done(0, 2000000);
-    if (r <= 0) {
-        TEST_FAIL(6, r == 0 ? "timeout" : "AXI error");
-        dma_ch_reset(0);
+    if (r != 0) {
+        TEST_FAIL(6, "AXI error");
         return;
     }
-    KV_DMA_CH_REG(0, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
-    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = 0;
-    KV_DMA_FENCE();
-
     int e = dma_verify(buf_sg_src, buf_sg_dst, 64, "SG");
     if (e == 0) TEST_PASS(6); else TEST_FAIL(6, "data mismatch");
 }
@@ -425,25 +344,22 @@ static void test7_irq_err(void)
     g_irq_stat   = 0;
     g_ch_stat[0] = 0;
 
-    /* Enable global IRQ for channel 0 */
-    KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) |= (1u << 0);
-    dma_ch_reset(0);
+    kv_dma_ch_reset(0);
+    kv_dma_enable_irq(0);   /* sets IRQ_EN bit 0 */
 
     KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF)  = 0x00000000UL;  /* unmapped → DECERR */
     KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)buf_dst0;
     KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 4;             /* minimum transfer  */
-    KV_DMA_FENCE();
-    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
-        KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC |
-        KV_DMA_CTRL_MODE_1D | KV_DMA_CTRL_IE | KV_DMA_CTRL_START;
-    KV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC |
+        KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_MODE_1D | KV_DMA_CTRL_IE;
+    kv_dma_ch_start(0);
+    __asm__ volatile("fence" ::: "memory");
 
     uint32_t to = 2000000;
     while (!g_irq_fired && --to);
 
-    KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) &= ~(1u << 0);
-    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = 0;
-    KV_DMA_FENCE();
+    kv_dma_ch_reset(0);
+    kv_dma_disable_irq(0);
 
     if (!g_irq_fired) {
         TEST_FAIL(7, "error IRQ never fired");
@@ -479,39 +395,36 @@ static void test8_multi_ch(void)
 
     for (int i = 0; i < 64; i++) { s0[i] = (uint8_t)(0xC0 + i); d0[i] = 0; }
     for (int i = 0; i < 64; i++) { s1[i] = (uint8_t)(0x80 + i); d1[i] = 0; }
-    KV_DMA_FENCE();
+    __asm__ volatile("fence" ::: "memory");
 
-    dma_ch_reset(0);
-    dma_ch_reset(1);
-
-    /* Load channel configs */
+    kv_dma_ch_reset(0);
     KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)buf_src4;
     KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)buf_dst4;
     KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 64;
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC |
+                                            KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_MODE_1D;
+
+    kv_dma_ch_reset(1);
     KV_DMA_CH_REG(1, KV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)buf_src5;
     KV_DMA_CH_REG(1, KV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)buf_dst5;
     KV_DMA_CH_REG(1, KV_DMA_CH_XFER_OFF) = 64;
-    KV_DMA_FENCE();
+    KV_DMA_CH_REG(1, KV_DMA_CH_CTRL_OFF) = KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC |
+                                            KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_MODE_1D;
+    __asm__ volatile("fence" ::: "memory");
 
-    /* Start both channels – engine will service them in round-robin */
-    uint32_t cfg = KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC |
-                   KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_MODE_1D | KV_DMA_CTRL_START;
-    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = cfg;
-    KV_DMA_CH_REG(1, KV_DMA_CH_CTRL_OFF) = cfg;
-    KV_DMA_FENCE();
+    /* Start both channels simultaneously – engine services them round-robin */
+    kv_dma_ch_start(0);
+    kv_dma_ch_start(1);
+    __asm__ volatile("fence" ::: "memory");
 
-    int r0 = dma_poll_done(0, 2000000);
-    int r1 = dma_poll_done(1, 2000000);
+    int r0 = kv_dma_ch_wait(0);
+    int r1 = kv_dma_ch_wait(1);
+    kv_dma_ch_reset(0);
+    kv_dma_ch_reset(1);
 
-    KV_DMA_CH_REG(0, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
-    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = 0;
-    KV_DMA_CH_REG(1, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
-    KV_DMA_CH_REG(1, KV_DMA_CH_CTRL_OFF) = 0;
-    KV_DMA_FENCE();
-
-    if (r0 <= 0 || r1 <= 0) {
+    if (r0 != 0 || r1 != 0) {
         printf("  ch0_result=%d ch1_result=%d\n", r0, r1);
-        TEST_FAIL(8, "transfer failed or timed out");
+        TEST_FAIL(8, "transfer failed");
         return;
     }
     int e0 = dma_verify(buf_src4, buf_dst4, 64, "MCH0");
@@ -531,36 +444,27 @@ static void test9_perf(void)
     for (uint32_t i = 0; i < XFER_BYTES; i++)
         perf_src[i] = (uint8_t)(i & 0xFF);
 
-    dma_ch_reset(0);
-
-    /* ----- Reset, then enable performance counters ----- */
-    KV_DMA_GLB_REG(KV_DMA_PERF_CTRL_OFF) = 2;   /* RESET bit */
-    KV_DMA_FENCE();
-    KV_DMA_GLB_REG(KV_DMA_PERF_CTRL_OFF) = 1;   /* ENABLE counting */
-    KV_DMA_FENCE();
-
-    /* ----- Configure and kick 4 KB 1-D transfer on channel 0 ----- */
+    /* ----- Set up channel 0 for 4 KB 1-D transfer ----- */
+    kv_dma_ch_reset(0);
     KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)perf_src;
     KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)perf_dst;
     KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = XFER_BYTES;
-    KV_DMA_FENCE();
-    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
-        KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC |
-        KV_DMA_CTRL_MODE_1D | KV_DMA_CTRL_START;
-    KV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC |
+                                            KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_MODE_1D;
+    __asm__ volatile("fence" ::: "memory");
 
-    int r = dma_poll_done(0, 5000000);
-    KV_DMA_FENCE();
-
-    /* ----- Stop performance counters ----- */
-    KV_DMA_GLB_REG(KV_DMA_PERF_CTRL_OFF) = 0;
-    KV_DMA_FENCE();
+    /* ----- Reset + enable performance counters, then start transfer ----- */
+    kv_dma_perf_reset();    /* reset counters and re-enable */
+    kv_dma_ch_start(0);
+    int r = kv_dma_ch_wait(0);  /* blocks until done or error */
+    kv_dma_perf_disable();
 
     /* ----- Read performance counters ----- */
-    uint32_t cycles   = KV_DMA_GLB_REG(KV_DMA_PERF_CYCLES_OFF);
-    uint32_t rd_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_RD_BYTES_OFF);
-    uint32_t wr_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_WR_BYTES_OFF);
+    uint32_t cycles   = kv_dma_perf_get_cycles();
+    uint32_t rd_bytes = kv_dma_perf_get_rd_bytes();
+    uint32_t wr_bytes = kv_dma_perf_get_wr_bytes();
     uint32_t total    = rd_bytes + wr_bytes;
+    kv_dma_ch_reset(0);
 
     /* ----- Compute throughput in MB/s (use uint64 to avoid overflow) ----- */
     /* throughput = total_bytes * SYS_CLK_HZ / (cycles * 1048576) */
@@ -573,13 +477,8 @@ static void test9_perf(void)
     printf("  PERF cycles=%-8lu  rd=%lu B  wr=%lu B  throughput=%lu MB/s\n",
            cycles, rd_bytes, wr_bytes, mbps);
 
-    /* ----- Cleanup channel ----- */
-    KV_DMA_CH_REG(0, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
-    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = 0;
-    KV_DMA_FENCE();
-
-    if (r <= 0) {
-        TEST_FAIL(9, "transfer failed or timed out");
+    if (r != 0) {
+        TEST_FAIL(9, "transfer failed");
         return;
     }
 
@@ -607,6 +506,19 @@ static void test9_perf(void)
 int main(void)
 {
     printf("=== DMA Test Suite ===\n");
+
+    /* TEST 0: Capability register (informational) */
+    printf("\n[TEST 0] Capability Register\n");
+    uint32_t cap = kv_dma_get_capability();
+    printf("  CAP raw:        0x%08lX\n", (unsigned long)cap);
+    printf("  CAP expected:   0x%08lX\n", (unsigned long)KV_CAP_DMA_VALUE);
+    printf("  Max Burst Len:  %lu  (exp %lu)\n",
+           (unsigned long)kv_dma_get_max_burst_len(), (unsigned long)KV_CAP_DMA_MAX_BURST_LEN);
+    printf("  Num Channels:   %lu  (exp %lu)\n",
+           (unsigned long)kv_dma_get_num_channels(), (unsigned long)KV_CAP_DMA_NUM_CHANNELS);
+    printf("  Version:        0x%04lX  (exp 0x%04lX)\n",
+           (unsigned long)kv_dma_get_version(), (unsigned long)KV_CAP_DMA_VERSION);
+    printf("\n");
 
     /* Arm IRQ path once (shared by tests 3 and 7) */
     dma_setup_irq();

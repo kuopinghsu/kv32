@@ -45,6 +45,9 @@
 #define KV_PLIC_SRC_UART    1
 #define KV_PLIC_SRC_SPI     2
 #define KV_PLIC_SRC_I2C     3
+#define KV_PLIC_SRC_DMA     4
+#define KV_PLIC_SRC_GPIO    5
+#define KV_PLIC_SRC_TIMER   6
 
 /* ═══════════════════════════════════════════════════════════════════
  * UART  (0x2000_0000)
@@ -59,6 +62,10 @@
 #define KV_UART_IS_OFF      0x0CUL  /* Interrupt Status (W1C)           */
 #define KV_UART_LEVEL_OFF   0x10UL  /* Baud-rate divisor / FIFO level   */
 #define KV_UART_CTRL_OFF    0x14UL  /* Control (loopback)               */
+#define KV_UART_CAP_OFF     0x18UL  /* Capability register (read-only)  */
+                                    /* [7:0] = TX_FIFO_DEPTH            */
+                                    /* [15:8] = RX_FIFO_DEPTH           */
+                                    /* [31:16] = VERSION (0x0001)       */
 
 /* STATUS bits */
 #define KV_UART_ST_TX_BUSY  (1u << 0)  /* TX FIFO full – cannot write   */
@@ -87,16 +94,20 @@
 #define KV_I2C_STATUS_OFF   0x10UL
 #define KV_I2C_IE_OFF       0x14UL
 #define KV_I2C_IS_OFF       0x18UL
+#define KV_I2C_CAP_OFF      0x1CUL  /* Capability register (read-only)  */
+                                    /* [7:0] = TX_FIFO_DEPTH            */
+                                    /* [15:8] = RX_FIFO_DEPTH           */
+                                    /* [31:16] = VERSION (0x0001)       */
 
 /* CTRL bits */
-#define KV_I2C_CTRL_ENABLE  (1u << 0)  /* Enable controller            */
+#define KV_I2C_CTRL_ENABLE  (1u << 0)  /* Enable controller             */
 #define KV_I2C_CTRL_START   (1u << 1)  /* Issue START condition         */
 #define KV_I2C_CTRL_STOP    (1u << 2)  /* Issue STOP condition          */
 #define KV_I2C_CTRL_READ    (1u << 3)  /* Read byte (vs write)          */
 #define KV_I2C_CTRL_NACK    (1u << 4)  /* Send NACK after read byte     */
 
 /* STATUS bits */
-#define KV_I2C_ST_BUSY      (1u << 0)  /* Transfer in progress         */
+#define KV_I2C_ST_BUSY      (1u << 0)  /* Transfer in progress          */
 #define KV_I2C_ST_TX_READY  (1u << 1)  /* Can accept new TX data        */
 #define KV_I2C_ST_RX_VALID  (1u << 2)  /* Received byte available       */
 #define KV_I2C_ST_ACK_RECV  (1u << 3)  /* Slave ACKed last byte         */
@@ -120,6 +131,11 @@
 #define KV_SPI_STATUS_OFF   0x10UL
 #define KV_SPI_IE_OFF       0x14UL
 #define KV_SPI_IS_OFF       0x18UL
+#define KV_SPI_CAP_OFF      0x1CUL  /* Capability register (read-only)  */
+                                    /* [7:0] = TX_FIFO_DEPTH            */
+                                    /* [15:8] = RX_FIFO_DEPTH           */
+                                    /* [23:16] = NUM_CS (chip selects)  */
+                                    /* [31:24] = VERSION (0x01)         */
 
 /* CTRL bits */
 #define KV_SPI_CTRL_ENABLE    (1u << 0)  /* Enable controller            */
@@ -177,6 +193,10 @@
 #define KV_DMA_IRQ_STAT_OFF      0xF00UL  /* Channel done/err flags (W1C) */
 #define KV_DMA_IRQ_EN_OFF        0xF04UL  /* Per-channel IRQ global enable */
 #define KV_DMA_ID_OFF            0xF08UL  /* ID register: 0xD4A00100 (RO) */
+#define KV_DMA_CAP_OFF           0xF0CUL  /* Capability register (read-only) */
+                                          /* [7:0] = NUM_CHANNELS */
+                                          /* [15:8] = MAX_BURST_LEN */
+                                          /* [31:16] = VERSION (0x0001) */
 
 /* Performance counter register offsets (global, BASE + offset) */
 #define KV_DMA_PERF_CTRL_OFF     0xF10UL  /* [0]=enable; write [1]=1 to reset all */
@@ -205,6 +225,96 @@
 #define KV_DMA_CH_REG(ch, off) \
     KV_REG32(KV_DMA_BASE, (ch) * KV_DMA_CH_STRIDE + (off))
 #define KV_DMA_GLB_REG(off)    KV_REG32(KV_DMA_BASE, (off))
+
+/* ═══════════════════════════════════════════════════════════════════
+ * GPIO  (0x2004_0000, 64 KB)
+ * ══════════════════════════════════════════════════════════════════ */
+#define KV_GPIO_BASE              0x20040000UL
+#define KV_GPIO_SIZE              0x00010000UL
+
+/* Register offsets (per bank: 0-3, each bank controls 32 pins) */
+#define KV_GPIO_DATA_OUT0_OFF     0x00UL
+#define KV_GPIO_DATA_OUT1_OFF     0x04UL
+#define KV_GPIO_DATA_OUT2_OFF     0x08UL
+#define KV_GPIO_DATA_OUT3_OFF     0x0CUL
+
+#define KV_GPIO_SET0_OFF          0x10UL  /* Write-1-to-set */
+#define KV_GPIO_SET1_OFF          0x14UL
+#define KV_GPIO_SET2_OFF          0x18UL
+#define KV_GPIO_SET3_OFF          0x1CUL
+
+#define KV_GPIO_CLEAR0_OFF        0x20UL  /* Write-1-to-clear */
+#define KV_GPIO_CLEAR1_OFF        0x24UL
+#define KV_GPIO_CLEAR2_OFF        0x28UL
+#define KV_GPIO_CLEAR3_OFF        0x2CUL
+
+#define KV_GPIO_DATA_IN0_OFF      0x30UL  /* Read-only input data */
+#define KV_GPIO_DATA_IN1_OFF      0x34UL
+#define KV_GPIO_DATA_IN2_OFF      0x38UL
+#define KV_GPIO_DATA_IN3_OFF      0x3CUL
+
+#define KV_GPIO_DIR0_OFF          0x40UL  /* Direction: 1=output, 0=input */
+#define KV_GPIO_DIR1_OFF          0x44UL
+#define KV_GPIO_DIR2_OFF          0x48UL
+#define KV_GPIO_DIR3_OFF          0x4CUL
+
+#define KV_GPIO_IE0_OFF           0x50UL  /* Interrupt enable */
+#define KV_GPIO_IE1_OFF           0x54UL
+#define KV_GPIO_IE2_OFF           0x58UL
+#define KV_GPIO_IE3_OFF           0x5CUL
+
+#define KV_GPIO_TRIGGER0_OFF      0x60UL  /* 1=edge, 0=level */
+#define KV_GPIO_TRIGGER1_OFF      0x64UL
+#define KV_GPIO_TRIGGER2_OFF      0x68UL
+#define KV_GPIO_TRIGGER3_OFF      0x6CUL
+
+#define KV_GPIO_POLARITY0_OFF     0x70UL  /* edge: 1=rising, 0=falling; level: 1=high, 0=low */
+#define KV_GPIO_POLARITY1_OFF     0x74UL
+#define KV_GPIO_POLARITY2_OFF     0x78UL
+#define KV_GPIO_POLARITY3_OFF     0x7CUL
+
+#define KV_GPIO_IS0_OFF           0x80UL  /* Interrupt status (W1C) */
+#define KV_GPIO_IS1_OFF           0x84UL
+#define KV_GPIO_IS2_OFF           0x88UL
+#define KV_GPIO_IS3_OFF           0x8CUL
+
+#define KV_GPIO_LOOPBACK0_OFF     0x90UL  /* Loopback enable (1=loopback, 0=normal) */
+#define KV_GPIO_LOOPBACK1_OFF     0x94UL
+#define KV_GPIO_LOOPBACK2_OFF     0x98UL
+#define KV_GPIO_LOOPBACK3_OFF     0x9CUL
+
+#define KV_GPIO_CAP_OFF           0xA0UL  /* Read-only capability register */
+                                          /* [7:0] = NUM_PINS (number of GPIO pins) */
+                                          /* [15:8] = NUM_BANKS (number of register banks) */
+                                          /* [31:16] = VERSION (0x0001) */
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Timer/PWM  (0x2005_0000, 64 KB)
+ * ══════════════════════════════════════════════════════════════════ */
+#define KV_TIMER_BASE             0x20050000UL
+#define KV_TIMER_SIZE             0x00010000UL
+
+/* Per-channel register offsets (4 timers, channel stride = 0x20) */
+#define KV_TIMER_CH_STRIDE        0x20UL
+#define KV_TIMER_COUNT_OFF        0x00UL  /* Counter value (R/W) */
+#define KV_TIMER_COMPARE1_OFF     0x04UL  /* Compare 1: interrupt / PWM rise */
+#define KV_TIMER_COMPARE2_OFF     0x08UL  /* Compare 2: PWM fall + reload */
+#define KV_TIMER_CTRL_OFF         0x0CUL  /* Control register */
+
+/* Global interrupt registers */
+#define KV_TIMER_INT_STATUS_OFF   0x80UL  /* Interrupt status (W1C) */
+#define KV_TIMER_INT_ENABLE_OFF   0x84UL  /* Interrupt enable */
+#define KV_TIMER_CAP_OFF          0x88UL  /* Capability register (read-only) */
+                                          /* [7:0]  = COUNTER_WIDTH (bits)   */
+                                          /* [15:8] = NUM_CHANNELS (timers)  */
+                                          /* [31:16] = VERSION (0x0001) */
+
+/* CTRL register bits */
+#define KV_TIMER_CTRL_EN_BIT      0       /* [0]: Timer enable */
+#define KV_TIMER_CTRL_PWM_EN_BIT  1       /* [1]: PWM mode */
+#define KV_TIMER_CTRL_INT_EN_BIT  3       /* [3]: Interrupt enable */
+#define KV_TIMER_CTRL_PWM_POL_BIT 4       /* [4]: PWM polarity */
+/* [31:16]: Prescaler value */
 
 /* ═══════════════════════════════════════════════════════════════════
  * Register accessor macro  (firmware only; not used by simulator)

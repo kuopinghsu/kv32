@@ -122,4 +122,32 @@ static inline void kv_uart_loopback_disable(void)
     KV_UART_CTRL &= ~KV_UART_CTRL_LOOPBACK;
 }
 
+/* ─── capability register ────────────────────────────────────────── */
+
+#define KV_UART_CAP     KV_REG32(KV_UART_BASE, KV_UART_CAP_OFF)
+
+/* Read capability register (hardware configuration) */
+static inline uint32_t kv_uart_get_capability(void)
+{
+    return KV_UART_CAP;
+}
+
+/* Get TX FIFO depth from capability register */
+static inline uint32_t kv_uart_get_tx_fifo_depth(void)
+{
+    return KV_UART_CAP & 0xFF;  // [7:0]
+}
+
+/* Get RX FIFO depth from capability register */
+static inline uint32_t kv_uart_get_rx_fifo_depth(void)
+{
+    return (KV_UART_CAP >> 8) & 0xFF;  // [15:8]
+}
+
+/* Get UART version from capability register */
+static inline uint32_t kv_uart_get_version(void)
+{
+    return (KV_UART_CAP >> 16) & 0xFFFF;  // [31:16]
+}
+
 #endif /* KV_UART_H */

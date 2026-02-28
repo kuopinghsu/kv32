@@ -108,6 +108,10 @@ module axi_timer (
     output logic [3:0]  pwm_o
 );
 
+    // Capability register
+    localparam logic [15:0] TIMER_VERSION   = 16'h0001;
+    localparam logic [31:0] CAPABILITY_REG  = {TIMER_VERSION, 8'd4, 8'd32};  // 4 channels, 32-bit counters
+
     // ========================================================================
     // Timer Registers
     // ========================================================================
@@ -340,6 +344,7 @@ module axi_timer (
             // Global interrupt (0x80-0x8F)
             6'h20: rdata_next = {28'h0, int_status_r};  // INT_STATUS
             6'h21: rdata_next = {28'h0, int_enable_r};  // INT_ENABLE
+            6'h22: rdata_next = CAPABILITY_REG;         // CAPABILITY (RO)
             default: rdata_next = 32'h0;
         endcase
     end

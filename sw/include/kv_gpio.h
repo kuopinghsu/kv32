@@ -65,6 +65,8 @@
 #define KV_GPIO_LOOPBACK2   KV_REG32(KV_GPIO_BASE, KV_GPIO_LOOPBACK2_OFF)
 #define KV_GPIO_LOOPBACK3   KV_REG32(KV_GPIO_BASE, KV_GPIO_LOOPBACK3_OFF)
 
+#define KV_GPIO_CAP         KV_REG32(KV_GPIO_BASE, KV_GPIO_CAP_OFF)
+
 /* ─── init ────────────────────────────────────────────────────────── */
 
 /* Initialize GPIO: all pins as inputs, interrupts disabled */
@@ -306,6 +308,32 @@ static inline uint32_t kv_gpio_read_loopback(uint32_t bank)
         case 3: return KV_GPIO_LOOPBACK3;
         default: return 0;
     }
+}
+
+/* ─── capability register ─────────────────────────────────────────── */
+
+/* Read capability register (hardware configuration) */
+static inline uint32_t kv_gpio_get_capability(void)
+{
+    return KV_GPIO_CAP;
+}
+
+/* Get number of GPIO pins from capability register */
+static inline uint32_t kv_gpio_get_num_pins(void)
+{
+    return KV_GPIO_CAP & 0xFF;  // [7:0]
+}
+
+/* Get number of register banks from capability register */
+static inline uint32_t kv_gpio_get_num_banks(void)
+{
+    return (KV_GPIO_CAP >> 8) & 0xFF;  // [15:8]
+}
+
+/* Get GPIO version from capability register */
+static inline uint32_t kv_gpio_get_version(void)
+{
+    return (KV_GPIO_CAP >> 16) & 0xFFFF;  // [31:16]
 }
 
 #endif /* KV_GPIO_H */

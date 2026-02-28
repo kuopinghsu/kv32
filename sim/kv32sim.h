@@ -149,6 +149,8 @@ public:
     CLINTDevice* clint;
     PLICDevice* plic;
     DMADevice* dma;
+    GPIODevice* gpio;
+    TimerDevice* timer;
 
     uint32_t tohost_addr;
     std::ofstream trace_file;

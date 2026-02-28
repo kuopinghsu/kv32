@@ -185,6 +185,30 @@ set_property -quiet IOSTANDARD LVCMOS33 [get_ports led0]
 set_property -quiet IOSTANDARD LVCMOS33 [get_ports led1]
 
 # ============================================================================
+# GPIO (8 bidirectional pins)
+# ============================================================================
+# Assign PACKAGE_PIN for each GPIO pin according to your board layout
+# set_property PACKAGE_PIN <PIN> [get_ports {gpio[0]}]
+# set_property PACKAGE_PIN <PIN> [get_ports {gpio[1]}]
+# set_property PACKAGE_PIN <PIN> [get_ports {gpio[2]}]
+# set_property PACKAGE_PIN <PIN> [get_ports {gpio[3]}]
+# set_property PACKAGE_PIN <PIN> [get_ports {gpio[4]}]
+# set_property PACKAGE_PIN <PIN> [get_ports {gpio[5]}]
+# set_property PACKAGE_PIN <PIN> [get_ports {gpio[6]}]
+# set_property PACKAGE_PIN <PIN> [get_ports {gpio[7]}]
+set_property -quiet IOSTANDARD LVCMOS33 [get_ports {gpio[*]}]
+
+# ============================================================================
+# PWM Outputs (4 channels)
+# ============================================================================
+# Assign PACKAGE_PIN for each PWM channel according to your board layout
+# set_property PACKAGE_PIN <PIN> [get_ports {pwm[0]}]
+# set_property PACKAGE_PIN <PIN> [get_ports {pwm[1]}]
+# set_property PACKAGE_PIN <PIN> [get_ports {pwm[2]}]
+# set_property PACKAGE_PIN <PIN> [get_ports {pwm[3]}]
+set_property -quiet IOSTANDARD LVCMOS33 [get_ports {pwm[*]}]
+
+# ============================================================================
 # Timing Constraints
 # ============================================================================
 
@@ -221,3 +245,10 @@ set_false_path -to [get_ports dbg_tdo]
 # LED outputs (async)
 set_false_path -to [get_ports led0]
 set_false_path -to [get_ports led1]
+
+# GPIO pins (async, bidirectional)
+set_false_path -from [get_ports {gpio[*]}]
+set_false_path -to [get_ports {gpio[*]}]
+
+# PWM outputs (async)
+set_false_path -to [get_ports {pwm[*]}]

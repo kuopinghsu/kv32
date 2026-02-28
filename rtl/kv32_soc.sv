@@ -6,7 +6,7 @@
 // Integrates all major components of the RISC-V SoC:
 //   - RV32IMA processor core (5-stage pipeline)
 //   - External 2MB RAM via AXI4-Lite
-//   - Memory-mapped peripherals (CLINT, PLIC, UART, SPI, I2C, Magic)
+//   - Memory-mapped peripherals (CLINT, PLIC, UART, SPI, I2C, GPIO, Timer, DMA, Magic)
 //   - AXI4-Lite interconnect infrastructure
 //
 // This is the top-level module that should be instantiated in testbenches
@@ -21,8 +21,11 @@
 //   - High-speed UART for serial I/O (up to 25 Mbaud)
 //   - SPI master controller for peripheral interfacing
 //   - I2C master controller for sensor interfacing
+//   - GPIO with up to 128 configurable pins
+//   - Timer/PWM with 4 independent 32-bit timers
+//   - DMA controller for memory-to-memory transfers
 //   - Magic addresses for simulation control
-//   - AXI4-Lite system bus with 1-to-7 interconnect
+//   - AXI4-Lite system bus with 1-to-10 interconnect
 //
 // Memory Map:
 //   0x8000_0000 - 0x801F_FFFF: RAM (2MB)
@@ -31,6 +34,9 @@
 //   0x2000_0000 - 0x2000_FFFF: UART
 //   0x2001_0000 - 0x2001_FFFF: I2C
 //   0x2002_0000 - 0x2002_FFFF: SPI
+//   0x2003_0000 - 0x2003_FFFF: DMA
+//   0x2004_0000 - 0x2004_FFFF: GPIO
+//   0x2005_0000 - 0x2005_FFFF: Timer
 //   0xFFFF_0000 - 0xFFFF_FFFF: Magic addresses
 //
 // Default Configuration:
@@ -54,7 +60,8 @@ module kv32_soc #(
     parameter ICACHE_LINE_SIZE  = 32,               // Cache line size in bytes (32 = 8 words/line)
     parameter ICACHE_WAYS       = 2,                // Cache associativity (number of ways)
     parameter USE_CJTAG         = 1,                // JTAG mode: 0=JTAG, 1=cJTAG
-    parameter JTAG_IDCODE       = 32'h1DEAD3FF      // JTAG device identification code
+    parameter JTAG_IDCODE       = 32'h1DEAD3FF,     // JTAG device identification code
+    parameter GPIO_NUM_PINS     = 4                 // Number of GPIO pins (1-128, generates only required registers)
 )(
     input  logic clk,
     input  logic rst_n,
@@ -76,6 +83,14 @@ module kv32_soc #(
     output logic        i2c_sda_o,
     input  logic        i2c_sda_i,
     output logic        i2c_sda_oe,
+
+    // GPIO pins
+    output logic [GPIO_NUM_PINS-1:0] gpio_o,
+    input  logic [GPIO_NUM_PINS-1:0] gpio_i,
+    output logic [GPIO_NUM_PINS-1:0] gpio_oe,
+
+    // PWM outputs from Timer peripheral
+    output logic [3:0]  pwm_o,
 
     // JTAG/cJTAG Debug Interface (4-pin, muxed)
     input  logic        jtag_tck_i,         // Pin 0: TCK/TCKC (clock)
@@ -363,10 +378,56 @@ module kv32_soc #(
     logic        i2c_axi_rready;
 
     // ========================================================================
-    // AXI Interconnect <-> Magic Address Signals
+    // AXI Interconnect <-> GPIO Peripheral Signals
+    // ========================================================================
+    // Memory-mapped GPIO controller with up to 128 configurable pins
+    // Base address: 0x2004_0000
+    logic [31:0] gpio_axi_awaddr;
+    logic        gpio_axi_awvalid;
+    logic        gpio_axi_awready;
+    logic [31:0] gpio_axi_wdata;
+    logic [3:0]  gpio_axi_wstrb;
+    logic        gpio_axi_wvalid;
+    logic        gpio_axi_wready;
+    logic [1:0]  gpio_axi_bresp;
+    logic        gpio_axi_bvalid;
+    logic        gpio_axi_bready;
+    logic [31:0] gpio_axi_araddr;
+    logic        gpio_axi_arvalid;
+    logic        gpio_axi_arready;
+    logic [31:0] gpio_axi_rdata;
+    logic [1:0]  gpio_axi_rresp;
+    logic        gpio_axi_rvalid;
+    logic        gpio_axi_rready;
+
+    // ========================================================================
+    // AXI Interconnect <-> Timer Peripheral Signals
+    // ========================================================================
+    // Memory-mapped Timer/PWM controller with 4 independent 32-bit timers
+    // Base address: 0x2005_0000
+    logic [31:0] timer_axi_awaddr;
+    logic        timer_axi_awvalid;
+    logic        timer_axi_awready;
+    logic [31:0] timer_axi_wdata;
+    logic [3:0]  timer_axi_wstrb;
+    logic        timer_axi_wvalid;
+    logic        timer_axi_wready;
+    logic [1:0]  timer_axi_bresp;
+    logic        timer_axi_bvalid;
+    logic        timer_axi_bready;
+    logic [31:0] timer_axi_araddr;
+    logic        timer_axi_arvalid;
+    logic        timer_axi_arready;
+    logic [31:0] timer_axi_rdata;
+    logic [1:0]  timer_axi_rresp;
+    logic        timer_axi_rvalid;
+    logic        timer_axi_rready;
+
+    // ========================================================================
+    // AXI Interconnect <-> DMA Controller Signals
     // ========================================================================
     // Special addresses for simulation control (exit, pass/fail, etc.)
-    // Base address: 0xFFFF_0000
+    // Base address: 0x2003_0000
     // DMA configuration slave AXI-Lite signals (xbar s6 → axi_dma cfg port)
     logic [31:0] dma_cfg_axi_awaddr;  logic dma_cfg_axi_awvalid;  logic dma_cfg_axi_awready;
     logic [31:0] dma_cfg_axi_wdata;   logic [3:0] dma_cfg_axi_wstrb;
@@ -391,10 +452,14 @@ module kv32_soc #(
     logic [31:0] dma_m_axi_rdata;   logic [1:0] dma_m_axi_rresp;
     logic [axi_pkg::AXI_ID_WIDTH-1:0] dma_m_axi_rid;
     logic        dma_m_axi_rlast;   logic dma_m_axi_rvalid;  logic dma_m_axi_rready;
-    logic dma_irq;
     assign dma_m_axi_awid = '0;
     assign dma_m_axi_arid = '0;
 
+    // ========================================================================
+    // AXI Interconnect <-> Magic Device Signals
+    // ========================================================================
+    // Special addresses for simulation control (exit, pass/fail, etc.)
+    // Base address: 0xFFFF_0000
     logic [31:0] magic_axi_awaddr;
     logic        magic_axi_awvalid;
     logic        magic_axi_awready;
@@ -428,6 +493,9 @@ module kv32_soc #(
     logic        uart_irq;            // UART FIFO interrupt → PLIC source 1
     logic        spi_irq;             // SPI  FIFO interrupt → PLIC source 2
     logic        i2c_irq;             // I2C  FIFO interrupt → PLIC source 3
+    logic        dma_irq;             // DMA interrupt → PLIC source 4
+    logic        gpio_irq;            // GPIO interrupt → PLIC source 5
+    logic        pwm_timer_irq;       // Timer/PWM interrupt → PLIC source 6
 
     // ========================================================================
     // Debug Interface Signals
@@ -1041,24 +1109,62 @@ module kv32_soc #(
         .s6_axi_rvalid  (dma_cfg_axi_rvalid),
         .s6_axi_rready  (dma_cfg_axi_rready),
 
-        // Slave 7: Magic Device
-        .s7_axi_awaddr  (magic_axi_awaddr),
-        .s7_axi_awvalid (magic_axi_awvalid),
-        .s7_axi_awready (magic_axi_awready),
-        .s7_axi_wdata   (magic_axi_wdata),
-        .s7_axi_wstrb   (magic_axi_wstrb),
-        .s7_axi_wvalid  (magic_axi_wvalid),
-        .s7_axi_wready  (magic_axi_wready),
-        .s7_axi_bresp   (magic_axi_bresp),
-        .s7_axi_bvalid  (magic_axi_bvalid),
-        .s7_axi_bready  (magic_axi_bready),
-        .s7_axi_araddr  (magic_axi_araddr),
-        .s7_axi_arvalid (magic_axi_arvalid),
-        .s7_axi_arready (magic_axi_arready),
-        .s7_axi_rdata   (magic_axi_rdata),
-        .s7_axi_rresp   (magic_axi_rresp),
-        .s7_axi_rvalid  (magic_axi_rvalid),
-        .s7_axi_rready  (magic_axi_rready)
+        // Slave 7: GPIO
+        .s7_axi_awaddr  (gpio_axi_awaddr),
+        .s7_axi_awvalid (gpio_axi_awvalid),
+        .s7_axi_awready (gpio_axi_awready),
+        .s7_axi_wdata   (gpio_axi_wdata),
+        .s7_axi_wstrb   (gpio_axi_wstrb),
+        .s7_axi_wvalid  (gpio_axi_wvalid),
+        .s7_axi_wready  (gpio_axi_wready),
+        .s7_axi_bresp   (gpio_axi_bresp),
+        .s7_axi_bvalid  (gpio_axi_bvalid),
+        .s7_axi_bready  (gpio_axi_bready),
+        .s7_axi_araddr  (gpio_axi_araddr),
+        .s7_axi_arvalid (gpio_axi_arvalid),
+        .s7_axi_arready (gpio_axi_arready),
+        .s7_axi_rdata   (gpio_axi_rdata),
+        .s7_axi_rresp   (gpio_axi_rresp),
+        .s7_axi_rvalid  (gpio_axi_rvalid),
+        .s7_axi_rready  (gpio_axi_rready),
+
+        // Slave 8: Timer
+        .s8_axi_awaddr  (timer_axi_awaddr),
+        .s8_axi_awvalid (timer_axi_awvalid),
+        .s8_axi_awready (timer_axi_awready),
+        .s8_axi_wdata   (timer_axi_wdata),
+        .s8_axi_wstrb   (timer_axi_wstrb),
+        .s8_axi_wvalid  (timer_axi_wvalid),
+        .s8_axi_wready  (timer_axi_wready),
+        .s8_axi_bresp   (timer_axi_bresp),
+        .s8_axi_bvalid  (timer_axi_bvalid),
+        .s8_axi_bready  (timer_axi_bready),
+        .s8_axi_araddr  (timer_axi_araddr),
+        .s8_axi_arvalid (timer_axi_arvalid),
+        .s8_axi_arready (timer_axi_arready),
+        .s8_axi_rdata   (timer_axi_rdata),
+        .s8_axi_rresp   (timer_axi_rresp),
+        .s8_axi_rvalid  (timer_axi_rvalid),
+        .s8_axi_rready  (timer_axi_rready),
+
+        // Slave 9: Magic Device
+        .s9_axi_awaddr  (magic_axi_awaddr),
+        .s9_axi_awvalid (magic_axi_awvalid),
+        .s9_axi_awready (magic_axi_awready),
+        .s9_axi_wdata   (magic_axi_wdata),
+        .s9_axi_wstrb   (magic_axi_wstrb),
+        .s9_axi_wvalid  (magic_axi_wvalid),
+        .s9_axi_wready  (magic_axi_wready),
+        .s9_axi_bresp   (magic_axi_bresp),
+        .s9_axi_bvalid  (magic_axi_bvalid),
+        .s9_axi_bready  (magic_axi_bready),
+        .s9_axi_araddr  (magic_axi_araddr),
+        .s9_axi_arvalid (magic_axi_arvalid),
+        .s9_axi_arready (magic_axi_arready),
+        .s9_axi_rdata   (magic_axi_rdata),
+        .s9_axi_rresp   (magic_axi_rresp),
+        .s9_axi_rvalid  (magic_axi_rvalid),
+        .s9_axi_rready  (magic_axi_rready)
     );
 
     // ========================================================================
@@ -1123,13 +1229,18 @@ module kv32_soc #(
     //   [1] = UART RX-not-empty / TX-empty
     //   [2] = SPI  RX-not-empty / TX-empty
     //   [3] = I2C  RX-not-empty / TX-empty / STOP-done
-    //   [7:4] = reserved (tied 0)
+    //   [4] = DMA  transfer done / error
+    //   [5] = GPIO edge/level interrupts
+    //   [6] = Timer/PWM compare match
+    //   [7]   = reserved (tied 0)
     assign plic_irq_src[0]   = 1'b0;      // source 0 reserved
     assign plic_irq_src[1]   = uart_irq;
     assign plic_irq_src[2]   = spi_irq;
     assign plic_irq_src[3]   = i2c_irq;
     assign plic_irq_src[4]   = dma_irq;
-    assign plic_irq_src[7:5] = 3'b0;
+    assign plic_irq_src[5]   = gpio_irq;
+    assign plic_irq_src[6]   = pwm_timer_irq;
+    assign plic_irq_src[7]   = 1'b0;
 
     axi_plic #(
         .NUM_IRQ(PLIC_NUM_IRQ)
@@ -1349,7 +1460,85 @@ module kv32_soc #(
     );
 
     // ========================================================================
-    // Magic Device (simulation control, slave 7 at 0xFFFF_0000)
+    // GPIO Controller (slave 7 at 0x2004_0000)
+    // ========================================================================
+    // Configurable GPIO with up to 128 pins, interrupt support, and atomic SET/CLEAR
+    // Memory map: 0x2004_0000 (DATA_OUT, SET, CLEAR, DATA_IN, DIR, IE, TRIGGER, POL, IS)
+    // Features: Input synchronization, edge/level interrupts, parameterized pin count
+    axi_gpio #(
+        .NUM_PINS(GPIO_NUM_PINS)
+    ) gpio (
+        .clk(clk),
+        .rst_n(rst_n),
+
+        .axi_awaddr(gpio_axi_awaddr),
+        .axi_awvalid(gpio_axi_awvalid),
+        .axi_awready(gpio_axi_awready),
+
+        .axi_wdata(gpio_axi_wdata),
+        .axi_wstrb(gpio_axi_wstrb),
+        .axi_wvalid(gpio_axi_wvalid),
+        .axi_wready(gpio_axi_wready),
+
+        .axi_bresp(gpio_axi_bresp),
+        .axi_bvalid(gpio_axi_bvalid),
+        .axi_bready(gpio_axi_bready),
+
+        .axi_araddr(gpio_axi_araddr),
+        .axi_arvalid(gpio_axi_arvalid),
+        .axi_arready(gpio_axi_arready),
+
+        .axi_rdata(gpio_axi_rdata),
+        .axi_rresp(gpio_axi_rresp),
+        .axi_rvalid(gpio_axi_rvalid),
+        .axi_rready(gpio_axi_rready),
+
+        .irq(gpio_irq),
+
+        .gpio_o(gpio_o),
+        .gpio_i(gpio_i),
+        .gpio_oe(gpio_oe)
+    );
+
+    // ========================================================================
+    // Timer/PWM Controller (slave 8 at 0x2005_0000)
+    // ========================================================================
+    // Four independent 32-bit timers with PWM output generation
+    // Memory map: 0x2005_0000 (TIMERx_COUNT, COMPARE, CTRL, PWM, PWM_MAX, INT_STATUS, INT_EN)
+    // Features: Configurable prescaler, auto-reload, compare interrupts, PWM duty cycle control
+    axi_timer timer (
+        .clk(clk),
+        .rst_n(rst_n),
+
+        .axi_awaddr(timer_axi_awaddr),
+        .axi_awvalid(timer_axi_awvalid),
+        .axi_awready(timer_axi_awready),
+
+        .axi_wdata(timer_axi_wdata),
+        .axi_wstrb(timer_axi_wstrb),
+        .axi_wvalid(timer_axi_wvalid),
+        .axi_wready(timer_axi_wready),
+
+        .axi_bresp(timer_axi_bresp),
+        .axi_bvalid(timer_axi_bvalid),
+        .axi_bready(timer_axi_bready),
+
+        .axi_araddr(timer_axi_araddr),
+        .axi_arvalid(timer_axi_arvalid),
+        .axi_arready(timer_axi_arready),
+
+        .axi_rdata(timer_axi_rdata),
+        .axi_rresp(timer_axi_rresp),
+        .axi_rvalid(timer_axi_rvalid),
+        .axi_rready(timer_axi_rready),
+
+        .irq(pwm_timer_irq),
+
+        .pwm_o(pwm_o)
+    );
+
+    // ========================================================================
+    // Magic Device (simulation control, slave 9 at 0xFFFF_0000)
     // ========================================================================
     // Provides special memory-mapped addresses for testbench control:
     //   - Exit simulation

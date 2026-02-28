@@ -239,4 +239,32 @@ static inline uint32_t kv_dma_get_id(void)
     return KV_DMA_GLB_REG(KV_DMA_ID_OFF);
 }
 
+/* ─── capability register ────────────────────────────────────────── */
+
+#define KV_DMA_CAP      KV_REG32(KV_DMA_BASE, KV_DMA_CAP_OFF)
+
+/* Read capability register (hardware configuration) */
+static inline uint32_t kv_dma_get_capability(void)
+{
+    return KV_DMA_CAP;
+}
+
+/* Get maximum burst length from capability register */
+static inline uint32_t kv_dma_get_max_burst_len(void)
+{
+    return KV_DMA_CAP & 0xFF;  // [7:0]
+}
+
+/* Get number of DMA channels from capability register */
+static inline uint32_t kv_dma_get_num_channels(void)
+{
+    return (KV_DMA_CAP >> 8) & 0xFF;  // [15:8]
+}
+
+/* Get DMA version from capability register */
+static inline uint32_t kv_dma_get_version(void)
+{
+    return (KV_DMA_CAP >> 16) & 0xFFFF;  // [31:16]
+}
+
 #endif /* KV_DMA_H */

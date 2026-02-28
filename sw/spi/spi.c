@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "kv_spi.h"
+#include "kv_cap.h"
 #include "kv_irq.h"
 #include "kv_plic.h"
 #include "kv_clint.h"
@@ -358,6 +359,21 @@ int main(void)
     printf("  Base Address: 0x%08X\n", (unsigned int)KV_SPI_BASE);
     printf("  4 flash memories, each 4KB\n");
     printf("========================================\n");
+
+    /* TEST 0: Capability register (informational) */
+    printf("\n[TEST 0] Capability Register\n");
+    uint32_t cap = kv_spi_get_capability();
+    printf("  CAP raw:        0x%08lX\n", (unsigned long)cap);
+    printf("  CAP expected:   0x%08lX\n", (unsigned long)KV_CAP_SPI_VALUE);
+    printf("  TX FIFO Depth:  %lu  (exp %lu)\n",
+           (unsigned long)kv_spi_get_tx_fifo_depth(), (unsigned long)KV_CAP_SPI_TX_FIFO_DEPTH);
+    printf("  RX FIFO Depth:  %lu  (exp %lu)\n",
+           (unsigned long)kv_spi_get_rx_fifo_depth(), (unsigned long)KV_CAP_SPI_RX_FIFO_DEPTH);
+    printf("  Chip Selects:   %lu  (exp %lu)\n",
+           (unsigned long)kv_spi_get_num_cs(), (unsigned long)KV_CAP_SPI_NUM_CS);
+    printf("  Version:        0x%02lX  (exp 0x%02lX)\n",
+           (unsigned long)kv_spi_get_version(), (unsigned long)KV_CAP_SPI_VERSION);
+    printf("\n");
 
     int t1 = (test1_init()             == 0) ? 1 : 0;
     int t2 = (test2_read_flash0()      == 0) ? 1 : 0;

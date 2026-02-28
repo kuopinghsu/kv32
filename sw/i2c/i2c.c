@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "kv_i2c.h"
+#include "kv_cap.h"
 #include "kv_irq.h"
 #include "kv_plic.h"
 #include "kv_clint.h"
@@ -306,6 +307,19 @@ int main(void)
     printf("  Base Address: 0x%08X\n", (unsigned int)KV_I2C_BASE);
     printf("  EEPROM: 24C02 @ 0x%02X (256 bytes)\n", EEPROM_ADDR);
     printf("========================================\n\n");
+
+    /* TEST 0: Capability register */
+    printf("[TEST 0] Capability Register\n");
+    uint32_t cap = kv_i2c_get_capability();
+    printf("  CAP raw:        0x%08lX\n", (unsigned long)cap);
+    printf("  CAP expected:   0x%08lX\n", (unsigned long)KV_CAP_I2C_VALUE);
+    printf("  TX FIFO Depth:  %lu  (exp %lu)\n",
+           (unsigned long)kv_i2c_get_tx_fifo_depth(), (unsigned long)KV_CAP_I2C_TX_FIFO_DEPTH);
+    printf("  RX FIFO Depth:  %lu  (exp %lu)\n",
+           (unsigned long)kv_i2c_get_rx_fifo_depth(), (unsigned long)KV_CAP_I2C_RX_FIFO_DEPTH);
+    printf("  Version:        0x%04lX  (exp 0x%04lX)\n",
+           (unsigned long)kv_i2c_get_version(), (unsigned long)KV_CAP_I2C_VERSION);
+    printf("\n");
 
     /* TEST 1: Initialisation */
     printf("[TEST 1] I2C Controller Initialization\n");

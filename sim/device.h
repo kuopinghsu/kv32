@@ -33,6 +33,12 @@
 #define I2C_SIZE            KV_I2C_SIZE
 #define SPI_BASE            KV_SPI_BASE
 #define SPI_SIZE            KV_SPI_SIZE
+#define DMA_BASE            KV_DMA_BASE
+#define DMA_SIZE            KV_DMA_SIZE
+#define GPIO_BASE           KV_GPIO_BASE
+#define GPIO_SIZE           KV_GPIO_SIZE
+#define TIMER_BASE          KV_TIMER_BASE
+#define TIMER_SIZE          KV_TIMER_SIZE
 #define MAGIC_BASE          KV_MAGIC_BASE
 #define MAGIC_SIZE          KV_MAGIC_SIZE
 
@@ -427,6 +433,95 @@ private:
                     bool src_inc, bool dst_inc);
     bool execute_transfer(int n);
     void finish_channel(int n, bool ok);
+};
+
+// GPIO Device Driver
+// Base address: 0x20040000
+// Matches RTL axi_gpio.sv register map.
+// Supports 4 banks of 32 pins each (128 pins total, configurable via NUM_PINS parameter).
+// Features: direction control, atomic set/clear, interrupts, loopback mode.
+class GPIODevice : public Device {
+private:
+    static const int MAX_PINS = 128;
+    static const int MAX_BANKS = 4;
+    
+    uint32_t data_out_r[MAX_BANKS];      // Output data
+    uint32_t dir_r[MAX_BANKS];           // Direction (1=output, 0=input)
+    uint32_t ie_r[MAX_BANKS];            // Interrupt enable
+    uint32_t trigger_r[MAX_BANKS];       // Trigger mode (1=edge, 0=level)
+    uint32_t polarity_r[MAX_BANKS];      // Polarity
+    uint32_t is_r[MAX_BANKS];            // Interrupt status
+    uint32_t loopback_r[MAX_BANKS];      // Loopback enable
+    
+    uint32_t gpio_i_sync[MAX_BANKS];     // Synchronized input (2-stage)
+    uint32_t gpio_i_prev[MAX_BANKS];     // Previous input for edge detection
+    
+    uint32_t external_input[MAX_BANKS];  // External pin input
+
+public:
+    GPIODevice();
+    virtual ~GPIODevice() {}
+
+    virtual uint32_t read(uint32_t offset, int size) override;
+    virtual void write(uint32_t offset, uint32_t value, int size) override;
+    virtual const char* name() const override { return "GPIO"; }
+    virtual void tick() override;
+    virtual void reset() override;
+
+    // IRQ: asserted when any enabled interrupt is pending
+    bool get_irq() const;
+    
+    // Set external input pins (for testing)
+    void set_external_input(uint32_t bank, uint32_t value);
+};
+
+// Timer Device Driver
+// Base address: 0x20050000
+// Matches RTL axi_timer.sv register map.
+// 4 independent 32-bit timers with compare-match interrupts and PWM output.
+class TimerDevice : public Device {
+private:
+    static const int NUM_TIMERS = 4;
+    
+    struct TimerChannel {
+        uint32_t count_r;           // Counter value
+        uint32_t compare1_r;        // Compare 1 (interrupt / PWM set)
+        uint32_t compare2_r;        // Compare 2 (PWM clear + reload)
+        uint32_t ctrl_r;            // Control register
+        
+        // Decoded control bits
+        bool     timer_en;
+        bool     pwm_en;
+        bool     int_en;
+        bool     pwm_pol;
+        uint16_t prescale;
+        
+        // Prescaler counter
+        uint16_t prescale_cnt;
+        
+        // PWM output state
+        bool     pwm_output_raw;
+    };
+    
+    TimerChannel ch[NUM_TIMERS];
+    uint32_t int_status_r;              // Global interrupt status (W1C)
+    uint32_t int_enable_r;              // Global interrupt enable
+
+public:
+    TimerDevice();
+    virtual ~TimerDevice() {}
+
+    virtual uint32_t read(uint32_t offset, int size) override;
+    virtual void write(uint32_t offset, uint32_t value, int size) override;
+    virtual const char* name() const override { return "TIMER"; }
+    virtual void tick() override;
+    virtual void reset() override;
+
+    // IRQ: asserted when (int_status_r & int_enable_r) != 0
+    bool get_irq() const;
+    
+    // Get PWM output state (for testing)
+    bool get_pwm_output(int timer_num) const;
 };
 
 #endif // DEVICE_H

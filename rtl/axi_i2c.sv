@@ -94,6 +94,11 @@ module axi_i2c #(
     localparam STAT_OFFSET  = 16'h0010;
     localparam IE_OFFSET    = 16'h0014;
     localparam IS_OFFSET    = 16'h0018;
+    localparam CAP_OFFSET   = 16'h001C;
+
+    // Capability register
+    localparam logic [15:0] I2C_VERSION     = 16'h0001;
+    localparam logic [31:0] CAPABILITY_REG  = {I2C_VERSION, 8'(FIFO_DEPTH), 8'(FIFO_DEPTH)};
 
     localparam FIFO_BITS = $clog2(FIFO_DEPTH);
 
@@ -297,6 +302,7 @@ module axi_i2c #(
                                                busy};
                     IE_OFFSET:   axi_rdata <= {29'h0, ie_r};
                     IS_OFFSET:   axi_rdata <= {29'h0, is_wire};
+                    CAP_OFFSET:  axi_rdata <= CAPABILITY_REG;  // CAPABILITY (RO)
                     default:     axi_rdata <= 32'h0;
                 endcase
             end else if (axi_rvalid && axi_rready) begin

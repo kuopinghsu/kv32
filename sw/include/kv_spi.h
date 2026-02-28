@@ -127,4 +127,38 @@ static inline void kv_spi_loopback_disable(void)
     KV_SPI_CTRL &= ~KV_SPI_CTRL_LOOPBACK;
 }
 
+/* ─── capability register ────────────────────────────────────────── */
+
+#define KV_SPI_CAP      KV_REG32(KV_SPI_BASE, KV_SPI_CAP_OFF)
+
+/* Read capability register (hardware configuration) */
+static inline uint32_t kv_spi_get_capability(void)
+{
+    return KV_SPI_CAP;
+}
+
+/* Get TX FIFO depth from capability register */
+static inline uint32_t kv_spi_get_tx_fifo_depth(void)
+{
+    return KV_SPI_CAP & 0xFF;  // [7:0]
+}
+
+/* Get RX FIFO depth from capability register */
+static inline uint32_t kv_spi_get_rx_fifo_depth(void)
+{
+    return (KV_SPI_CAP >> 8) & 0xFF;  // [15:8]
+}
+
+/* Get number of chip selects from capability register */
+static inline uint32_t kv_spi_get_num_cs(void)
+{
+    return (KV_SPI_CAP >> 16) & 0xFF;  // [23:16]
+}
+
+/* Get SPI version from capability register */
+static inline uint32_t kv_spi_get_version(void)
+{
+    return (KV_SPI_CAP >> 24) & 0xFF;  // [31:24]
+}
+
 #endif /* KV_SPI_H */

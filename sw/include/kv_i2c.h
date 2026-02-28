@@ -153,4 +153,32 @@ static inline uint32_t kv_i2c_irq_status(void)
     return s;
 }
 
+/* ─── capability register ────────────────────────────────────────── */
+
+#define KV_I2C_CAP      KV_REG32(KV_I2C_BASE, KV_I2C_CAP_OFF)
+
+/* Read capability register (hardware configuration) */
+static inline uint32_t kv_i2c_get_capability(void)
+{
+    return KV_I2C_CAP;
+}
+
+/* Get TX FIFO depth from capability register */
+static inline uint32_t kv_i2c_get_tx_fifo_depth(void)
+{
+    return KV_I2C_CAP & 0xFF;  // [7:0]
+}
+
+/* Get RX FIFO depth from capability register */
+static inline uint32_t kv_i2c_get_rx_fifo_depth(void)
+{
+    return (KV_I2C_CAP >> 8) & 0xFF;  // [15:8]
+}
+
+/* Get I2C version from capability register */
+static inline uint32_t kv_i2c_get_version(void)
+{
+    return (KV_I2C_CAP >> 16) & 0xFFFF;  // [31:16]
+}
+
 #endif /* KV_I2C_H */

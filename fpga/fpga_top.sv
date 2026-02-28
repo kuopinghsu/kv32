@@ -67,6 +67,16 @@ module fpga_top (
     inout  wire        i2c_sda,
 
     // ========================================================================
+    // GPIO (8 pins, bidirectional)
+    // ========================================================================
+    inout  wire [7:0]  gpio,
+
+    // ========================================================================
+    // PWM Outputs (4 channels)
+    // ========================================================================
+    output wire [3:0]  pwm,
+
+    // ========================================================================
     // JTAG/cJTAG Debug Interface (4-pin, muxed)
     // ========================================================================
     input  wire        dbg_tck,            // Pin 0: TCK/TCKC
@@ -84,10 +94,11 @@ module fpga_top (
     // ========================================================================
     // Parameters
     // ========================================================================
-    localparam CPU_CLK_FREQ = 50_000_000;   // 50 MHz CPU clock
-    localparam BAUD_RATE    = 115200;        // UART baud rate
-    localparam USE_CJTAG    = 1;             // 0=JTAG, 1=cJTAG (default: cJTAG)
-    localparam JTAG_IDCODE  = 32'h1DEAD3FF;  // JTAG device ID
+    localparam CPU_CLK_FREQ  = 50_000_000;   // 50 MHz CPU clock
+    localparam BAUD_RATE     = 115200;       // UART baud rate
+    localparam USE_CJTAG     = 1;            // 0=JTAG, 1=cJTAG (default: cJTAG)
+    localparam JTAG_IDCODE   = 32'h1DEAD3FF; // JTAG device ID
+    localparam GPIO_NUM_PINS = 8;            // Number of GPIO pins (8 for FPGA)
 
     // ========================================================================
     // Internal Signals
@@ -112,6 +123,13 @@ module fpga_top (
     // I2C internal signals
     wire        i2c_scl_o, i2c_scl_i, i2c_scl_oe;
     wire        i2c_sda_o, i2c_sda_i, i2c_sda_oe;
+
+    // GPIO tri-state control
+    wire [GPIO_NUM_PINS-1:0] gpio_o, gpio_i, gpio_oe;
+
+    // PWM outputs
+    wire [3:0] pwm_o_internal;
+    assign pwm = pwm_o_internal;
 
     // JTAG debug interface signals (pin mux)
     wire        dbg_tms_in, dbg_tms_out, dbg_tms_oe;
@@ -248,6 +266,21 @@ module fpga_top (
         .O  (i2c_sda_i),
         .T  (~i2c_sda_oe)
     );
+
+    // ========================================================================
+    // GPIO Tri-State Buffers
+    // ========================================================================
+    genvar gi;
+    generate
+        for (gi = 0; gi < GPIO_NUM_PINS; gi = gi + 1) begin : gpio_iobuf_gen
+            IOBUF u_gpio_iobuf (
+                .IO (gpio[gi]),
+                .I  (gpio_o[gi]),
+                .O  (gpio_i[gi]),
+                .T  (~gpio_oe[gi])
+            );
+        end
+    endgenerate
 
     // ========================================================================
     // JTAG Debug Tri-State Buffers
@@ -456,7 +489,8 @@ module fpga_top (
         .ICACHE_LINE_SIZE(32),
         .ICACHE_WAYS(2),
         .USE_CJTAG  (USE_CJTAG),
-        .JTAG_IDCODE(JTAG_IDCODE)
+        .JTAG_IDCODE(JTAG_IDCODE),
+        .GPIO_NUM_PINS(GPIO_NUM_PINS)
     ) u_kv32_soc (
         .clk                (cpu_clk),
         .rst_n              (cpu_rst_n),
@@ -478,6 +512,14 @@ module fpga_top (
         .i2c_sda_o          (i2c_sda_o),
         .i2c_sda_i          (i2c_sda_i),
         .i2c_sda_oe         (i2c_sda_oe),
+
+        // GPIO
+        .gpio_o             (gpio_o),
+        .gpio_i             (gpio_i),
+        .gpio_oe            (gpio_oe),
+
+        // PWM
+        .pwm_o              (pwm_o_internal),
 
         // JTAG/cJTAG Debug Interface
         .jtag_tck_i         (dbg_tck),

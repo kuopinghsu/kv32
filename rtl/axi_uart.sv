@@ -101,6 +101,10 @@ module axi_uart #(
     localparam CLKS_PER_BIT = CLK_FREQ / BAUD_RATE;
     localparam FIFO_BITS    = $clog2(FIFO_DEPTH);
 
+    // Capability register
+    localparam logic [15:0] UART_VERSION = 16'h0001;
+    localparam logic [31:0] CAPABILITY_REG = {UART_VERSION, 8'(FIFO_DEPTH), 8'(FIFO_DEPTH)};
+
     // ========================================================================
     // TX FIFO
     // ========================================================================
@@ -420,6 +424,7 @@ module axi_uart #(
             8'h10: read_data = {4'h0, txf_count,
                                 4'h0, rxf_count};                // LEVEL
             8'h14: read_data = {31'h0, loopback_en};             // CTRL
+            8'h18: read_data = CAPABILITY_REG;                   // CAPABILITY (RO)
             default: read_data = 32'h0;
         endcase
     end

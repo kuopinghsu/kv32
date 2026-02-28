@@ -60,6 +60,8 @@ add_files -norecurse $proj_root/rtl/axi_i2c.sv
 add_files -norecurse $proj_root/rtl/axi_magic.sv
 add_files -norecurse $proj_root/rtl/axi_spi.sv
 add_files -norecurse $proj_root/rtl/axi_uart.sv
+add_files -norecurse $proj_root/rtl/axi_gpio.sv
+add_files -norecurse $proj_root/rtl/axi_timer.sv
 add_files -norecurse $proj_root/rtl/axi_xbar.sv
 
 # Memory interfaces

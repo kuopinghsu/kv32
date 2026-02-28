@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "kv_uart.h"
+#include "kv_cap.h"
 #include "kv_irq.h"
 #include "kv_plic.h"
 #include "kv_clint.h"
@@ -228,6 +229,16 @@ int main(void)
     print("  Base Address: "); print_hex(KV_UART_BASE); print("\n");
     print("  Baud Rate: 12.5 Mbaud (BAUD_DIV=4)\n");
     print("========================================\n\n");
+
+    /* Test 0: Capability register (informational) */
+    print("[TEST 0] Capability Register\n");
+    uint32_t cap = kv_uart_get_capability();
+    print("  CAP raw:        "); print_hex(cap);                    print("\n");
+    print("  CAP expected:   "); print_hex(KV_CAP_UART_VALUE);      print("\n");
+    print("  TX FIFO Depth:  "); print_dec(kv_uart_get_tx_fifo_depth()); print(" (exp "); print_dec(KV_CAP_UART_TX_FIFO_DEPTH); print(")\n");
+    print("  RX FIFO Depth:  "); print_dec(kv_uart_get_rx_fifo_depth()); print(" (exp "); print_dec(KV_CAP_UART_RX_FIFO_DEPTH); print(")\n");
+    print("  Version:        "); print_hex(kv_uart_get_version());   print(" (exp "); print_hex(KV_CAP_UART_VERSION); print(")\n");
+    print("\n");
 
     /* Test 1: Status register read */
     print("[TEST 1] UART Status Register\n");

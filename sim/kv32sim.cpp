@@ -168,6 +168,8 @@ KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
             bus_write(addr, val, sz);
         }
     );
+    gpio = new GPIODevice();
+    timer = new TimerDevice();
 
     // Register universal slave interface windows
     register_device_slave(mem_base, mem_size, memory, "RAM");
@@ -178,6 +180,8 @@ KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
     register_device_slave(I2C_BASE, I2C_SIZE, i2c, "I2C");
     register_device_slave(MAGIC_BASE, MAGIC_SIZE, magic, "MAGIC");
     register_device_slave(KV_DMA_BASE, KV_DMA_SIZE, dma, "DMA");
+    register_device_slave(GPIO_BASE, GPIO_SIZE, gpio, "GPIO");
+    register_device_slave(TIMER_BASE, TIMER_SIZE, timer, "TIMER");
 }
 
 KV32Simulator::~KV32Simulator() {
@@ -189,6 +193,8 @@ KV32Simulator::~KV32Simulator() {
     delete clint;
     delete plic;
     delete dma;
+    delete gpio;
+    delete timer;
     slaves.clear();
 
     delete memory;
@@ -529,12 +535,14 @@ void KV32Simulator::take_trap(uint32_t cause, uint32_t tval) {
 // Check for pending interrupts
 void KV32Simulator::check_interrupts() {
     // ── PLIC: update IRQ sources from peripherals ──────────────────────────
-    // Sources: [1]=UART, [2]=SPI, [3]=I2C, [4]=DMA  (matches kv32_soc.sv wiring)
+    // Sources: [1]=UART, [2]=SPI, [3]=I2C, [4]=DMA, [5]=GPIO, [6]=TIMER  (matches kv32_soc.sv wiring)
     uint32_t plic_src = 0;
     if (uart->get_irq()) plic_src |= (1u << 1);
     if (spi->get_irq())  plic_src |= (1u << 2);
     if (i2c->get_irq())  plic_src |= (1u << 3);
     if (dma->get_irq())  plic_src |= (1u << KV_PLIC_SRC_DMA);
+    if (gpio->get_irq()) plic_src |= (1u << KV_PLIC_SRC_GPIO);
+    if (timer->get_irq()) plic_src |= (1u << KV_PLIC_SRC_TIMER);
     plic->update_irq_sources(plic_src);
 
     // ── Update MIP bits ───────────────────────────────────────────────────

@@ -139,6 +139,10 @@ module axi_dma #(
     localparam int CH_STRIDE = 12'h040;                       // reg bytes / channel
     localparam int GLBL_OFF  = 12'hF00;                       // global regs offset
 
+    // Capability register
+    localparam logic [15:0] DMA_VERSION     = 16'h0001;
+    localparam logic [31:0] CAPABILITY_REG  = {DMA_VERSION, 8'(NUM_CHANNELS), 8'(MAX_BURST_LEN)};
+
     // ========================================================================
     // Per-channel register arrays
     // ========================================================================
@@ -386,6 +390,7 @@ module axi_dma #(
                         12'h000: cfg_rdata <= {{(32-NUM_CHANNELS){1'b0}}, irq_stat_wire};
                         12'h004: cfg_rdata <= {{(32-NUM_CHANNELS){1'b0}}, glb_irq_en};
                         12'h008: cfg_rdata <= 32'hD4A0_0100;  // DMA_ID
+                        12'h00C: cfg_rdata <= CAPABILITY_REG;   // CAPABILITY (RO)
                         12'h010: cfg_rdata <= {31'h0, perf_enable};   // PERF_CTRL
                         12'h014: cfg_rdata <= perf_cycles;             // PERF_CYCLES
                         12'h018: cfg_rdata <= perf_rd_bytes;           // PERF_RD_BYTES

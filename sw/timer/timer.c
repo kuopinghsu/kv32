@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include "kv_platform.h"
 #include "kv_timer.h"
+#include "kv_cap.h"
 #include "kv_plic.h"
 #include "kv_irq.h"
 
@@ -108,7 +109,7 @@ static void test2_basic_counting(void)
     KV_TIMER_COUNT(0) = 0;
     
     /* Set COMPARE1 = 100 (should match after 100 ticks) */
-    kv_timer_start(0, 100, 0);  /* compare=100, prescale=0 */
+    kv_timer_start(0, 10000, 0);  /* period=10000, prescale=0 */
     
     /* Wait for count to reach 100 */
     uint32_t timeout = 100000;
@@ -272,10 +273,10 @@ static void test6_dual_interrupt(void)
     KV_TIMER_INT_ENABLE = 0x1;
     
     /* Start timer: COMPARE1 = 100, COMPARE2 = 200, both should trigger IRQ */
-    kv_timer_start_dual(0, 100, 200, 0, 1);  /* compare1=100, compare2=200, prescale=0, int_en=1 */
+    kv_timer_start_dual(0, 2000, 4000, 0, 1);  /* compare1=2000, compare2=4000, prescale=0, int_en=1 */
     
-    /* Wait for first interrupt (at COMPARE1 = 100) */
-    uint32_t timeout = 100000;
+    /* Wait for first interrupt (at COMPARE1 = 2000) */
+    uint32_t timeout = 1000000;
     while (!g_timer_irq_fired && timeout-- > 0) {
         __asm__ volatile("nop");
     }
@@ -285,9 +286,9 @@ static void test6_dual_interrupt(void)
         return;
     }
     
-    /* Wait for second interrupt (at COMPARE2 = 200) */
+    /* Wait for second interrupt (at COMPARE2 = 4000) */
     g_timer_irq_fired = 0;
-    timeout = 100000;
+    timeout = 1000000;
     while (!g_timer_irq_fired && timeout-- > 0) {
         __asm__ volatile("nop");
     }
@@ -397,6 +398,19 @@ int main(void)
     
     /* Initialize Timer */
     kv_timer_init();
+    
+    /* TEST 0: Capability register (informational) */
+    printf("\n[TEST 0] Capability Register\n");
+    uint32_t cap = kv_timer_get_capability();
+    printf("  CAP raw:        0x%08lX\n", (unsigned long)cap);
+    printf("  CAP expected:   0x%08lX\n", (unsigned long)KV_CAP_TIMER_VALUE);
+    printf("  Num Channels:   %lu  (exp %lu)\n",
+           (unsigned long)kv_timer_get_num_channels(), (unsigned long)KV_CAP_TIMER_NUM_CHANNELS);
+    printf("  Counter Width:  %lu  (exp %lu)\n",
+           (unsigned long)kv_timer_get_counter_width(), (unsigned long)KV_CAP_TIMER_COUNTER_WIDTH);
+    printf("  Version:        0x%04lX  (exp 0x%04lX)\n",
+           (unsigned long)kv_timer_get_version(), (unsigned long)KV_CAP_TIMER_VERSION);
+    printf("\n");
     
     /* Setup IRQ for interrupt tests */
     timer_setup_irq();

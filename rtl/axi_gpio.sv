@@ -106,7 +106,10 @@ module axi_gpio #(
     // ========================================================================
     // Determine how many 32-bit register banks are needed
     localparam int NUM_REG_BANKS = (NUM_PINS + 31) / 32;  // Ceiling division
-
+    
+    // Capability register (read-only)
+    localparam logic [15:0] GPIO_VERSION = 16'h0001;       // Version 0.1
+    localparam logic [31:0] CAPABILITY_REG = {GPIO_VERSION, 8'(NUM_REG_BANKS), 8'(NUM_PINS)};
 
     // ========================================================================
     // Internal Registers (Per-Bank Arrays)
@@ -294,8 +297,12 @@ module axi_gpio #(
     always_comb begin
         rdata_next = 32'h0;
         
-        // Check if bank is valid
-        if (bank_sel < NUM_REG_BANKS) begin
+        // Capability register is global, not per-bank
+        if (reg_sel == 4'hA) begin
+            rdata_next = CAPABILITY_REG;  // 0xA0: CAPABILITY
+        end
+        // Check if bank is valid for per-bank registers
+        else if (bank_sel < NUM_REG_BANKS) begin
             case (reg_sel)
                 4'h0: rdata_next = data_out_r[bank_sel];       // DATA_OUT
                 4'h1: rdata_next = data_out_r[bank_sel];       // SET (reads current output)

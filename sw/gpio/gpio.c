@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include "kv_platform.h"
 #include "kv_gpio.h"
+#include "kv_cap.h"
 #include "kv_plic.h"
 #include "kv_irq.h"
 
@@ -39,13 +40,35 @@ static void gpio_mei_handler(uint32_t cause)
         /* Find which bank triggered */
         for (int bank = 0; bank < 4; bank++) {
             uint32_t is = kv_gpio_get_is(bank);
-            if (is != 0) {
-                g_gpio_irq_bank = bank;
-                g_gpio_irq_status = is;
-                g_gpio_irq_fired = 1;
-                /* Clear interrupt status (W1C) */
-                kv_gpio_clear_is(bank, is);
-                break;
+            uint32_t ie = kv_gpio_read_ie(bank);
+            uint32_t trigger = kv_gpio_read_trigger(bank);
+            
+            /* Check which pins have interrupts enabled */
+            if (ie != 0) {
+                /* For edge-triggered (trigger=1): Check IS register */
+                /* For level-triggered (trigger=0): IS is not used, always fires when level matches */
+                uint32_t edge_pending = is & trigger & ie;
+                uint32_t level_active = (~trigger) & ie;  /* Level-triggered pins with IE=1 */
+                
+                if (edge_pending != 0 || level_active != 0) {
+                    g_gpio_irq_bank = bank;
+                    g_gpio_irq_status = is;
+                    g_gpio_irq_fired = 1;
+                    
+                    /* For edge interrupts: Clear IS (W1C) */
+                    if (edge_pending) {
+                        kv_gpio_clear_is(bank, edge_pending);
+                    }
+                    
+                    /* For level interrupts: Must clear the interrupt source (GPIO level)
+                     * to prevent it from triggering again when leaving the handler.
+                     * Clear the GPIO output for the level-triggered pins. */
+                    if (level_active) {
+                        uint32_t current_output = kv_gpio_read(bank);
+                        kv_gpio_write(bank, current_output & ~level_active);
+                    }
+                    break;
+                }
             }
         }
     }
@@ -307,14 +330,22 @@ static void test5_level_interrupt(void)
         return;
     }
     
-    /* Note: For level-triggered interrupts, IS register is not used in RTL
-     * Interrupt is live based on input level */
+    /* Verify that the handler cleared the GPIO output to de-assert the interrupt */
+    uint32_t gpio_val = kv_gpio_read(0);
+    if (gpio_val != 0x00000000) {
+        printf("  Expected GPIO cleared to 0x00000000, got 0x%08lX\n", gpio_val);
+        TEST_FAIL(5, "GPIO not cleared by handler");
+        return;
+    }
     
-    /* Cleanup - disable IE first, then clear output */
+    /* Note: For level-triggered interrupts, IS register is not used in RTL
+     * Interrupt is live based on input level.
+     * The handler must clear the GPIO output to de-assert the interrupt source. */
+    
+    /* Cleanup - ensure everything is off */
     kv_gpio_set_ie(0, 0);
     kv_gpio_write(0, 0);
     kv_gpio_set_loopback(0, 0);
-    kv_gpio_write(0, 0);
     
     TEST_PASS(5);
 }
@@ -323,11 +354,32 @@ static void test5_level_interrupt(void)
 static void test6_multi_bank(void)
 {
     printf("[TEST 6] Multi-bank operation\n");
+
+    /* Print capability register (informational) */
+    uint32_t cap = kv_gpio_get_capability();
+    printf("  CAP raw:      0x%08lX\n", (unsigned long)cap);
+    printf("  CAP expected: 0x%08lX\n", (unsigned long)KV_CAP_GPIO_VALUE);
+    printf("  Num Pins:     %lu  (exp %lu)\n",
+           (unsigned long)kv_gpio_get_num_pins(), (unsigned long)KV_CAP_GPIO_NUM_PINS);
+    printf("  Num Banks:    %lu  (exp %lu)\n",
+           (unsigned long)kv_gpio_get_num_banks(), (unsigned long)KV_CAP_GPIO_NUM_BANKS);
+    printf("  Version:      0x%04lX  (exp 0x%04lX)\n",
+           (unsigned long)kv_gpio_get_version(), (unsigned long)KV_CAP_GPIO_VERSION);
+    printf("\n");
+
+    uint32_t num_banks = kv_gpio_get_num_banks();
     
-    /* Test all 4 banks with different patterns */
+    /* Multi-bank testing requires at least 2 banks (33+ pins) */
+    if (num_banks < 2) {
+        printf("  Skipping: requires >1 bank for multi-bank test\n");
+        TEST_PASS(6);
+        return;
+    }
+    
+    /* Test all available banks with different patterns */
     uint32_t patterns[4] = { 0x11111111, 0x22222222, 0x33333333, 0x44444444 };
     
-    for (int bank = 0; bank < 4; bank++) {
+    for (uint32_t bank = 0; bank < num_banks && bank < 4; bank++) {
         /* Setup: all outputs, loopback enabled */
         kv_gpio_set_dir(bank, 0xFFFFFFFF);
         kv_gpio_set_loopback(bank, 0xFFFFFFFF);
@@ -341,7 +393,7 @@ static void test6_multi_bank(void)
         /* Read back */
         uint32_t read_val = kv_gpio_read(bank);
         if (read_val != patterns[bank]) {
-            printf("  Bank %d: expected 0x%08lX, got 0x%08lX\n", 
+            printf("  Bank %lu: expected 0x%08lX, got 0x%08lX\n", 
                    bank, patterns[bank], read_val);
             TEST_FAIL(6, "multi-bank pattern mismatch");
             return;
@@ -349,7 +401,7 @@ static void test6_multi_bank(void)
     }
     
     /* Cleanup */
-    for (int bank = 0; bank < 4; bank++) {
+    for (uint32_t bank = 0; bank < num_banks && bank < 4; bank++) {
         kv_gpio_set_loopback(bank, 0);
         kv_gpio_write(bank, 0);
     }

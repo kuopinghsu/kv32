@@ -41,6 +41,8 @@ set RTL_FILES [list \
     "$RTL_ROOT/axi_spi.sv" \
     "$RTL_ROOT/axi_plic.sv" \
     "$RTL_ROOT/axi_uart.sv" \
+    "$RTL_ROOT/axi_gpio.sv" \
+    "$RTL_ROOT/axi_timer.sv" \
     "$RTL_ROOT/axi_magic.sv" \
     "$RTL_ROOT/mem_axi.sv" \
     "$RTL_ROOT/mem_axi_ro.sv" \

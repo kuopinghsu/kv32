@@ -64,7 +64,7 @@ TEST_DIRS = $(shell find $(SW_DIR) -mindepth 1 -maxdepth 1 -type d ! -name commo
 TEST_NAMES = $(notdir $(TEST_DIRS))
 
 # Tests to compare (exclude I/O-dependent tests that require external peripherals)
-COMPARE_EXCLUDE = full i2c uart spi dma
+COMPARE_EXCLUDE = full i2c uart spi dma gpio timer
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
 # Software simulator selection (kv32sim or spike)

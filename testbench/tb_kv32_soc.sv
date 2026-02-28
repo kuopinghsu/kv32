@@ -17,7 +17,8 @@ module tb_kv32_soc #(
     parameter int ICACHE_LINE_SIZE = 32,    // Cache line size in bytes
     parameter int ICACHE_WAYS      = 2,     // Cache associativity
     parameter int USE_CJTAG        = 1,     // JTAG mode: 0=JTAG, 1=cJTAG
-    parameter int JTAG_IDCODE      = 32'h1DEAD3FF  // JTAG device ID
+    parameter int JTAG_IDCODE      = 32'h1DEAD3FF,  // JTAG device ID
+    parameter int GPIO_NUM_PINS    = 4      // Number of GPIO pins (1-128)
 ) (
     input wire clk,
     input wire rst_n,
@@ -33,6 +34,12 @@ module tb_kv32_soc #(
     output wire i2c_sda_i,
     output wire i2c_sda_o,
     output wire i2c_sda_oe,
+    // GPIO pins
+    output wire [GPIO_NUM_PINS-1:0] gpio_o,
+    output wire [GPIO_NUM_PINS-1:0] gpio_i,
+    output wire [GPIO_NUM_PINS-1:0] gpio_oe,
+    // PWM outputs
+    output wire [3:0] pwm_o,
     // JTAG/cJTAG Debug interface
     input  wire jtag_tck,
     input  wire jtag_tms,
@@ -101,6 +108,21 @@ module tb_kv32_soc #(
     logic i2c_scl_wire, i2c_sda_wire;
     logic i2c_slave_sda_out, i2c_slave_sda_oe;
 
+    // GPIO and PWM signals
+    logic [GPIO_NUM_PINS-1:0] gpio_o_internal;
+    logic [GPIO_NUM_PINS-1:0] gpio_i_internal;
+    logic [GPIO_NUM_PINS-1:0] gpio_oe_internal;
+    logic [3:0] pwm_o_internal;
+
+    // GPIO loopback for testing (output drives input when enabled)
+    assign gpio_i_internal = gpio_oe_internal ? gpio_o_internal : {GPIO_NUM_PINS{1'b0}};
+
+    // Expose internal signals to module outputs
+    assign gpio_o  = gpio_o_internal;
+    assign gpio_i  = gpio_i_internal;
+    assign gpio_oe = gpio_oe_internal;
+    assign pwm_o   = pwm_o_internal;
+
     // Instantiate RISC-V SoC
     kv32_soc #(
         .FAST_MUL       (FAST_MUL),
@@ -110,7 +132,8 @@ module tb_kv32_soc #(
         .ICACHE_LINE_SIZE(ICACHE_LINE_SIZE),
         .ICACHE_WAYS    (ICACHE_WAYS),
         .USE_CJTAG      (USE_CJTAG),
-        .JTAG_IDCODE    (JTAG_IDCODE)
+        .JTAG_IDCODE    (JTAG_IDCODE),
+        .GPIO_NUM_PINS  (GPIO_NUM_PINS)
     ) dut (
         .clk(clk),
         .rst_n(rst_n),
@@ -128,6 +151,12 @@ module tb_kv32_soc #(
         .i2c_sda_o(i2c_sda_o_internal),
         .i2c_sda_i(i2c_sda_wire),
         .i2c_sda_oe(i2c_sda_oe_internal),
+        // GPIO pins
+        .gpio_o(gpio_o_internal),
+        .gpio_i(gpio_i_internal),
+        .gpio_oe(gpio_oe_internal),
+        // PWM outputs
+        .pwm_o(pwm_o_internal),
         // JTAG/cJTAG pins
         .jtag_tck_i(jtag_tck),
         .jtag_tms_i(jtag_tms),

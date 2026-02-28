@@ -168,6 +168,9 @@ uint32_t UARTDevice::read(uint32_t offset, int size) {
         case KV_UART_CTRL_OFF:   // CTRL register: [0]=loopback_en
             return loopback_en ? KV_UART_CTRL_LOOPBACK : 0u;
 
+        case KV_UART_CAP_OFF:  // CAPABILITY (RO): [7:0]=TX_FIFO, [15:8]=RX_FIFO, [31:16]=VERSION
+            return (0x0001u << 16) | (FIFO_DEPTH << 8) | FIFO_DEPTH;  // v0.0001, RX=16, TX=16
+
         default:
             return 0;
     }
@@ -300,6 +303,9 @@ uint32_t I2CDevice::read(uint32_t offset, int size) {
                 if (stop_done)               is |= KV_I2C_IE_STOP_DONE;
                 return is;
             }
+
+        case KV_I2C_CAP_OFF:  // CAPABILITY (RO): [7:0]=TX_FIFO, [15:8]=RX_FIFO, [31:16]=VERSION
+            return (0x0001u << 16) | (FIFO_DEPTH << 8) | FIFO_DEPTH;  // v0.0001, RX=8, TX=8
 
         default:
             return 0;
@@ -582,6 +588,9 @@ uint32_t SPIDevice::read(uint32_t offset, int size) {
             if (!busy)             is |= KV_SPI_IE_TX_EMPTY;
             return is;
         }
+
+        case KV_SPI_CAP_OFF:  // CAPABILITY (RO): [7:0]=TX_FIFO, [15:8]=RX_FIFO, [23:16]=NUM_CS, [31:24]=VERSION
+            return (0x01u << 24) | (4u << 16) | (8u << 8) | 8u;  // v0.01, 4 CS, RX=8, TX=8
 
         default:
             return 0;
@@ -1032,6 +1041,7 @@ uint32_t DMADevice::read(uint32_t offset, int size)
     if (offset == KV_DMA_IRQ_STAT_OFF)      return irq_stat;
     if (offset == KV_DMA_IRQ_EN_OFF)        return irq_en;
     if (offset == KV_DMA_ID_OFF)            return DMA_ID;
+    if (offset == KV_DMA_CAP_OFF)           return (0x0001u << 16) | (NUM_CH << 8) | 16u;  // v0.0001, 4 ch, burst=16
     if (offset == KV_DMA_PERF_CTRL_OFF)     return perf_enable ? 1u : 0u;
     if (offset == KV_DMA_PERF_CYCLES_OFF)   return perf_cycles;
     if (offset == KV_DMA_PERF_RD_BYTES_OFF) return perf_rd_bytes;
@@ -1131,3 +1141,305 @@ void DMADevice::write(uint32_t offset, uint32_t value, int size)
         }
     }
 }
+
+// ============================================================================
+// GPIO Device
+// ============================================================================
+
+GPIODevice::GPIODevice() {
+    reset();
+}
+
+void GPIODevice::reset() {
+    for (int i = 0; i < MAX_BANKS; i++) {
+        data_out_r[i] = 0;
+        dir_r[i] = 0;           // All pins as inputs
+        ie_r[i] = 0;
+        trigger_r[i] = 0;       // Level-triggered
+        polarity_r[i] = 0;      // Falling/low
+        is_r[i] = 0;
+        loopback_r[i] = 0;
+        gpio_i_sync[i] = 0;
+        gpio_i_prev[i] = 0;
+        external_input[i] = 0;
+    }
+}
+
+void GPIODevice::tick() {
+    // Input synchronization (2-stage)
+    for (int i = 0; i < MAX_BANKS; i++) {
+        uint32_t gpio_i_ext = 0;
+        
+        // Apply loopback: when loopback enabled, use output data instead of external input
+        for (int bit = 0; bit < 32; bit++) {
+            if (loopback_r[i] & (1u << bit)) {
+                if (data_out_r[i] & (1u << bit))
+                    gpio_i_ext |= (1u << bit);
+            } else {
+                if (external_input[i] & (1u << bit))
+                    gpio_i_ext |= (1u << bit);
+            }
+        }
+        
+        // Two-stage synchronization
+        gpio_i_sync[i] = gpio_i_ext;
+        
+        // Edge detection
+        for (int bit = 0; bit < 32; bit++) {
+            uint32_t mask = (1u << bit);
+            bool curr = (gpio_i_sync[i] & mask) != 0;
+            bool prev = (gpio_i_prev[i] & mask) != 0;
+            bool trig = (trigger_r[i] & mask) != 0;     // 1=edge, 0=level
+            bool pol = (polarity_r[i] & mask) != 0;     // 1=rising/high, 0=falling/low
+            
+            if (trig) {
+                // Edge-triggered
+                bool edge = pol ? (curr && !prev) : (!curr && prev);
+                if (edge) {
+                    is_r[i] |= mask;  // Set interrupt status (sticky)
+                }
+            }
+        }
+        
+        gpio_i_prev[i] = gpio_i_sync[i];
+    }
+}
+
+bool GPIODevice::get_irq() const {
+    for (int i = 0; i < MAX_BANKS; i++) {
+        uint32_t int_pending = 0;
+        for (int bit = 0; bit < 32; bit++) {
+            uint32_t mask = (1u << bit);
+            bool trig = (trigger_r[i] & mask) != 0;
+            bool pol = (polarity_r[i] & mask) != 0;
+            
+            if (trig) {
+                // Edge-triggered: sticky status
+                if (is_r[i] & mask)
+                    int_pending |= mask;
+            } else {
+                // Level-triggered: live input check
+                bool curr = (gpio_i_sync[i] & mask) != 0;
+                if (pol ? curr : !curr)
+                    int_pending |= mask;
+            }
+        }
+        
+        if (ie_r[i] & int_pending)
+            return true;
+    }
+    return false;
+}
+
+void GPIODevice::set_external_input(uint32_t bank, uint32_t value) {
+    if (bank < MAX_BANKS) {
+        external_input[bank] = value;
+    }
+}
+
+uint32_t GPIODevice::read(uint32_t offset, int size) {
+    (void)size;  // Always 32-bit
+    uint32_t bank = (offset >> 2) & 3;
+    uint32_t reg = offset >> 4;
+    
+    switch (reg) {
+    case 0x0: return data_out_r[bank];       // DATA_OUT
+    case 0x1: return data_out_r[bank];       // SET (read returns current DATA_OUT)
+    case 0x2: return data_out_r[bank];       // CLEAR (read returns current DATA_OUT)
+    case 0x3: return gpio_i_sync[bank];      // DATA_IN
+    case 0x4: return dir_r[bank];            // DIR
+    case 0x5: return ie_r[bank];             // IE
+    case 0x6: return trigger_r[bank];        // TRIGGER
+    case 0x7: return polarity_r[bank];       // POLARITY
+    case 0x8: return is_r[bank];             // IS
+    case 0x9: return loopback_r[bank];       // LOOPBACK
+    case 0xA: return (0x0001u << 16) | (1u << 8) | 4u;  // CAPABILITY: v0.0001, 1 bank, 4 pins
+    default: return 0;
+    }
+}
+
+void GPIODevice::write(uint32_t offset, uint32_t value, int size) {
+    (void)size;  // Always 32-bit
+    uint32_t bank = (offset >> 2) & 3;
+    uint32_t reg = offset >> 4;
+    
+    switch (reg) {
+    case 0x0: data_out_r[bank] = value; break;                     // DATA_OUT
+    case 0x1: data_out_r[bank] |= value; break;                    // SET (W1S)
+    case 0x2: data_out_r[bank] &= ~value; break;                   // CLEAR (W1C)
+    case 0x4: dir_r[bank] = value; break;                          // DIR
+    case 0x5: ie_r[bank] = value; break;                           // IE
+    case 0x6: trigger_r[bank] = value; break;                      // TRIGGER
+    case 0x7: polarity_r[bank] = value; break;                     // POLARITY
+    case 0x8: is_r[bank] &= ~value; break;                         // IS (W1C)
+    case 0x9: loopback_r[bank] = value; break;                     // LOOPBACK
+    default: break;
+    }
+}
+
+// ============================================================================
+// Timer Device
+// ============================================================================
+
+TimerDevice::TimerDevice() {
+    reset();
+}
+
+void TimerDevice::reset() {
+    for (int i = 0; i < NUM_TIMERS; i++) {
+        ch[i].count_r = 0;
+        ch[i].compare1_r = 0;
+        ch[i].compare2_r = 0xFFFFFFFFu;
+        ch[i].ctrl_r = 0;
+        ch[i].timer_en = false;
+        ch[i].pwm_en = false;
+        ch[i].int_en = false;
+        ch[i].pwm_pol = false;
+        ch[i].prescale = 0;
+        ch[i].prescale_cnt = 0;
+        ch[i].pwm_output_raw = false;
+    }
+    int_status_r = 0;
+    int_enable_r = 0;
+}
+
+void TimerDevice::tick() {
+    for (int i = 0; i < NUM_TIMERS; i++) {
+        if (!ch[i].timer_en)
+            continue;
+        
+        // Prescaler
+        bool timer_tick = false;
+        if (ch[i].prescale_cnt >= ch[i].prescale) {
+            ch[i].prescale_cnt = 0;
+            timer_tick = true;
+        } else {
+            ch[i].prescale_cnt++;
+        }
+        
+        if (!timer_tick)
+            continue;
+        
+        // Compare matches
+        bool compare1_match = (ch[i].count_r == ch[i].compare1_r);
+        bool compare2_match = (ch[i].count_r == ch[i].compare2_r);
+        
+        // Counter reload
+        bool reload = compare2_match;
+        
+        // Update counter
+        if (reload) {
+            ch[i].count_r = 0;
+            ch[i].pwm_output_raw = false;  // Clear on reload for clean period start
+        } else {
+            ch[i].count_r++;
+        }
+        
+        // PWM output generation
+        if (ch[i].pwm_en) {
+            if (compare1_match) {
+                ch[i].pwm_output_raw = true;   // Set on COMPARE1
+            }
+            if (compare2_match) {
+                ch[i].pwm_output_raw = false;  // Clear on COMPARE2
+            }
+        } else {
+            ch[i].pwm_output_raw = false;
+        }
+        
+        // Interrupt generation (both COMPARE1 and COMPARE2 can trigger)
+        if ((compare1_match || compare2_match) && ch[i].int_en) {
+            int_status_r |= (1u << i);
+        }
+    }
+}
+
+bool TimerDevice::get_irq() const {
+    return (int_status_r & int_enable_r) != 0;
+}
+
+bool TimerDevice::get_pwm_output(int timer_num) const {
+    if (timer_num < 0 || timer_num >= NUM_TIMERS)
+        return false;
+    return ch[timer_num].pwm_pol ? ch[timer_num].pwm_output_raw : !ch[timer_num].pwm_output_raw;
+}
+
+uint32_t TimerDevice::read(uint32_t offset, int size) {
+    (void)size;  // Always 32-bit
+    
+    // Global registers
+    if (offset == KV_TIMER_INT_STATUS_OFF) {
+        return int_status_r;
+    }
+    if (offset == KV_TIMER_INT_ENABLE_OFF) {
+        return int_enable_r;
+    }
+    if (offset == KV_TIMER_CAP_OFF) {  // CAPABILITY (RO): [7:0]=NUM_CHANNELS, [15:8]=COUNTER_WIDTH, [31:16]=VERSION
+        return (0x0001u << 16) | (32u << 8) | NUM_TIMERS;  // v0.0001, 32-bit, 4 timers
+    }
+    
+    // Per-channel registers
+    uint32_t timer_num = offset / KV_TIMER_CH_STRIDE;
+    uint32_t reg_off = offset % KV_TIMER_CH_STRIDE;
+    
+    if (timer_num >= NUM_TIMERS)
+        return 0;
+    
+    switch (reg_off) {
+    case KV_TIMER_COUNT_OFF:    return ch[timer_num].count_r;
+    case KV_TIMER_COMPARE1_OFF: return ch[timer_num].compare1_r;
+    case KV_TIMER_COMPARE2_OFF: return ch[timer_num].compare2_r;
+    case KV_TIMER_CTRL_OFF:     return ch[timer_num].ctrl_r;
+    default: return 0;
+    }
+}
+
+void TimerDevice::write(uint32_t offset, uint32_t value, int size) {
+    (void)size;  // Always 32-bit
+    
+    // Global registers
+    if (offset == KV_TIMER_INT_STATUS_OFF) {
+        int_status_r &= ~value;  // W1C
+        return;
+    }
+    if (offset == KV_TIMER_INT_ENABLE_OFF) {
+        int_enable_r = value & 0xFu;  // 4 timers
+        return;
+    }
+    
+    // Per-channel registers
+    uint32_t timer_num = offset / KV_TIMER_CH_STRIDE;
+    uint32_t reg_off = offset % KV_TIMER_CH_STRIDE;
+    
+    if (timer_num >= NUM_TIMERS)
+        return;
+    
+    switch (reg_off) {
+    case KV_TIMER_COUNT_OFF:
+        ch[timer_num].count_r = value;
+        break;
+    case KV_TIMER_COMPARE1_OFF:
+        ch[timer_num].compare1_r = value;
+        break;
+    case KV_TIMER_COMPARE2_OFF:
+        ch[timer_num].compare2_r = value;
+        break;
+    case KV_TIMER_CTRL_OFF:
+        ch[timer_num].ctrl_r = value;
+        // Decode control bits
+        ch[timer_num].timer_en = (value & (1u << 0)) != 0;
+        ch[timer_num].pwm_en   = (value & (1u << 1)) != 0;
+        ch[timer_num].int_en   = (value & (1u << 3)) != 0;
+        ch[timer_num].pwm_pol  = (value & (1u << 4)) != 0;
+        ch[timer_num].prescale = (value >> 16) & 0xFFFFu;
+        
+        // Reset prescaler counter when disabled
+        if (!ch[timer_num].timer_en) {
+            ch[timer_num].prescale_cnt = 0;
+        }
+        break;
+    default:
+        break;
+    }
+}
+

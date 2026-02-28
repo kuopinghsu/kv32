@@ -2,7 +2,7 @@
 :doctype: book
 :author: KV32 Development Team
 :revnumber: 1.0
-:revdate: 2026-02-25
+:revdate: 2026-02-28
 :toc: left
 :toclevels: 4
 :sectnums:
@@ -15,7 +15,7 @@
 [abstract]
 == Abstract
 
-This document provides comprehensive technical specifications for the RV32IMA System-on-Chip (SoC), a high-performance 32-bit RISC-V processor platform. The SoC features a 5-stage pipelined RV32IMA core with instruction cache, AXI4/AXI4-Lite interconnect, and a rich set of peripherals including UART, SPI, I2C, DMA, timer, and interrupt controller. Designed for embedded applications, the SoC supports both RTL simulation and FPGA implementation.
+This document provides comprehensive technical specifications for the RV32IMA System-on-Chip (SoC), a high-performance 32-bit RISC-V processor platform. The SoC features a 5-stage pipelined RV32IMA core with instruction cache, AXI4/AXI4-Lite interconnect, and a rich set of peripherals including UART, SPI, I2C, DMA, GPIO, timer/PWM, and interrupt controller. Designed for embedded applications, the SoC supports both RTL simulation and FPGA implementation.
 
 <<<
 
@@ -60,7 +60,7 @@ The RV32IMA SoC is a complete embedded processor system implementing the RISC-V 
 |2MB external RAM, supports up to 512MB address space
 
 |Peripherals
-|UART, SPI, I2C, DMA (up to 8 channels), CLINT, PLIC, Magic device
+|UART, SPI, I2C, DMA (4 channels), GPIO (4×32-pin banks), Timer/PWM (4 channels), CLINT, PLIC, Magic device
 
 |Interrupts
 |Timer, software, external (PLIC-routed)
@@ -80,7 +80,7 @@ This datasheet is organized as follows:
 * **Section 3**: Memory map and address decode
 * **Section 4**: Processor core specification
 * **Section 5**: Instruction cache specification
-* **Section 6**: Peripheral specifications (UART, SPI, I2C, DMA, CLINT, PLIC, Magic device)
+* **Section 6**: Peripheral specifications (UART, SPI, I2C, DMA, GPIO, Timer/PWM, CLINT, PLIC, Magic device)
 * **Section 7**: AXI interconnect and bus protocol
 * **Section 8**: Electrical and timing characteristics
 * **Section 9**: Programming guide
@@ -114,7 +114,7 @@ This datasheet is organized as follows:
     |  | (Execute)  | |                        +-------------+          |   |
     |  +-----+------+ |                        | AXI4-Lite   |          |   |
     |        |        |                        |  Crossbar   |          |   |
-    |  +-----v------+ |                        |  (1-to-8)   |          |   |
+    |  +-----v------+ |                        |  (1-to-10)  |          |   |
     |  |   MEM      |-+->Store                 +------+------+          |   |
     |  |  (Memory)  |<+--Buffer                       |                 |   |
     |  +-----+------+ |  (SB_DEPTH)                   |                 |   |
@@ -162,12 +162,24 @@ This datasheet is organized as follows:
                           |                                             |   |
                           | Slave 6: DMA      0x2003_0000-0x2003_0FFF   |   |
                           |   +--------------------------+              |   |
-                          |   | 8 channels, 1D/2D/3D/SG  |<-->(AXI4     |   |
+                          |   | 4 channels, 1D/2D/3D/SG  |<-->(AXI4     |   |
                           |   | 32-bit data width        |    master    |   |
                           |   | Performance counters     |    port)     |   |
                           |   +--------------------------+              |   |
                           |                                             |   |
-                          | Slave 7: Magic    0xFFFF_0000-0xFFFF_FFFF   |   |
+                          | Slave 7: GPIO     0x2004_0000-0x2004_FFFF   |   |
+                          |   +--------------------------+              |   |
+                          |   | 4 banks x 32 pins        |<-->gpio[127:0]|  |
+                          |   | Dir/IRQ/edge/level       +-->gpio_irq   |   |
+                          |   +--------------------------+              |   |
+                          |                                             |   |
+                          | Slave 8: Timer    0x2005_0000-0x2005_FFFF   |   |
+                          |   +--------------------------+              |   |
+                          |   | 4 ch, 32-bit up-counter  +-->pwm[3:0]   |   |
+                          |   | PWM + dual compare       +-->timer_irq  |   |
+                          |   +--------------------------+              |   |
+                          |                                             |   |
+                          | Slave 9: Magic    0xFFFF_0000-0xFFFF_FFFF   |   |
                           |   +--------------------------+              |   |
                           |   | Simulation console I/O   |              |   |
                           |   | Exit code control        |              |   |
@@ -180,6 +192,8 @@ This datasheet is organized as follows:
       spi_sclk, spi_mosi, spi_miso, spi_cs_n[3:0]                           |
       i2c_scl_o, i2c_scl_i, i2c_scl_oe                                      |
       i2c_sda_o, i2c_sda_i, i2c_sda_oe                                      |
+      gpio_out[127:0], gpio_in[127:0], gpio_oe[127:0]                       |
+      pwm_out[3:0]                                                          |
       m_axi_* (external RAM interface)                                      |
                                                                             |
 ....
@@ -220,12 +234,24 @@ An optional configurable instruction cache improves performance by reducing memo
 
 * **External RAM**: 2MB AXI4 SRAM at 0x8000_0000, supports burst reads/writes
 * **Instruction Arbiter**: Arbitrates between instruction fetch and data memory paths
-* **AXI Crossbar**: 1-to-8 interconnect routes transactions to appropriate slaves
+* **AXI Crossbar**: 1-to-10 interconnect routes transactions to appropriate slaves
+
+==== Peripheral Subsystem
+
+Seven peripheral slaves hang off the AXI crossbar:
+
+* **UART** (`axi_uart.sv`): 8N1 serial, 16-deep TX/RX FIFOs, programmable baud rate
+* **I2C** (`axi_i2c.sv`): Master-mode, 100k/400k, 8-deep TX/RX FIFOs
+* **SPI** (`axi_spi.sv`): Master-mode, SPI modes 0-3, 4 CS lines, 8-deep TX/RX FIFOs
+* **DMA** (`axi_dma.sv`): 4 channels, 1D/2D/3D/SG transfers, performance counters
+* **GPIO** (`axi_gpio.sv`): 4 banks × 32 pins, direction/IRQ/edge/level config, loopback
+* **Timer** (`axi_timer.sv`): 4 channels, 32-bit up-counter, dual compare, PWM output
+* **Magic**: Simulation-only console I/O and exit-code control
 
 ==== Interrupt System
 
 * **CLINT**: Machine-mode timer (mtime/mtimecmp) and software interrupts (msip)
-* **PLIC**: Routes up to 31 external interrupt sources with programmable priorities
+* **PLIC**: Routes up to 31 external interrupt sources (UART, SPI, I2C, DMA, GPIO, Timer) with programmable priorities (0-7) and a configurable claim/complete handshake
 * **Core Integration**: timer_irq, software_irq, external_irq inputs to core CSR unit
 
 <<<
@@ -240,11 +266,6 @@ The RV32IMA SoC implements a 32-bit address space (4GB) with the following alloc
 .Complete Memory Map
 |===
 |Address Range |Device |Size |Description
-
-|0x0000_0000 - 0x0001_FFFF
-|ROM (reserved)
-|128KB
-|Reserved for future boot ROM
 
 |0x0200_0000 - 0x020B_FFFF
 |CLINT
@@ -274,7 +295,17 @@ The RV32IMA SoC implements a 32-bit address space (4GB) with the following alloc
 |0x2003_0000 - 0x2003_0FFF
 |DMA
 |4KB
-|DMA controller (8 channels)
+|DMA controller (4 channels)
+
+|0x2004_0000 - 0x2004_FFFF
+|GPIO
+|64KB
+|General-purpose I/O controller (4 banks × 32 pins)
+
+|0x2005_0000 - 0x2005_FFFF
+|Timer
+|64KB
+|Timer/PWM controller (4 channels, 32-bit)
 
 |0x8000_0000 - 0x801F_FFFF
 |RAM
@@ -298,7 +329,9 @@ The AXI crossbar (`axi_xbar`) decodes addresses based on the high-order bits:
 * **Slave 4 (I2C)**: `addr[31:16] == 16'h2001` (0x2001_0000)
 * **Slave 5 (SPI)**: `addr[31:16] == 16'h2002` (0x2002_0000)
 * **Slave 6 (DMA)**: `addr[31:12] == 20'h2003_0` (0x2003_0000)
-* **Slave 7 (Magic)**: `addr[31:16] == 16'hFFFF` (0xFFFF_0000)
+* **Slave 7 (GPIO)**: `addr[31:16] == 16'h2004` (0x2004_0000)
+* **Slave 8 (Timer)**: `addr[31:16] == 16'h2005` (0x2005_0000)
+* **Slave 9 (Magic)**: `addr[31:16] == 16'hFFFF` (0xFFFF_0000)
 
 Unmapped addresses return an AXI SLVERR (2'b10) response on the read channel and OKAY (2'b00) on the write channel (write is silently ignored).
 
@@ -1248,7 +1281,7 @@ The DMA controller provides high-performance memory-to-memory and peripheral-to-
 |4KB
 
 |Channels
-|8 independent channels
+|4 independent channels
 
 |Transfer Modes
 |1D (linear), 2D (strided), 3D (planar), Scatter-Gather
@@ -1466,6 +1499,295 @@ The DMA controller has a dedicated AXI4 master port (32-bit data width default):
 
 ---
 
+=== GPIO (General-Purpose I/O)
+
+==== Overview
+
+The GPIO controller provides four independent 32-pin banks with configurable direction,
+atomic bit-manipulation, edge/level interrupt detection, and loopback test mode.
+
+[cols="1,3"]
+.GPIO Features
+|===
+|Feature |Specification
+
+|Base Address
+|0x2004_0000
+
+|Size
+|64KB
+
+|Banks
+|4 independent banks (banks 0–3)
+
+|Pins Per Bank
+|32 (128 total I/O pins)
+
+|Output Control
+|Write, atomic set (W1S), atomic clear (W1C)
+
+|Input
+|Synchronous registered input path
+
+|Interrupt
+|Per-pin enable, edge (rising/falling) or level (high/low), PLIC source ID 5
+
+|Loopback
+|Per-bank loopback enable for self-test (output routed back to input)
+
+|Capability Register
+|`{VERSION[31:16], NUM_BANKS[15:8], NUM_PINS[7:0]}` = `0x0001_0120`
+|===
+
+==== Register Map
+
+All groups repeat for banks 0–3 (bank _b_ register at `BASE + group_offset + b * 4`):
+
+[cols="1,2,1,4"]
+.GPIO Register Map
+|===
+|Base Offset |Name |Access |Description
+
+|0x00–0x0C
+|DATA_OUT[3:0]
+|R/W
+|Output data register for each bank
+
+|0x10–0x1C
+|SET[3:0]
+|WO
+|Atomic set: write-1 bits set corresponding DATA_OUT bits
+
+|0x20–0x2C
+|CLEAR[3:0]
+|WO
+|Atomic clear: write-1 bits clear corresponding DATA_OUT bits
+
+|0x30–0x3C
+|DATA_IN[3:0]
+|RO
+|Current synchronised input pin state
+
+|0x40–0x4C
+|DIR[3:0]
+|R/W
+|Direction: 1 = output, 0 = input (default 0)
+
+|0x50–0x5C
+|IE[3:0]
+|R/W
+|Interrupt enable mask per pin
+
+|0x60–0x6C
+|TRIGGER[3:0]
+|R/W
+|Trigger mode: 1 = edge-sensitive, 0 = level-sensitive
+
+|0x70–0x7C
+|POLARITY[3:0]
+|R/W
+|Polarity: edge — 1 = rising, 0 = falling; level — 1 = high, 0 = low
+
+|0x80–0x8C
+|IS[3:0]
+|W1C
+|Interrupt status: write-1-to-clear per pin
+
+|0x90–0x9C
+|LOOPBACK[3:0]
+|R/W
+|Loopback enable: 1 = route output to input path (for testing)
+
+|0xA0
+|CAPABILITY
+|RO
+|`{VERSION[31:16], NUM_BANKS[15:8], NUM_PINS[7:0]}`
+|===
+
+==== Interrupt Behavior
+
+* Any enabled pin whose interrupt condition is met asserts `gpio_irq` to PLIC (source 5)
+* Interrupt status register IS[b] shows which pins fired (one bit per pin per bank)
+* Write-1-to-clear to IS[b] after servicing; IRQ de-asserts once all IS bits are cleared
+* TRIGGER and POLARITY can be set independently per pin
+
+==== External Pins
+
+[cols="1,1,4"]
+.GPIO External Pins
+|===
+|Pin |Direction |Description
+
+|gpio_out[127:0]
+|Output
+|Driven from DATA_OUT when DIR=1
+
+|gpio_in[127:0]
+|Input
+|Sampled to DATA_IN; unused when DIR=1
+
+|gpio_oe[127:0]
+|Output
+|Output-enable for tri-state buffers (equals DIR)
+|===
+
+---
+
+=== Timer/PWM Controller
+
+==== Overview
+
+The Timer provides four independent 32-bit up-counters with PWM output, prescaler divider,
+dual compare registers for mid-period and period-end interrupts, and per-channel enable.
+
+[cols="1,3"]
+.Timer Features
+|===
+|Feature |Specification
+
+|Base Address
+|0x2005_0000
+
+|Size
+|64KB
+
+|Channels
+|4 independent channels
+
+|Counter Width
+|32 bits
+
+|Prescaler
+|16-bit value in CTRL[31:16] — clock divided by (PRESCALE + 1)
+
+|Compare Registers
+|COMPARE1: mid-period IRQ or PWM falling edge +
+COMPARE2: period end (counter auto-reloads to 0) and IRQ
+
+|PWM
+|Active-high or active-low (via CTRL[4]); duty set by COMPARE1/COMPARE2 ratio
+
+|Interrupt
+|Per-channel interrupt enable (CTRL[3]); aggregated IRQ to PLIC source 6
+
+|Capability Register
+|`{VERSION[31:16], NUM_CHANNELS[15:8], COUNTER_WIDTH[7:0]}` = `0x0001_0420`
+|===
+
+==== Register Map
+
+Per-channel registers at `BASE + channel * 0x20` (channels 0–3):
+
+[cols="1,2,1,4"]
+.Timer Per-Channel Registers (BASE + ch × 0x20)
+|===
+|Offset |Name |Access |Description
+
+|0x00
+|COUNT
+|R/W
+|Current counter value (read: current count; write: preload)
+
+|0x04
+|COMPARE1
+|R/W
+|Mid-period compare: triggers interrupt and/or PWM falling edge at this count
+
+|0x08
+|COMPARE2
+|R/W
+|Period compare: counter reloads to 0 when COUNT == COMPARE2; triggers period IRQ
+
+|0x0C
+|CTRL
+|R/W
+|**[0]**: EN — timer enable +
+**[1]**: PWM_EN — PWM output enable +
+**[3]**: INT_EN — interrupt enable +
+**[4]**: PWM_POL — PWM polarity (1 = active high) +
+**[31:16]**: PRESCALE — clock divider value
+|===
+
+Global registers (shared across all channels):
+
+[cols="1,2,1,4"]
+.Timer Global Registers
+|===
+|Offset |Name |Access |Description
+
+|0x80
+|INT_STATUS
+|W1C
+|Interrupt status: bits [3:0] correspond to channels 3:0; write-1-to-clear
+
+|0x84
+|INT_ENABLE
+|R/W
+|Global interrupt enable per channel: bits [3:0]; must be set in addition to CTRL[3]
+
+|0x88
+|CAPABILITY
+|RO
+|`{VERSION[31:16], NUM_CHANNELS[15:8], COUNTER_WIDTH[7:0]}`
+|===
+
+==== Timer Modes
+
+*Simple mode* — periodic interrupt, period = COMPARE2 + 1 ticks:
+
+. Set COMPARE1 = 0, COMPARE2 = period - 1
+. Set CTRL = EN | INT_EN | PRESCALE(n)
+. On interrupt: read/clear INT_STATUS; counter auto-reloads
+
+*Dual compare mode* — two events per period:
+
+. COMPARE1 fires a mid-period interrupt (e.g. for phase-correct PWM updates)
+. COMPARE2 fires a period-end interrupt and reloads the counter
+
+*PWM mode*:
+
+. Set CTRL[1] = PWM_EN; output goes high at COUNT=0, low at COUNT=COMPARE1, reloads at COMPARE2
+. Duty cycle = COMPARE1 / (COMPARE2 + 1)
+. Update COMPARE1 on-the-fly to adjust duty without stopping the timer
+
+==== Timing Example (100 MHz clock, 1 kHz interrupt)
+
+----
+PRESCALE = 0         // No prescaling; clock = 100 MHz
+COMPARE2 = 99999     // Period = 100000 ticks = 1 ms
+INT_ENABLE = 0x1     // Enable channel 0 global IRQ
+CTRL = EN | INT_EN   // Start timer with interrupt
+----
+
+For a 1 kHz 50% duty-cycle PWM:
+
+----
+COMPARE1 = 49999     // Falling edge at 50% duty
+COMPARE2 = 99999     // Period = 1 ms
+CTRL = EN | PWM_EN | PWM_POL | INT_EN
+----
+
+==== Interrupt Behavior
+
+* Each channel's interrupt is enabled by both CTRL[3] (channel) and INT_ENABLE[ch] (global)
+* INT_STATUS bit is set on COMPARE1 match (if dual mode) or COMPARE2 match
+* Write-1-to-clear INT_STATUS[ch] in ISR; timer continues running
+* All channel IRQs are OR-aggregated to a single PLIC source (ID 6)
+
+==== External Pins
+
+[cols="1,1,4"]
+.Timer External Pins
+|===
+|Pin |Direction |Description
+
+|pwm_out[3:0]
+|Output
+|PWM output per channel (active when CTRL[1]=1)
+|===
+
+---
+
 === CLINT (Core-Local Interruptor)
 
 ==== Overview
@@ -1651,7 +1973,15 @@ The following peripherals are connected to the PLIC:
 |DMA
 |DMA channel done or error (aggregated)
 
-|5-31
+|5
+|GPIO
+|GPIO pin interrupt (any bank, W1C per-pin)
+
+|6
+|Timer
+|Timer channel interrupt (any channel, W1C per-channel)
+
+|7-31
 |Reserved
 |Future peripheral expansion
 |===
@@ -1682,8 +2012,10 @@ PRIORITY[1] = 5;  // UART high priority
 PRIORITY[2] = 3;  // SPI medium priority
 PRIORITY[3] = 3;  // I2C medium priority
 PRIORITY[4] = 1;  // DMA low priority
+PRIORITY[5] = 4;  // GPIO medium-high priority
+PRIORITY[6] = 2;  // Timer low-medium priority
 THRESHOLD = 0;    // Allow all enabled interrupts
-ENABLE = 0x1E;    // Enable sources 1-4
+ENABLE = 0x7E;    // Enable sources 1-6
 ----
 
 ---
@@ -1778,7 +2110,7 @@ The SoC uses AXI4-Lite for peripheral communication and AXI4 for high-bandwidth 
 |AXI4 (32-bit address, 32-bit data, burst support)
 
 |Interconnect Topology
-|1-to-8 crossbar (single master, 8 slaves)
+|1-to-10 crossbar (single master, 10 slaves)
 
 |Outstanding Transactions
 |Supported via AXI ID mechanism (ID width = 4 bits, max 16 outstanding)
@@ -1795,7 +2127,7 @@ The SoC uses AXI4-Lite for peripheral communication and AXI4 for high-bandwidth 
 The AXI crossbar (`axi_xbar`) routes transactions from the core to appropriate slave devices:
 
 * **Master Port**: Connected to memory arbiter (combines I-fetch + D-access paths)
-* **Slave Ports**: 8 devices (RAM, CLINT, PLIC, UART, I2C, SPI, DMA, Magic)
+* **Slave Ports**: 10 devices (RAM, CLINT, PLIC, UART, I2C, SPI, DMA, GPIO, Timer, Magic)
 
 ==== Address Decode Logic
 
@@ -1803,7 +2135,9 @@ Decoding is priority-based (higher-numbered slaves checked first):
 
 [source,systemverilog]
 ----
-if (addr[31:16] == 16'hFFFF)       → Slave 7 (Magic)
+if (addr[31:16] == 16'hFFFF)       → Slave 9 (Magic)
+else if (addr[31:16] == 16'h2005)  → Slave 8 (Timer)
+else if (addr[31:16] == 16'h2004)  → Slave 7 (GPIO)
 else if (addr[31:12] == 20'h2003_0) → Slave 6 (DMA)
 else if (addr[31:16] == 16'h2002)  → Slave 5 (SPI)
 else if (addr[31:16] == 16'h2001)  → Slave 4 (I2C)
@@ -2055,7 +2389,6 @@ The processor boots from address `0x8000_0000` (RAM base) on reset:
 For simulation, the ELF loader (`elfloader.cpp`) loads program sections into RAM via DPI-C before simulation starts. For FPGA, use:
 
 * **JTAG**: Load program via JTAG debugger (OpenOCD, etc.)
-* **Boot ROM**: Store bootloader in on-chip ROM, copy program from external flash to RAM
 
 === Interrupt Handling
 
@@ -2421,6 +2754,11 @@ For questions or support, contact: support@example.com
 |CTRL
 |R/W
 |0x0000_0000
+
+|0x2000_0018
+|CAP
+|R/O
+|`{VERSION[31:16], TX_DEPTH[15:8], RX_DEPTH[7:0]}`
 |===
 
 === SPI Registers
@@ -2463,6 +2801,11 @@ For questions or support, contact: support@example.com
 |IS
 |R/O
 |0x0000_0000
+
+|0x2002_001C
+|CAP
+|R/O
+|`{VERSION[31:16], TX_DEPTH[15:8], RX_DEPTH[7:0]}`
 |===
 
 === I2C Registers
@@ -2505,6 +2848,11 @@ For questions or support, contact: support@example.com
 |IS
 |R/O
 |0x0000_0000
+
+|0x2001_001C
+|CAP
+|R/O
+|`{VERSION[31:16], TX_DEPTH[15:8], RX_DEPTH[7:0]}`
 |===
 
 === DMA Global Registers
@@ -2528,6 +2876,11 @@ For questions or support, contact: support@example.com
 |R/O
 |0xD4A0_0100
 
+|0x2003_0F0C
+|CAPABILITY
+|R/O
+|`{VERSION[31:16], NUM_CHANNELS[15:8], MAX_BURST_LEN[7:0]}`
+
 |0x2003_0F10
 |PERF_CTRL
 |R/W
@@ -2547,6 +2900,110 @@ For questions or support, contact: support@example.com
 |PERF_WR_BYTES
 |R/O
 |0x0000_0000
+|===
+
+=== GPIO Registers (Bank 0 shown; bank _b_ at `BASE + group + b×4`)
+
+[cols="1,2,1,2"]
+|===
+|Address |Name |Access |Reset Value
+
+|0x2004_0000
+|DATA_OUT0
+|R/W
+|0x0000_0000
+
+|0x2004_0010
+|SET0
+|W/O
+|-
+
+|0x2004_0020
+|CLEAR0
+|W/O
+|-
+
+|0x2004_0030
+|DATA_IN0
+|R/O
+|(pin state)
+
+|0x2004_0040
+|DIR0
+|R/W
+|0x0000_0000
+
+|0x2004_0050
+|IE0
+|R/W
+|0x0000_0000
+
+|0x2004_0060
+|TRIGGER0
+|R/W
+|0x0000_0000
+
+|0x2004_0070
+|POLARITY0
+|R/W
+|0x0000_0000
+
+|0x2004_0080
+|IS0
+|W1C
+|0x0000_0000
+
+|0x2004_0090
+|LOOPBACK0
+|R/W
+|0x0000_0000
+
+|0x2004_00A0
+|CAPABILITY
+|R/O
+|`0x0001_0120`
+|===
+
+=== Timer Registers (Channel 0 shown; channel _n_ at `BASE + n×0x20`)
+
+[cols="1,2,1,2"]
+|===
+|Address |Name |Access |Reset Value
+
+|0x2005_0000
+|COUNT0
+|R/W
+|0x0000_0000
+
+|0x2005_0004
+|COMPARE1_0
+|R/W
+|0x0000_0000
+
+|0x2005_0008
+|COMPARE2_0
+|R/W
+|0xFFFF_FFFF
+
+|0x2005_000C
+|CTRL0
+|R/W
+|0x0000_0000
+
+|0x2005_0080
+|INT_STATUS
+|W1C
+|0x0000_0000
+
+|0x2005_0084
+|INT_ENABLE
+|R/W
+|0x0000_0000
+
+|0x2005_0088
+|CAPABILITY
+|R/O
+|`0x0001_0420`
 |===
 
 <<<
@@ -2727,7 +3184,39 @@ NOTE: mcause[31]=1 indicates interrupt; mcause[30:0] contains interrupt code.
 
 NOTE: I2C requires external pull-up resistors (4.7kΩ typical) on SCL and SDA.
 
-=== External AXI4 Memory Interface
+=== GPIO Interface
+
+[cols="1,1,1,3"]
+|===
+|Signal |I/O |Width |Description
+
+|gpio_out
+|Output
+|128
+|Pin output data (driven when DIR=1 per pin)
+
+|gpio_in
+|Input
+|128
+|Pin input state (captured synchronously)
+
+|gpio_oe
+|Output
+|128
+|Output enable per pin for tri-state buffers (equals DIR)
+|===
+
+=== Timer / PWM Interface
+
+[cols="1,1,1,3"]
+|===
+|Signal |I/O |Width |Description
+
+|pwm_out
+|Output
+|4
+|PWM output per timer channel (active when CTRL[1]=1)
+|===
 
 [cols="1,1,1,3"]
 |===
@@ -2867,6 +3356,11 @@ NOTE: I2C requires external pull-up resistors (4.7kΩ typical) on SCL and SDA.
 |2026-02-25
 |KV32 Dev Team
 |Initial release
+
+|1.1
+|2026-02-28
+|KV32 Dev Team
+|Added GPIO (`axi_gpio.sv`) and Timer/PWM (`axi_timer.sv`) peripheral specifications; updated memory map and address decode (Slave 7=GPIO, Slave 8=Timer, Slave 9=Magic); corrected DMA channel count (8→4); added PLIC sources 5 (GPIO) and 6 (Timer); added CAP registers to UART/SPI/I2C/DMA/GPIO/Timer; expanded Appendix A/C accordingly
 |===
 
 <<<
