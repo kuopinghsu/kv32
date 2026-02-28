@@ -1,6 +1,6 @@
 // ============================================================================
 // File: elfloader.h
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: ELF File Loader Header
 //
 // DPI-C interface for loading ELF files into simulation memory.

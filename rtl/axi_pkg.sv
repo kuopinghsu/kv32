@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_pkg.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4 Interface Package
 //
 // Defines AXI4 protocol types and constants used throughout the system.

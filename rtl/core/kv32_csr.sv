@@ -1,6 +1,6 @@
 // ============================================================================
-// File: rv32_csr.sv
-// Project: RV32 RISC-V Processor
+// File: kv32_csr.sv
+// Project: KV32 RISC-V Processor
 // Description: RISC-V Control and Status Registers (CSR)
 //
 // Implements machine-mode CSRs for the RISC-V processor:
@@ -17,9 +17,9 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 `endif
-module rv32_csr (
+module kv32_csr (
     input  logic        clk,
     input  logic        rst_n,
 
@@ -64,7 +64,7 @@ module rv32_csr (
 `endif
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
 `endif
 
     // CSR registers

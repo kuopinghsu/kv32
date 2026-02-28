@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_magic.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4-Lite Magic Device for Simulation Control
 //
 // Provides special memory-mapped registers for simulation and testing.

@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_clint.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4-Lite Core Local Interruptor (CLINT)
 //
 // Provides memory-mapped timer functionality for RISC-V core.
@@ -127,7 +127,7 @@ module axi_clint (
 `ifndef SYNTHESIS
     // In trace mode mtime advances once per retired instruction, but the
     // software simulator ticks BEFORE executing each instruction, so it
-    // sees instret+1.  The correction mirrors rv32_csr.sv:
+    // sees instret+1.  The correction mirrors kv32_csr.sv:
     //   mtime + retire_instr + 1
     // where retire_instr accounts for the instruction now in WB (same clock
     // as this AR acceptance) and +1 for the load instruction itself.

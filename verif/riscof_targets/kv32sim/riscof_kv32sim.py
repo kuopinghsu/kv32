@@ -15,8 +15,8 @@ from riscof.pluginTemplate import pluginTemplate
 
 logger = logging.getLogger()
 
-class rv32sim(pluginTemplate):
-    __model__ = "rv32sim"
+class kv32sim(pluginTemplate):
+    __model__ = "kv32sim"
     __version__ = "1.0.0"
 
     def __init__(self, *args, **kwargs):
@@ -24,7 +24,7 @@ class rv32sim(pluginTemplate):
         config = kwargs.get('config')
 
         if config is None:
-            logger.error("Config file is missing for rv32sim")
+            logger.error("Config file is missing for kv32sim")
             raise SystemExit(1)
 
         # Get the directory where config.ini is located (riscof_targets directory)
@@ -60,7 +60,7 @@ class rv32sim(pluginTemplate):
         # Load environment configuration
         env_config_path = os.path.join(self.project_root, 'env.config')
         self.riscv_prefix = None
-        self.rv32sim_exe = os.path.join(self.project_root, 'build', 'rv32sim')
+        self.kv32sim_exe = os.path.join(self.project_root, 'build', 'kv32sim')
         self.spike_exe   = 'spike'
 
         if os.path.exists(env_config_path):
@@ -76,7 +76,7 @@ class rv32sim(pluginTemplate):
             self.riscv_prefix = 'riscv32-unknown-elf-'
 
         self.objdump_exe = self.riscv_prefix + 'objdump'
-        self.dut_exe = self.rv32sim_exe
+        self.dut_exe = self.kv32sim_exe
         self.num_jobs = str(config['jobs'] if 'jobs' in config else 1)
 
         # Check if target should be run
@@ -85,7 +85,7 @@ class rv32sim(pluginTemplate):
         else:
             self.target_run = True
 
-        logger.debug("rv32sim plugin initialized")
+        logger.debug("kv32sim plugin initialized")
 
     def initialise(self, suite, work_dir, archtest_env):
         self.suite = suite
@@ -114,8 +114,8 @@ class rv32sim(pluginTemplate):
         if "Zifencei" in ispec["ISA"]:
             self.isa += '_zifencei'
 
-        # rv32sim ISA string - only supports rv32ima or rv32ima_zicsr
-        # Remove _zifencei as rv32sim doesn't accept it in --isa parameter
+        # kv32sim ISA string - only supports rv32ima or rv32ima_zicsr
+        # Remove _zifencei as kv32sim doesn't accept it in --isa parameter
         self.isa_sim = self.isa.replace('_zifencei', '')
 
         # Set ABI based on xlen and build compile_cmd
@@ -136,9 +136,9 @@ class rv32sim(pluginTemplate):
         #
         # This plugin may be used in two roles:
         #   DUT role  (arch-test-sim):  self.name contains "DUT-"       → run
-        #                               rv32sim and compare its trace against spike.
+        #                               kv32sim and compare its trace against spike.
         #   REF role  (arch-test-rv32i): self.name contains "Reference-" → just
-        #                               generate the signature (+ rv32sim trace
+        #                               generate the signature (+ kv32sim trace
         #                               file for debugging).  Do NOT re-run spike
         #                               here; the DUT plugin already does that for
         #                               the RTL-vs-spike comparison, and a second
@@ -162,18 +162,18 @@ class rv32sim(pluginTemplate):
             cmd = self.compile_cmd.format(test, elf, compile_macros)
 
             if arch_test_trace and not is_ref_role:
-                # DUT role with TRACE=1: generate rv32sim signature + RTL-format
+                # DUT role with TRACE=1: generate kv32sim signature + RTL-format
                 # trace, then compare against spike.
                 # DUT trace stays in dut/; spike REF trace goes to ref/ to match
                 # the standard RISCOF layout (ref/ is the reference model dir).
                 ref_dir          = os.path.join(test_dir, '..', 'ref')
-                dut_trace_file   = os.path.join(test_dir, 'DUT-rv32sim.trace')
+                dut_trace_file   = os.path.join(test_dir, 'DUT-kv32sim.trace')
                 spike_trace_file = os.path.join(ref_dir, 'REF-spike.trace')
                 trace_cmp_log    = os.path.join(test_dir, 'trace_compare.log')
 
                 sim_cmd = ('{0} --isa={1} --rtl-trace --log={2}'
                            ' +signature={3} +signature-granularity=4 {4}').format(
-                               self.rv32sim_exe, self.isa_sim,
+                               self.kv32sim_exe, self.isa_sim,
                                dut_trace_file, sig_file, elf)
 
                 # REF: spike generates instruction trace via --log-commits
@@ -188,7 +188,7 @@ class rv32sim(pluginTemplate):
                     " RC=$$?; if [ $$RC -eq 124 ] || [ $$RC -eq 0 ]; then exit 0; else exit $$RC; fi'"
                 ).format(self.spike_exe, self.isa, elf, spike_trace_file)
 
-                # Compare: spike trace (REF) vs rv32sim trace (DUT)
+                # Compare: spike trace (REF) vs kv32sim trace (DUT)
                 cmp_cmd = (
                     '(python3 {0} {1} {2} > {3} 2>&1'
                     ' && echo TRACE_MATCH >> {3})'
@@ -199,20 +199,20 @@ class rv32sim(pluginTemplate):
                     test_dir, ref_dir, cmd, sim_cmd, sig_file, spike_tracecmd, cmp_cmd)
 
             elif arch_test_trace and is_ref_role:
-                # REF role with TRACE=1: generate rv32sim RTL-format trace, then
+                # REF role with TRACE=1: generate kv32sim RTL-format trace, then
                 # compare it against the RTL trace that the DUT plugin already
-                # wrote to ../dut/DUT-rv32.trace.
+                # wrote to ../dut/DUT-kv32.trace.
                 # Result goes to ../dut/trace_compare.log so TRACE_SUMMARY finds it.
-                sim_trace_file = os.path.join(test_dir, 'REF-rv32sim.trace')
-                rtl_trace_file = os.path.join(test_dir, '..', 'dut', 'DUT-rv32.trace')
+                sim_trace_file = os.path.join(test_dir, 'REF-kv32sim.trace')
+                rtl_trace_file = os.path.join(test_dir, '..', 'dut', 'DUT-kv32.trace')
                 trace_cmp_log  = os.path.join(test_dir, '..', 'dut', 'trace_compare.log')
 
                 sim_cmd = ('{0} --isa={1} --rtl-trace --log={2}'
                            ' +signature={3} +signature-granularity=4 {4}').format(
-                               self.rv32sim_exe, self.isa_sim,
+                               self.kv32sim_exe, self.isa_sim,
                                sim_trace_file, sig_file, elf)
 
-                # Compare: rv32sim trace (REF) vs RTL trace (DUT)
+                # Compare: kv32sim trace (REF) vs RTL trace (DUT)
                 cmp_cmd = (
                     '(python3 {0} {1} {2} > {3} 2>&1'
                     ' && echo TRACE_MATCH >> {3})'
@@ -225,14 +225,14 @@ class rv32sim(pluginTemplate):
             else:
                 # Normal run: signature only
                 sim_cmd = '{0} --isa={1} +signature={2} +signature-granularity=4 {3}'.format(
-                    self.rv32sim_exe, self.isa_sim, sig_file, elf)
+                    self.kv32sim_exe, self.isa_sim, sig_file, elf)
                 execute = '@cd {0}; {1}; {2} &> {3}.log'.format(
                     test_dir, cmd, sim_cmd, sig_file)
 
             make.add_target(execute)
 
-        # When rv32sim is the DUT (arch-test-sim) with TRACE=1, each test
-        # runs rv32sim + spike (up to 5 s) + compare.  Pass an extended timeout.
+        # When kv32sim is the DUT (arch-test-sim) with TRACE=1, each test
+        # runs kv32sim + spike (up to 5 s) + compare.  Pass an extended timeout.
         # In REF role with TRACE=1 there is no spike, so 300 s is sufficient.
         exec_timeout = 900 if (arch_test_trace and not is_ref_role) else 300
         make.execute_all(self.work_dir, timeout=exec_timeout)

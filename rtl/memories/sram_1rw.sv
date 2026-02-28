@@ -1,5 +1,7 @@
-// =============================================================================
-// sram_1rw.sv – Single-Port 1R/1W SRAM Macro Wrapper
+// ============================================================================
+// File: sram_1rw.sv
+// Project: KV32 RISC-V Processor
+// Description: Single-Port 1R/1W SRAM Macro Wrapper
 //
 // Interface
 //   clk   – rising-edge clock
@@ -31,7 +33,7 @@
 //                           For ASIC tapeout replace the translate_off/on body
 //                           with the foundry memory-compiler macro.  Four
 //                           example templates are provided in the comments.
-// =============================================================================
+// ============================================================================
 
 module sram_1rw #(
     parameter int DEPTH = 256,  // number of words

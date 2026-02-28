@@ -1,6 +1,6 @@
 // ============================================================================
-// File: rv32_pkg.sv
-// Project: RV32 RISC-V Processor
+// File: kv32_pkg.sv
+// Project: KV32 RISC-V Processor
 // Description: RISC-V 32-bit Core Package
 //
 // Defines types, enums, and macros used by the RISC-V RV32IMA processor core.
@@ -8,7 +8,7 @@
 // and debug display macros.
 // ============================================================================
 
-package rv32_pkg;
+package kv32_pkg;
 
     // ========================================================================
     // Debug Display Macros

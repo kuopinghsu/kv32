@@ -1,6 +1,6 @@
 // ============================================================================
 // File: sw/icache/icache.c
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: I-Cache functional test
 //
 // Tests:

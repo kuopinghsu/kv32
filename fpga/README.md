@@ -1,6 +1,6 @@
 # FPGA Build
 
-This FPGA implementation targets a specific verification board (Kintex UltraScale+ `xcku5p-ffvb676-1-e`) used for hardware validation of the RV32 processor. It is **not** intended for general-purpose deployment and does not provide configurable extensibility for other FPGA boards or platforms.
+This FPGA implementation targets a specific verification board (Kintex UltraScale+ `xcku5p-ffvb676-1-e`) used for hardware validation of the KV32 processor. It is **not** intended for general-purpose deployment and does not provide configurable extensibility for other FPGA boards or platforms.
 
 ## Features
 

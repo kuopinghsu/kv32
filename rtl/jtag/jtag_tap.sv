@@ -1,6 +1,6 @@
 // ============================================================================
 // File: jtag_tap.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: JTAG TAP Controller (IEEE 1149.1)
 //
 // Basic TAP state machine for testing cJTAG bridge
@@ -188,7 +188,7 @@ module jtag_tap #(
     assign update_dr_pulse = (state == UPDATE_DR);
 
     // Instantiate RISC-V Debug Transport Module
-    rv32_dtm #(
+    kv32_dtm #(
         .IDCODE(IDCODE)
     ) u_dtm (
         // JTAG interface

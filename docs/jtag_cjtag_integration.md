@@ -2,7 +2,7 @@
 
 ## Overview
 
-The RV32 processor now supports configurable JTAG or cJTAG debug interfaces for RISC-V debugging. This implementation provides full compatibility with both IEEE 1149.1 (JTAG) and IEEE 1149.7 (cJTAG) standards.
+The KV32 processor now supports configurable JTAG or cJTAG debug interfaces for RISC-V debugging. This implementation provides full compatibility with both IEEE 1149.1 (JTAG) and IEEE 1149.7 (cJTAG) standards.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ External Interface (JTAG or cJTAG)
    +----------------+              |
                                    v
                              +-----------+
-                             | rv32_dtm  |  Debug Transport Module
+                             | kv32_dtm  |  Debug Transport Module
                              +-----------+
 ```
 
@@ -57,7 +57,7 @@ External Interface (JTAG or cJTAG)
   - Full TAP state machine (16 states)
   - Instruction register management
   - Data register operations
-  - Instantiates rv32_dtm for RISC-V debug support
+  - Instantiates kv32_dtm for RISC-V debug support
 
 - **Supported Instructions**:
   - `IDCODE` (0x01): Device identification
@@ -65,7 +65,7 @@ External Interface (JTAG or cJTAG)
   - `DMI` (0x11): Debug Module Interface
   - `BYPASS` (0x1F): Bypass register
 
-### 4. **rv32_dtm.sv**
+### 4. **kv32_dtm.sv**
 - **Purpose**: RISC-V Debug Transport Module (DTM)
 - **Features**:
   - Implements RISC-V Debug Specification 0.13
@@ -174,9 +174,9 @@ ftdi_vid_pid 0x0403 0x6014
 adapter_khz 1000
 
 transport select jtag
-jtag newtap rv32 cpu -irlen 5 -expected-id 0x1DEAD3FF
+jtag newtap kv32 cpu -irlen 5 -expected-id 0x1DEAD3FF
 
-target create rv32.cpu riscv -chain-position rv32.cpu
+target create kv32.cpu riscv -chain-position kv32.cpu
 init
 ```
 
@@ -189,9 +189,9 @@ adapter_khz 1000
 
 # cJTAG requires special adapter or bridge
 transport select cjtag
-cjtag newtap rv32 cpu -irlen 5 -expected-id 0x1DEAD3FF
+cjtag newtap kv32 cpu -irlen 5 -expected-id 0x1DEAD3FF
 
-target create rv32.cpu riscv -chain-position rv32.cpu
+target create kv32.cpu riscv -chain-position kv32.cpu
 init
 ```
 
@@ -277,7 +277,7 @@ riscv32-unknown-elf-gdb program.elf
 - Top-level wrapper: `rtl/jtag/jtag_top.sv`
 - cJTAG bridge: `rtl/jtag/cjtag_bridge.sv`
 - TAP controller: `rtl/jtag/jtag_tap.sv`
-- Debug Transport Module: `rtl/rv32_dtm.sv`
+- Debug Transport Module: `rtl/kv32_dtm.sv`
 
 ## References
 

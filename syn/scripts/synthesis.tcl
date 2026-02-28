@@ -1,4 +1,4 @@
-# Yosys Synthesis Script for rv32
+# Yosys Synthesis Script for kv32
 # Target: ASAP7 7nm PDK
 
 # Load configuration
@@ -12,7 +12,7 @@ puts "=========================================="
 
 # Read RTL files
 # Pass all files in a single read_verilog -sv call so that Yosys processes
-# package definitions and cross-file imports (import rv32_pkg::*) in one pass.
+# package definitions and cross-file imports (import kv32_pkg::*) in one pass.
 puts "\n\[1/6\] Reading RTL files..."
 foreach rtl_file $RTL_FILES {
     if {![file exists $rtl_file]} {

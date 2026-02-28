@@ -1,6 +1,6 @@
 // ============================================================================
 // File: jtag_top.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: Top-level JTAG/cJTAG Interface Module with Pin Multiplexing
 //
 // Provides configurable JTAG or cJTAG interface support for RISC-V debug
@@ -14,13 +14,13 @@
 //   Pin 3: TDO (JTAG) / unused (cJTAG)  - Output
 //
 // ARCHITECTURE:
-//   External Interface (JTAG or cJTAG) -> [cjtag_bridge] -> jtag_tap -> rv32_dtm
+//   External Interface (JTAG or cJTAG) -> [cjtag_bridge] -> jtag_tap -> kv32_dtm
 //
 // CONNECTIONS:
 //   - cJTAG mode: cjtag_bridge converts 2-wire to 4-wire, feeds jtag_tap
 //   - JTAG mode: External 4-wire JTAG directly connects to jtag_tap
-//   - jtag_tap implements TAP state machine and instantiates rv32_dtm
-//   - rv32_dtm implements Debug Transport Module per RISC-V Debug Spec
+//   - jtag_tap implements TAP state machine and instantiates kv32_dtm
+//   - kv32_dtm implements Debug Transport Module per RISC-V Debug Spec
 // ============================================================================
 
 module jtag_top #(
@@ -163,7 +163,7 @@ module jtag_top #(
     // =========================================================================
     // JTAG TAP Controller (Always Instantiated)
     // =========================================================================
-    // Implements IEEE 1149.1 TAP state machine and instantiates rv32_dtm
+    // Implements IEEE 1149.1 TAP state machine and instantiates kv32_dtm
     jtag_tap #(
         .IDCODE     (IDCODE),
         .IR_LEN     (IR_LEN)

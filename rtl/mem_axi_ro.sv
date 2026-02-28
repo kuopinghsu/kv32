@@ -1,6 +1,6 @@
 // ============================================================================
 // File: mem_axi_ro.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: Memory Interface to AXI4 Bridge (Read-Only)
 //
 // Converts simple memory-mapped interface to AXI4 read protocol.
@@ -16,7 +16,7 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 import axi_pkg::*;
 `endif
 module mem_axi_ro #(
@@ -51,7 +51,7 @@ module mem_axi_ro #(
     output logic                     axi_rready
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
     import axi_pkg::*;
 `endif
 

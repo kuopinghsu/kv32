@@ -1,4 +1,4 @@
-# spike/Makefile – Build Spike MMIO plugins for the RV32 SoC
+# spike/Makefile – Build Spike MMIO plugins for the KV32 SoC
 #
 # Usage:
 #   make                            # build all plugins into ../build/
@@ -8,7 +8,7 @@
 #
 # Each plugin is compiled as a position-independent shared library.
 # Plugins are loaded by Spike at runtime via --extlib=<path>.so.
-# Register constants are sourced from ../sw/include/rv_platform.h.
+# Register constants are sourced from ../sw/include/kv_platform.h.
 #
 # NOTE: On macOS, Spike must be built with -Wl,-export_dynamic or similar
 #       to export the register_mmio_plugin symbol for plugins to work at runtime.
@@ -29,7 +29,7 @@ SPIKE_INCLUDE ?=
 CXX      ?= g++
 CXXFLAGS  = -std=c++14 -O2 -fPIC -shared
 CXXFLAGS += -I$(SPIKE_DIR) -I$(SW_INCLUDE)
-CXXFLAGS += -DRV_PLATFORM_NO_INLINE_HELPERS
+CXXFLAGS += -DKV_PLATFORM_NO_INLINE_HELPERS
 LDFLAGS   = -ldl
 
 # On macOS, allow undefined symbols to be resolved at runtime

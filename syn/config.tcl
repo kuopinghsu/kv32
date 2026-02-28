@@ -1,9 +1,9 @@
-# Synthesis Configuration for rv32
+# Synthesis Configuration for kv32
 # ASAP7 7nm Predictive PDK with Yosys synthesis
 
 # Design name
-set DESIGN_NAME "rv32_soc"
-set TOP_MODULE "rv32_soc"
+set DESIGN_NAME "kv32_soc"
+set TOP_MODULE "kv32_soc"
 
 # Target frequency (optimized for 7nm process)
 set TARGET_FREQ_MHZ 120
@@ -23,14 +23,14 @@ set OUTPUT_DELAY [expr {$CLOCK_PERIOD * $OUTPUT_DELAY_PERCENT / 100.0}]
 # RTL source files
 set RTL_ROOT "../rtl"
 set RTL_FILES [list \
-    "$RTL_ROOT/core/rv32_pkg.sv" \
-    "$RTL_ROOT/core/rv32_ib.sv" \
-    "$RTL_ROOT/core/rv32_regfile.sv" \
-    "$RTL_ROOT/core/rv32_csr.sv" \
-    "$RTL_ROOT/core/rv32_alu.sv" \
-    "$RTL_ROOT/core/rv32_decoder.sv" \
-    "$RTL_ROOT/core/rv32_sb.sv" \
-    "$RTL_ROOT/core/rv32_core.sv" \
+    "$RTL_ROOT/core/kv32_pkg.sv" \
+    "$RTL_ROOT/core/kv32_ib.sv" \
+    "$RTL_ROOT/core/kv32_regfile.sv" \
+    "$RTL_ROOT/core/kv32_csr.sv" \
+    "$RTL_ROOT/core/kv32_alu.sv" \
+    "$RTL_ROOT/core/kv32_decoder.sv" \
+    "$RTL_ROOT/core/kv32_sb.sv" \
+    "$RTL_ROOT/core/kv32_core.sv" \
     "$RTL_ROOT/memories/sram_1rw.sv" \
     "$RTL_ROOT/axi_pkg.sv" \
     "$RTL_ROOT/axi_arbiter.sv" \
@@ -44,8 +44,8 @@ set RTL_FILES [list \
     "$RTL_ROOT/axi_magic.sv" \
     "$RTL_ROOT/mem_axi.sv" \
     "$RTL_ROOT/mem_axi_ro.sv" \
-    "$RTL_ROOT/rv32_icache.sv" \
-    "$RTL_ROOT/rv32_soc.sv" \
+    "$RTL_ROOT/kv32_icache.sv" \
+    "$RTL_ROOT/kv32_soc.sv" \
 ]
 
 # PDK configuration

@@ -21,8 +21,8 @@ BUILD_DIR        = $(PROJECT_ROOT)/build
 ARCH             ?= rv32ima_zicsr
 ABI              ?= ilp32
 
-# Simulator (rv32sim or spike)
-SIM              ?= rv32sim
+# Simulator (kv32sim or spike)
+SIM              ?= kv32sim
 MAX_CYCLES       ?= 0
 
 # Trace compare script

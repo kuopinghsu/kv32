@@ -15,13 +15,13 @@
 
 #include <stdint.h>
 #include <stdio.h>
-#include "rv_platform.h"
-#include "rv_plic.h"
-#include "rv_irq.h"
+#include "kv_platform.h"
+#include "kv_plic.h"
+#include "kv_irq.h"
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
-#define RV_DMA_FENCE()  __asm__ volatile ("fence" ::: "memory")
+#define KV_DMA_FENCE()  __asm__ volatile ("fence" ::: "memory")
 
 static int g_pass, g_fail;
 
@@ -64,28 +64,28 @@ static volatile int      g_irq_fired;
 static void dma_mei_handler(uint32_t cause)
 {
     (void)cause;
-    uint32_t src = rv_plic_claim();
-    if (src == (uint32_t)RV_PLIC_SRC_DMA) {
-        uint32_t irq = RV_DMA_GLB_REG(RV_DMA_IRQ_STAT_OFF);
+    uint32_t src = kv_plic_claim();
+    if (src == (uint32_t)KV_PLIC_SRC_DMA) {
+        uint32_t irq = KV_DMA_GLB_REG(KV_DMA_IRQ_STAT_OFF);
         g_irq_stat = irq;
         /* Capture channel-level status before W1C clearing ch_done/ch_err */
         for (int ch = 0; ch < 4; ch++) {
             if (irq & (1u << ch))
-                g_ch_stat[ch] = RV_DMA_CH_REG(ch, RV_DMA_CH_STAT_OFF);
+                g_ch_stat[ch] = KV_DMA_CH_REG(ch, KV_DMA_CH_STAT_OFF);
         }
         g_irq_fired = 1;
         /* W1C clear: clears ch_done[i] and ch_err[i] for each set bit */
-        RV_DMA_GLB_REG(RV_DMA_IRQ_STAT_OFF) = irq;
+        KV_DMA_GLB_REG(KV_DMA_IRQ_STAT_OFF) = irq;
     }
-    rv_plic_complete(src);
+    kv_plic_complete(src);
 }
 
 /* ── one-time IRQ setup ──────────────────────────────────────────────────── */
 static void dma_setup_irq(void)
 {
-    rv_irq_register(RV_CAUSE_MEI, dma_mei_handler);
-    rv_plic_init_source(RV_PLIC_SRC_DMA, 1);
-    rv_irq_enable();
+    kv_irq_register(KV_CAUSE_MEI, dma_mei_handler);
+    kv_plic_init_source(KV_PLIC_SRC_DMA, 1);
+    kv_irq_enable();
 }
 
 /* ── channel helpers ─────────────────────────────────────────────────────── */
@@ -93,9 +93,9 @@ static void dma_setup_irq(void)
 /* Disable channel and clear any stale done/err flags. */
 static void dma_ch_reset(int ch)
 {
-    RV_DMA_CH_REG(ch, RV_DMA_CH_CTRL_OFF) = 0;
-    RV_DMA_CH_REG(ch, RV_DMA_CH_STAT_OFF) = RV_DMA_STAT_DONE | RV_DMA_STAT_ERR;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF) = 0;
+    KV_DMA_CH_REG(ch, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE | KV_DMA_STAT_ERR;
+    KV_DMA_FENCE();
 }
 
 /*
@@ -105,16 +105,16 @@ static void dma_ch_reset(int ch)
 static void dma_start_1d(int ch, uint32_t src, uint32_t dst,
                          uint32_t len, int use_irq)
 {
-    uint32_t ctrl = RV_DMA_CTRL_EN | RV_DMA_CTRL_SRC_INC |
-                    RV_DMA_CTRL_DST_INC | RV_DMA_CTRL_MODE_1D;
-    if (use_irq) ctrl |= RV_DMA_CTRL_IE;
+    uint32_t ctrl = KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC |
+                    KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_MODE_1D;
+    if (use_irq) ctrl |= KV_DMA_CTRL_IE;
 
-    RV_DMA_CH_REG(ch, RV_DMA_CH_SRC_OFF)  = src;
-    RV_DMA_CH_REG(ch, RV_DMA_CH_DST_OFF)  = dst;
-    RV_DMA_CH_REG(ch, RV_DMA_CH_XFER_OFF) = len;
-    RV_DMA_FENCE();
-    RV_DMA_CH_REG(ch, RV_DMA_CH_CTRL_OFF) = ctrl | RV_DMA_CTRL_START;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(ch, KV_DMA_CH_SRC_OFF)  = src;
+    KV_DMA_CH_REG(ch, KV_DMA_CH_DST_OFF)  = dst;
+    KV_DMA_CH_REG(ch, KV_DMA_CH_XFER_OFF) = len;
+    KV_DMA_FENCE();
+    KV_DMA_CH_REG(ch, KV_DMA_CH_CTRL_OFF) = ctrl | KV_DMA_CTRL_START;
+    KV_DMA_FENCE();
 }
 
 /*
@@ -123,9 +123,9 @@ static void dma_start_1d(int ch, uint32_t src, uint32_t dst,
 static int dma_poll_done(int ch, uint32_t timeout)
 {
     for (uint32_t i = 0; i < timeout; i++) {
-        uint32_t stat = RV_DMA_CH_REG(ch, RV_DMA_CH_STAT_OFF);
-        if (stat & RV_DMA_STAT_ERR)  return -1;
-        if (stat & RV_DMA_STAT_DONE) return  1;
+        uint32_t stat = KV_DMA_CH_REG(ch, KV_DMA_CH_STAT_OFF);
+        if (stat & KV_DMA_STAT_ERR)  return -1;
+        if (stat & KV_DMA_STAT_DONE) return  1;
     }
     return 0; /* timeout */
 }
@@ -151,7 +151,7 @@ static int dma_verify(const uint8_t *expected, const uint8_t *got,
 /* ========================================================================== */
 static void test1_id(void)
 {
-    uint32_t id = RV_DMA_GLB_REG(RV_DMA_ID_OFF);
+    uint32_t id = KV_DMA_GLB_REG(KV_DMA_ID_OFF);
     if (id == 0xD4A00100U) {
         TEST_PASS(1);
     } else {
@@ -168,7 +168,7 @@ static void test2_1d_poll(void)
     volatile uint8_t *s = (volatile uint8_t *)buf_src0;
     volatile uint8_t *d = (volatile uint8_t *)buf_dst0;
     for (int i = 0; i < 64; i++) { s[i] = (uint8_t)(0xAA ^ i); d[i] = 0; }
-    RV_DMA_FENCE();
+    KV_DMA_FENCE();
 
     dma_ch_reset(0);
     dma_start_1d(0, (uint32_t)(uintptr_t)buf_src0,
@@ -180,9 +180,9 @@ static void test2_1d_poll(void)
         dma_ch_reset(0);
         return;
     }
-    RV_DMA_CH_REG(0, RV_DMA_CH_STAT_OFF) = RV_DMA_STAT_DONE;
-    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) = 0;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = 0;
+    KV_DMA_FENCE();
 
     int e = dma_verify(buf_src0, buf_dst0, 64, "1D-poll");
     if (e == 0) TEST_PASS(2); else TEST_FAIL(2, "data mismatch");
@@ -196,14 +196,14 @@ static void test3_1d_irq(void)
     volatile uint8_t *s = (volatile uint8_t *)buf_src1;
     volatile uint8_t *d = (volatile uint8_t *)buf_dst1;
     for (int i = 0; i < 128; i++) { s[i] = (uint8_t)(0x5A + i); d[i] = 0; }
-    RV_DMA_FENCE();
+    KV_DMA_FENCE();
 
     g_irq_fired = 0;
     g_irq_stat  = 0;
     g_ch_stat[1]= 0;
 
     /* Enable global IRQ for channel 1 */
-    RV_DMA_GLB_REG(RV_DMA_IRQ_EN_OFF) |= (1u << 1);
+    KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) |= (1u << 1);
     dma_ch_reset(1);
     dma_start_1d(1, (uint32_t)(uintptr_t)buf_src1,
                     (uint32_t)(uintptr_t)buf_dst1, 128, 1 /* IE */);
@@ -214,22 +214,22 @@ static void test3_1d_irq(void)
     if (!g_irq_fired) {
         TEST_FAIL(3, "IRQ never fired");
         dma_ch_reset(1);
-        RV_DMA_GLB_REG(RV_DMA_IRQ_EN_OFF) &= ~(1u << 1);
+        KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) &= ~(1u << 1);
         return;
     }
     if (!(g_irq_stat & (1u << 1))) {
         printf("  IRQ_STAT=0x%08lx, expected bit 1 set\n", (unsigned long)g_irq_stat);
         TEST_FAIL(3, "wrong IRQ_STAT");
         dma_ch_reset(1);
-        RV_DMA_GLB_REG(RV_DMA_IRQ_EN_OFF) &= ~(1u << 1);
+        KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) &= ~(1u << 1);
         return;
     }
 
     /* IRQ handler already W1C-cleared IRQ_STAT (and ch_done/ch_err).
      * Disable channel and clean up. */
-    RV_DMA_CH_REG(1, RV_DMA_CH_CTRL_OFF) = 0;
-    RV_DMA_GLB_REG(RV_DMA_IRQ_EN_OFF)   &= ~(1u << 1);
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(1, KV_DMA_CH_CTRL_OFF) = 0;
+    KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF)   &= ~(1u << 1);
+    KV_DMA_FENCE();
 
     int e = dma_verify(buf_src1, buf_dst1, 128, "1D-irq");
     if (e == 0) TEST_PASS(3); else TEST_FAIL(3, "data mismatch");
@@ -250,20 +250,20 @@ static void test4_2d(void)
     volatile uint8_t *d = (volatile uint8_t *)buf_dst2;
     for (int i = 0; i < 128; i++) { s[i] = (uint8_t)(0x10 + i); }
     for (int i = 0; i < 64;  i++) { d[i] = 0; }
-    RV_DMA_FENCE();
+    KV_DMA_FENCE();
 
     dma_ch_reset(2);
-    RV_DMA_CH_REG(2, RV_DMA_CH_SRC_OFF)     = (uint32_t)(uintptr_t)buf_src2;
-    RV_DMA_CH_REG(2, RV_DMA_CH_DST_OFF)     = (uint32_t)(uintptr_t)buf_dst2;
-    RV_DMA_CH_REG(2, RV_DMA_CH_XFER_OFF)    = 16;   /* bytes per row */
-    RV_DMA_CH_REG(2, RV_DMA_CH_SSTRIDE_OFF) = 32;   /* src row stride */
-    RV_DMA_CH_REG(2, RV_DMA_CH_DSTRIDE_OFF) = 16;   /* dst row stride (packed) */
-    RV_DMA_CH_REG(2, RV_DMA_CH_ROWCNT_OFF)  = 4;    /* number of rows */
-    RV_DMA_FENCE();
-    RV_DMA_CH_REG(2, RV_DMA_CH_CTRL_OFF) =
-        RV_DMA_CTRL_EN | RV_DMA_CTRL_SRC_INC | RV_DMA_CTRL_DST_INC |
-        RV_DMA_CTRL_MODE_2D | RV_DMA_CTRL_START;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(2, KV_DMA_CH_SRC_OFF)     = (uint32_t)(uintptr_t)buf_src2;
+    KV_DMA_CH_REG(2, KV_DMA_CH_DST_OFF)     = (uint32_t)(uintptr_t)buf_dst2;
+    KV_DMA_CH_REG(2, KV_DMA_CH_XFER_OFF)    = 16;   /* bytes per row */
+    KV_DMA_CH_REG(2, KV_DMA_CH_SSTRIDE_OFF) = 32;   /* src row stride */
+    KV_DMA_CH_REG(2, KV_DMA_CH_DSTRIDE_OFF) = 16;   /* dst row stride (packed) */
+    KV_DMA_CH_REG(2, KV_DMA_CH_ROWCNT_OFF)  = 4;    /* number of rows */
+    KV_DMA_FENCE();
+    KV_DMA_CH_REG(2, KV_DMA_CH_CTRL_OFF) =
+        KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC |
+        KV_DMA_CTRL_MODE_2D | KV_DMA_CTRL_START;
+    KV_DMA_FENCE();
 
     int r = dma_poll_done(2, 1000000);
     if (r <= 0) {
@@ -271,9 +271,9 @@ static void test4_2d(void)
         dma_ch_reset(2);
         return;
     }
-    RV_DMA_CH_REG(2, RV_DMA_CH_STAT_OFF) = RV_DMA_STAT_DONE;
-    RV_DMA_CH_REG(2, RV_DMA_CH_CTRL_OFF) = 0;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(2, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
+    KV_DMA_CH_REG(2, KV_DMA_CH_CTRL_OFF) = 0;
+    KV_DMA_FENCE();
 
     int errs = 0;
     for (int row = 0; row < 4; row++) {
@@ -311,23 +311,23 @@ static void test5_3d(void)
     volatile uint8_t *d = (volatile uint8_t *)buf_dst3;
     for (int i = 0; i < 128; i++) { s[i] = (uint8_t)(0x20 + i); }
     for (int i = 0; i < 32;  i++) { d[i] = 0; }
-    RV_DMA_FENCE();
+    KV_DMA_FENCE();
 
     dma_ch_reset(3);
-    RV_DMA_CH_REG(3, RV_DMA_CH_SRC_OFF)      = (uint32_t)(uintptr_t)buf_src3;
-    RV_DMA_CH_REG(3, RV_DMA_CH_DST_OFF)      = (uint32_t)(uintptr_t)buf_dst3;
-    RV_DMA_CH_REG(3, RV_DMA_CH_XFER_OFF)     = 8;   /* bytes per row */
-    RV_DMA_CH_REG(3, RV_DMA_CH_SSTRIDE_OFF)  = 16;  /* src row stride */
-    RV_DMA_CH_REG(3, RV_DMA_CH_DSTRIDE_OFF)  = 8;   /* dst row stride (packed) */
-    RV_DMA_CH_REG(3, RV_DMA_CH_ROWCNT_OFF)   = 2;   /* rows per plane */
-    RV_DMA_CH_REG(3, RV_DMA_CH_SPSTRIDE_OFF) = 64;  /* src plane stride */
-    RV_DMA_CH_REG(3, RV_DMA_CH_DPSTRIDE_OFF) = 16;  /* dst plane stride (packed) */
-    RV_DMA_CH_REG(3, RV_DMA_CH_PLANECNT_OFF) = 2;   /* number of planes */
-    RV_DMA_FENCE();
-    RV_DMA_CH_REG(3, RV_DMA_CH_CTRL_OFF) =
-        RV_DMA_CTRL_EN | RV_DMA_CTRL_SRC_INC | RV_DMA_CTRL_DST_INC |
-        RV_DMA_CTRL_MODE_3D | RV_DMA_CTRL_START;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(3, KV_DMA_CH_SRC_OFF)      = (uint32_t)(uintptr_t)buf_src3;
+    KV_DMA_CH_REG(3, KV_DMA_CH_DST_OFF)      = (uint32_t)(uintptr_t)buf_dst3;
+    KV_DMA_CH_REG(3, KV_DMA_CH_XFER_OFF)     = 8;   /* bytes per row */
+    KV_DMA_CH_REG(3, KV_DMA_CH_SSTRIDE_OFF)  = 16;  /* src row stride */
+    KV_DMA_CH_REG(3, KV_DMA_CH_DSTRIDE_OFF)  = 8;   /* dst row stride (packed) */
+    KV_DMA_CH_REG(3, KV_DMA_CH_ROWCNT_OFF)   = 2;   /* rows per plane */
+    KV_DMA_CH_REG(3, KV_DMA_CH_SPSTRIDE_OFF) = 64;  /* src plane stride */
+    KV_DMA_CH_REG(3, KV_DMA_CH_DPSTRIDE_OFF) = 16;  /* dst plane stride (packed) */
+    KV_DMA_CH_REG(3, KV_DMA_CH_PLANECNT_OFF) = 2;   /* number of planes */
+    KV_DMA_FENCE();
+    KV_DMA_CH_REG(3, KV_DMA_CH_CTRL_OFF) =
+        KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC |
+        KV_DMA_CTRL_MODE_3D | KV_DMA_CTRL_START;
+    KV_DMA_FENCE();
 
     int r = dma_poll_done(3, 1000000);
     if (r <= 0) {
@@ -335,9 +335,9 @@ static void test5_3d(void)
         dma_ch_reset(3);
         return;
     }
-    RV_DMA_CH_REG(3, RV_DMA_CH_STAT_OFF) = RV_DMA_STAT_DONE;
-    RV_DMA_CH_REG(3, RV_DMA_CH_CTRL_OFF) = 0;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(3, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
+    KV_DMA_CH_REG(3, KV_DMA_CH_CTRL_OFF) = 0;
+    KV_DMA_FENCE();
 
     struct { int src_off; int dst_off; int len; const char *lab; } spans[] = {
         {  0,  0, 8, "p0r0" },
@@ -373,7 +373,7 @@ static void test6_sg(void)
     volatile uint8_t *s = (volatile uint8_t *)buf_sg_src;
     volatile uint8_t *d = (volatile uint8_t *)buf_sg_dst;
     for (int i = 0; i < 64; i++) { s[i] = (uint8_t)(0x30 + i); d[i] = 0; }
-    RV_DMA_FENCE();
+    KV_DMA_FENCE();
 
     /* mode_ctrl: src_inc[2]=1, dst_inc[3]=1, mode[1:0]=00 → 0x0C */
     sg_descs[0].src_addr  = (uint32_t)(uintptr_t)(buf_sg_src +  0);
@@ -390,15 +390,15 @@ static void test6_sg(void)
     sg_descs[2].dst_addr  = (uint32_t)(uintptr_t)(buf_sg_dst + 48);
     sg_descs[2].xfer_cnt  = 16;
     sg_descs[2].mode_ctrl = 0x0Cu;
-    RV_DMA_FENCE();
+    KV_DMA_FENCE();
 
     dma_ch_reset(0);
-    RV_DMA_CH_REG(0, RV_DMA_CH_SGADDR_OFF) = (uint32_t)(uintptr_t)sg_descs;
-    RV_DMA_CH_REG(0, RV_DMA_CH_SGCNT_OFF)  = 3;
-    RV_DMA_FENCE();
-    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) =
-        RV_DMA_CTRL_EN | RV_DMA_CTRL_MODE_SG | RV_DMA_CTRL_START;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_SGADDR_OFF) = (uint32_t)(uintptr_t)sg_descs;
+    KV_DMA_CH_REG(0, KV_DMA_CH_SGCNT_OFF)  = 3;
+    KV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
+        KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_SG | KV_DMA_CTRL_START;
+    KV_DMA_FENCE();
 
     int r = dma_poll_done(0, 2000000);
     if (r <= 0) {
@@ -406,9 +406,9 @@ static void test6_sg(void)
         dma_ch_reset(0);
         return;
     }
-    RV_DMA_CH_REG(0, RV_DMA_CH_STAT_OFF) = RV_DMA_STAT_DONE;
-    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) = 0;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = 0;
+    KV_DMA_FENCE();
 
     int e = dma_verify(buf_sg_src, buf_sg_dst, 64, "SG");
     if (e == 0) TEST_PASS(6); else TEST_FAIL(6, "data mismatch");
@@ -426,24 +426,24 @@ static void test7_irq_err(void)
     g_ch_stat[0] = 0;
 
     /* Enable global IRQ for channel 0 */
-    RV_DMA_GLB_REG(RV_DMA_IRQ_EN_OFF) |= (1u << 0);
+    KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) |= (1u << 0);
     dma_ch_reset(0);
 
-    RV_DMA_CH_REG(0, RV_DMA_CH_SRC_OFF)  = 0x00000000UL;  /* unmapped → DECERR */
-    RV_DMA_CH_REG(0, RV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)buf_dst0;
-    RV_DMA_CH_REG(0, RV_DMA_CH_XFER_OFF) = 4;             /* minimum transfer  */
-    RV_DMA_FENCE();
-    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) =
-        RV_DMA_CTRL_EN | RV_DMA_CTRL_SRC_INC | RV_DMA_CTRL_DST_INC |
-        RV_DMA_CTRL_MODE_1D | RV_DMA_CTRL_IE | RV_DMA_CTRL_START;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF)  = 0x00000000UL;  /* unmapped → DECERR */
+    KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)buf_dst0;
+    KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 4;             /* minimum transfer  */
+    KV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
+        KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC |
+        KV_DMA_CTRL_MODE_1D | KV_DMA_CTRL_IE | KV_DMA_CTRL_START;
+    KV_DMA_FENCE();
 
     uint32_t to = 2000000;
     while (!g_irq_fired && --to);
 
-    RV_DMA_GLB_REG(RV_DMA_IRQ_EN_OFF) &= ~(1u << 0);
-    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) = 0;
-    RV_DMA_FENCE();
+    KV_DMA_GLB_REG(KV_DMA_IRQ_EN_OFF) &= ~(1u << 0);
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = 0;
+    KV_DMA_FENCE();
 
     if (!g_irq_fired) {
         TEST_FAIL(7, "error IRQ never fired");
@@ -455,8 +455,8 @@ static void test7_irq_err(void)
      * should be visible there.
      */
     int ok = (g_irq_stat   & (1u << 0)) &&     /* IRQ_STAT bit 0 set */
-             (g_ch_stat[0] & RV_DMA_STAT_ERR) && /* ch_err was set    */
-             !(g_ch_stat[0] & RV_DMA_STAT_DONE);  /* ch_done NOT set  */
+             (g_ch_stat[0] & KV_DMA_STAT_ERR) && /* ch_err was set    */
+             !(g_ch_stat[0] & KV_DMA_STAT_DONE);  /* ch_done NOT set  */
     if (ok) {
         TEST_PASS(7);
     } else {
@@ -479,35 +479,35 @@ static void test8_multi_ch(void)
 
     for (int i = 0; i < 64; i++) { s0[i] = (uint8_t)(0xC0 + i); d0[i] = 0; }
     for (int i = 0; i < 64; i++) { s1[i] = (uint8_t)(0x80 + i); d1[i] = 0; }
-    RV_DMA_FENCE();
+    KV_DMA_FENCE();
 
     dma_ch_reset(0);
     dma_ch_reset(1);
 
     /* Load channel configs */
-    RV_DMA_CH_REG(0, RV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)buf_src4;
-    RV_DMA_CH_REG(0, RV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)buf_dst4;
-    RV_DMA_CH_REG(0, RV_DMA_CH_XFER_OFF) = 64;
-    RV_DMA_CH_REG(1, RV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)buf_src5;
-    RV_DMA_CH_REG(1, RV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)buf_dst5;
-    RV_DMA_CH_REG(1, RV_DMA_CH_XFER_OFF) = 64;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)buf_src4;
+    KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)buf_dst4;
+    KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 64;
+    KV_DMA_CH_REG(1, KV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)buf_src5;
+    KV_DMA_CH_REG(1, KV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)buf_dst5;
+    KV_DMA_CH_REG(1, KV_DMA_CH_XFER_OFF) = 64;
+    KV_DMA_FENCE();
 
     /* Start both channels – engine will service them in round-robin */
-    uint32_t cfg = RV_DMA_CTRL_EN | RV_DMA_CTRL_SRC_INC |
-                   RV_DMA_CTRL_DST_INC | RV_DMA_CTRL_MODE_1D | RV_DMA_CTRL_START;
-    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) = cfg;
-    RV_DMA_CH_REG(1, RV_DMA_CH_CTRL_OFF) = cfg;
-    RV_DMA_FENCE();
+    uint32_t cfg = KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC |
+                   KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_MODE_1D | KV_DMA_CTRL_START;
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = cfg;
+    KV_DMA_CH_REG(1, KV_DMA_CH_CTRL_OFF) = cfg;
+    KV_DMA_FENCE();
 
     int r0 = dma_poll_done(0, 2000000);
     int r1 = dma_poll_done(1, 2000000);
 
-    RV_DMA_CH_REG(0, RV_DMA_CH_STAT_OFF) = RV_DMA_STAT_DONE;
-    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) = 0;
-    RV_DMA_CH_REG(1, RV_DMA_CH_STAT_OFF) = RV_DMA_STAT_DONE;
-    RV_DMA_CH_REG(1, RV_DMA_CH_CTRL_OFF) = 0;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = 0;
+    KV_DMA_CH_REG(1, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
+    KV_DMA_CH_REG(1, KV_DMA_CH_CTRL_OFF) = 0;
+    KV_DMA_FENCE();
 
     if (r0 <= 0 || r1 <= 0) {
         printf("  ch0_result=%d ch1_result=%d\n", r0, r1);
@@ -534,32 +534,32 @@ static void test9_perf(void)
     dma_ch_reset(0);
 
     /* ----- Reset, then enable performance counters ----- */
-    RV_DMA_GLB_REG(RV_DMA_PERF_CTRL_OFF) = 2;   /* RESET bit */
-    RV_DMA_FENCE();
-    RV_DMA_GLB_REG(RV_DMA_PERF_CTRL_OFF) = 1;   /* ENABLE counting */
-    RV_DMA_FENCE();
+    KV_DMA_GLB_REG(KV_DMA_PERF_CTRL_OFF) = 2;   /* RESET bit */
+    KV_DMA_FENCE();
+    KV_DMA_GLB_REG(KV_DMA_PERF_CTRL_OFF) = 1;   /* ENABLE counting */
+    KV_DMA_FENCE();
 
     /* ----- Configure and kick 4 KB 1-D transfer on channel 0 ----- */
-    RV_DMA_CH_REG(0, RV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)perf_src;
-    RV_DMA_CH_REG(0, RV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)perf_dst;
-    RV_DMA_CH_REG(0, RV_DMA_CH_XFER_OFF) = XFER_BYTES;
-    RV_DMA_FENCE();
-    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) =
-        RV_DMA_CTRL_EN | RV_DMA_CTRL_SRC_INC | RV_DMA_CTRL_DST_INC |
-        RV_DMA_CTRL_MODE_1D | RV_DMA_CTRL_START;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF)  = (uint32_t)(uintptr_t)perf_src;
+    KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF)  = (uint32_t)(uintptr_t)perf_dst;
+    KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = XFER_BYTES;
+    KV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
+        KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC |
+        KV_DMA_CTRL_MODE_1D | KV_DMA_CTRL_START;
+    KV_DMA_FENCE();
 
     int r = dma_poll_done(0, 5000000);
-    RV_DMA_FENCE();
+    KV_DMA_FENCE();
 
     /* ----- Stop performance counters ----- */
-    RV_DMA_GLB_REG(RV_DMA_PERF_CTRL_OFF) = 0;
-    RV_DMA_FENCE();
+    KV_DMA_GLB_REG(KV_DMA_PERF_CTRL_OFF) = 0;
+    KV_DMA_FENCE();
 
     /* ----- Read performance counters ----- */
-    uint32_t cycles   = RV_DMA_GLB_REG(RV_DMA_PERF_CYCLES_OFF);
-    uint32_t rd_bytes = RV_DMA_GLB_REG(RV_DMA_PERF_RD_BYTES_OFF);
-    uint32_t wr_bytes = RV_DMA_GLB_REG(RV_DMA_PERF_WR_BYTES_OFF);
+    uint32_t cycles   = KV_DMA_GLB_REG(KV_DMA_PERF_CYCLES_OFF);
+    uint32_t rd_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_RD_BYTES_OFF);
+    uint32_t wr_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_WR_BYTES_OFF);
     uint32_t total    = rd_bytes + wr_bytes;
 
     /* ----- Compute throughput in MB/s (use uint64 to avoid overflow) ----- */
@@ -574,9 +574,9 @@ static void test9_perf(void)
            cycles, rd_bytes, wr_bytes, mbps);
 
     /* ----- Cleanup channel ----- */
-    RV_DMA_CH_REG(0, RV_DMA_CH_STAT_OFF) = RV_DMA_STAT_DONE;
-    RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) = 0;
-    RV_DMA_FENCE();
+    KV_DMA_CH_REG(0, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
+    KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = 0;
+    KV_DMA_FENCE();
 
     if (r <= 0) {
         TEST_FAIL(9, "transfer failed or timed out");

@@ -1,25 +1,25 @@
 /* ============================================================================
- * spike/plugin_i2c.cc – Spike MMIO plugin for the RV32 I2C master
+ * spike/plugin_i2c.cc – Spike MMIO plugin for the KV32 I2C master
  *
- * Base address : RV_I2C_BASE  (0x2001_0000)
- * Window size  : RV_I2C_SIZE  (64 KB)
+ * Base address : KV_I2C_BASE  (0x2001_0000)
+ * Window size  : KV_I2C_SIZE  (64 KB)
  *
- * Register offsets (from rv_platform.h):
- *   RV_I2C_CTRL_OFF    0x00  Control
- *   RV_I2C_DIV_OFF     0x04  Clock divider
- *   RV_I2C_TX_OFF      0x08  TX data
- *   RV_I2C_RX_OFF      0x0C  RX data (pop)
- *   RV_I2C_STATUS_OFF  0x10  Status
- *   RV_I2C_IE_OFF      0x14  Interrupt Enable
- *   RV_I2C_IS_OFF      0x18  Interrupt Status (W1C)
+ * Register offsets (from kv_platform.h):
+ *   KV_I2C_CTRL_OFF    0x00  Control
+ *   KV_I2C_DIV_OFF     0x04  Clock divider
+ *   KV_I2C_TX_OFF      0x08  TX data
+ *   KV_I2C_RX_OFF      0x0C  RX data (pop)
+ *   KV_I2C_STATUS_OFF  0x10  Status
+ *   KV_I2C_IE_OFF      0x14  Interrupt Enable
+ *   KV_I2C_IS_OFF      0x18  Interrupt Status (W1C)
  *
  * Behaviour:
  *   Simulation model: every byte written to TX is immediately echoed
  *   back to the RX FIFO (loopback/ACK-all model).  CTRL_START and
  *   CTRL_STOP are accepted and silently consumed; CTRL_READ causes the
  *   last TX byte to be re-queued as an RX byte.
- *   IRQ is raised via plic_notify(RV_PLIC_SRC_I2C, 1) when RX FIFO
- *   becomes non-empty and RV_I2C_IE_RX_READY is set.
+ *   IRQ is raised via plic_notify(KV_PLIC_SRC_I2C, 1) when RX FIFO
+ *   becomes non-empty and KV_I2C_IE_RX_READY is set.
  * =========================================================================*/
 #include "mmio_plugin_api.h"
 #include <stdlib.h>
@@ -51,11 +51,11 @@ static inline uint8_t i2c_rx_pop(i2c_t* d) {
 
 static void i2c_update_irq(i2c_t* d) {
     int pending = 0;
-    if ((d->ie & (uint32_t)RV_I2C_IE_RX_READY) && !i2c_rx_empty(d))
+    if ((d->ie & (uint32_t)KV_I2C_IE_RX_READY) && !i2c_rx_empty(d))
         pending = 1;
     if (pending != d->irq_state) {
         d->irq_state = pending;
-        plic_notify(RV_PLIC_SRC_I2C, pending);
+        plic_notify(KV_PLIC_SRC_I2C, pending);
     }
 }
 
@@ -70,47 +70,47 @@ static bool i2c_access(void* dev, reg_t addr,
 
     if (!store) {
         uint32_t val = 0;
-        if (off == (uint32_t)RV_I2C_RX_OFF) {
+        if (off == (uint32_t)KV_I2C_RX_OFF) {
             if (!i2c_rx_empty(d)) val = i2c_rx_pop(d);
             i2c_update_irq(d);
-        } else if (off == (uint32_t)RV_I2C_CTRL_OFF) {
-            val = d->ctrl & ~((uint32_t)RV_I2C_CTRL_START |
-                              (uint32_t)RV_I2C_CTRL_STOP  |
-                              (uint32_t)RV_I2C_CTRL_READ);
-        } else if (off == (uint32_t)RV_I2C_DIV_OFF) {
+        } else if (off == (uint32_t)KV_I2C_CTRL_OFF) {
+            val = d->ctrl & ~((uint32_t)KV_I2C_CTRL_START |
+                              (uint32_t)KV_I2C_CTRL_STOP  |
+                              (uint32_t)KV_I2C_CTRL_READ);
+        } else if (off == (uint32_t)KV_I2C_DIV_OFF) {
             val = d->div;
-        } else if (off == (uint32_t)RV_I2C_STATUS_OFF) {
+        } else if (off == (uint32_t)KV_I2C_STATUS_OFF) {
             /* TX is always ready; bus never busy in simulation */
-            val = (uint32_t)RV_I2C_ST_TX_READY | (uint32_t)RV_I2C_ST_ACK_RECV;
-            if (!i2c_rx_empty(d)) val |= (uint32_t)RV_I2C_ST_RX_VALID;
-        } else if (off == (uint32_t)RV_I2C_IE_OFF) {
+            val = (uint32_t)KV_I2C_ST_TX_READY | (uint32_t)KV_I2C_ST_ACK_RECV;
+            if (!i2c_rx_empty(d)) val |= (uint32_t)KV_I2C_ST_RX_VALID;
+        } else if (off == (uint32_t)KV_I2C_IE_OFF) {
             val = d->ie;
-        } else if (off == (uint32_t)RV_I2C_IS_OFF) {
+        } else if (off == (uint32_t)KV_I2C_IS_OFF) {
             val = d->is;
-            if (!i2c_rx_empty(d)) val |= (uint32_t)RV_I2C_IE_RX_READY;
+            if (!i2c_rx_empty(d)) val |= (uint32_t)KV_I2C_IE_RX_READY;
         }
         fill_bytes(bytes, len, val);
     } else {
         uint32_t val = extract_val(bytes, len);
-        if (off == (uint32_t)RV_I2C_CTRL_OFF) {
+        if (off == (uint32_t)KV_I2C_CTRL_OFF) {
             d->ctrl = val;
-            if (val & (uint32_t)RV_I2C_CTRL_READ) {
+            if (val & (uint32_t)KV_I2C_CTRL_READ) {
                 /* Simulate a read: return the last byte sent by the master */
                 i2c_rx_push(d, d->last_tx);
                 i2c_update_irq(d);
             }
             /* CTRL_START / CTRL_STOP are accepted silently */
-        } else if (off == (uint32_t)RV_I2C_TX_OFF) {
+        } else if (off == (uint32_t)KV_I2C_TX_OFF) {
             d->last_tx = (uint8_t)val;
             /* Echo TX byte to RX FIFO (loopback / ACK-all model) */
             i2c_rx_push(d, d->last_tx);
             i2c_update_irq(d);
-        } else if (off == (uint32_t)RV_I2C_DIV_OFF) {
+        } else if (off == (uint32_t)KV_I2C_DIV_OFF) {
             d->div = val;
-        } else if (off == (uint32_t)RV_I2C_IE_OFF) {
+        } else if (off == (uint32_t)KV_I2C_IE_OFF) {
             d->ie = val;
             i2c_update_irq(d);
-        } else if (off == (uint32_t)RV_I2C_IS_OFF) {
+        } else if (off == (uint32_t)KV_I2C_IS_OFF) {
             d->is &= ~val;          /* W1C */
         }
     }
@@ -121,5 +121,5 @@ static const mmio_plugin_t i2c_plugin = { i2c_alloc, i2c_dealloc, i2c_access };
 
 __attribute__((constructor))
 static void plugin_init() {
-    register_mmio_plugin("rv32_i2c", &i2c_plugin);
+    register_mmio_plugin("kv32_i2c", &i2c_plugin);
 }

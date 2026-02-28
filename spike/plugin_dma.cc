@@ -1,24 +1,24 @@
 /* ============================================================================
- * spike/plugin_dma.cc – Spike MMIO plugin for the RV32 DMA controller
+ * spike/plugin_dma.cc – Spike MMIO plugin for the KV32 DMA controller
  *
- * Base address : RV_DMA_BASE  (0x2003_0000)
- * Window size  : RV_DMA_SIZE  (4 KB)
+ * Base address : KV_DMA_BASE  (0x2003_0000)
+ * Window size  : KV_DMA_SIZE  (4 KB)
  *
- * Register layout (from rv_platform.h):
- *   Per-channel regs   BASE + ch * RV_DMA_CH_STRIDE  (0x40)
- *     RV_DMA_CH_CTRL_OFF    0x00  Control
- *     RV_DMA_CH_STAT_OFF    0x04  Status (RO)
- *     RV_DMA_CH_SRC_OFF     0x08  Source address
- *     RV_DMA_CH_DST_OFF     0x0C  Destination address
- *     RV_DMA_CH_XFER_OFF    0x10  Transfer size (bytes)
+ * Register layout (from kv_platform.h):
+ *   Per-channel regs   BASE + ch * KV_DMA_CH_STRIDE  (0x40)
+ *     KV_DMA_CH_CTRL_OFF    0x00  Control
+ *     KV_DMA_CH_STAT_OFF    0x04  Status (RO)
+ *     KV_DMA_CH_SRC_OFF     0x08  Source address
+ *     KV_DMA_CH_DST_OFF     0x0C  Destination address
+ *     KV_DMA_CH_XFER_OFF    0x10  Transfer size (bytes)
  *   Global regs
- *     RV_DMA_IRQ_STAT_OFF   0xF00 IRQ status (W1C)
- *     RV_DMA_IRQ_EN_OFF     0xF04 IRQ enable
- *     RV_DMA_ID_OFF         0xF08 ID register (RO = 0xD4A00100)
- *     RV_DMA_PERF_CTRL_OFF  0xF10 Perf counter control
- *     RV_DMA_PERF_CYCLES_OFF 0xF14 Perf: cycles
- *     RV_DMA_PERF_RD_BYTES_OFF 0xF18 Perf: read bytes
- *     RV_DMA_PERF_WR_BYTES_OFF 0xF1C Perf: write bytes
+ *     KV_DMA_IRQ_STAT_OFF   0xF00 IRQ status (W1C)
+ *     KV_DMA_IRQ_EN_OFF     0xF04 IRQ enable
+ *     KV_DMA_ID_OFF         0xF08 ID register (RO = 0xD4A00100)
+ *     KV_DMA_PERF_CTRL_OFF  0xF10 Perf counter control
+ *     KV_DMA_PERF_CYCLES_OFF 0xF14 Perf: cycles
+ *     KV_DMA_PERF_RD_BYTES_OFF 0xF18 Perf: read bytes
+ *     KV_DMA_PERF_WR_BYTES_OFF 0xF1C Perf: write bytes
  *
  * Memory access:
  *   The plugin performs actual memcpy if a flat RAM window has been
@@ -98,7 +98,7 @@ static void dma_do_transfer(dma_t* d, int ch_idx) {
         }
     }
 
-    ch->stat &= ~(uint32_t)RV_DMA_STAT_BUSY;
+    ch->stat &= ~(uint32_t)KV_DMA_STAT_BUSY;
     d->irq_stat |= (1u << ch_idx);     /* mark channel done */
 }
 
@@ -106,7 +106,7 @@ static void dma_update_irq(dma_t* d) {
     int pending = (d->irq_stat & d->irq_en) ? 1 : 0;
     if (pending != d->irq_state) {
         d->irq_state = pending;
-        plic_notify(RV_PLIC_SRC_DMA, pending);
+        plic_notify(KV_PLIC_SRC_DMA, pending);
     }
 }
 
@@ -120,26 +120,26 @@ static bool dma_access(void* dev, reg_t addr,
     uint32_t off = (uint32_t)addr;
 
     /* ----- global registers ----------------------------------------- */
-    if (off >= (uint32_t)RV_DMA_IRQ_STAT_OFF) {
+    if (off >= (uint32_t)KV_DMA_IRQ_STAT_OFF) {
         if (!store) {
             uint32_t val = 0;
-            if      (off == (uint32_t)RV_DMA_IRQ_STAT_OFF)      val = d->irq_stat;
-            else if (off == (uint32_t)RV_DMA_IRQ_EN_OFF)         val = d->irq_en;
-            else if (off == (uint32_t)RV_DMA_ID_OFF)             val = 0xD4A00100u;
-            else if (off == (uint32_t)RV_DMA_PERF_CTRL_OFF)      val = d->perf_ctrl;
-            else if (off == (uint32_t)RV_DMA_PERF_CYCLES_OFF)    val = d->perf_cycles;
-            else if (off == (uint32_t)RV_DMA_PERF_RD_BYTES_OFF)  val = d->perf_rd_bytes;
-            else if (off == (uint32_t)RV_DMA_PERF_WR_BYTES_OFF)  val = d->perf_wr_bytes;
+            if      (off == (uint32_t)KV_DMA_IRQ_STAT_OFF)      val = d->irq_stat;
+            else if (off == (uint32_t)KV_DMA_IRQ_EN_OFF)         val = d->irq_en;
+            else if (off == (uint32_t)KV_DMA_ID_OFF)             val = 0xD4A00100u;
+            else if (off == (uint32_t)KV_DMA_PERF_CTRL_OFF)      val = d->perf_ctrl;
+            else if (off == (uint32_t)KV_DMA_PERF_CYCLES_OFF)    val = d->perf_cycles;
+            else if (off == (uint32_t)KV_DMA_PERF_RD_BYTES_OFF)  val = d->perf_rd_bytes;
+            else if (off == (uint32_t)KV_DMA_PERF_WR_BYTES_OFF)  val = d->perf_wr_bytes;
             fill_bytes(bytes, len, val);
         } else {
             uint32_t val = extract_val(bytes, len);
-            if      (off == (uint32_t)RV_DMA_IRQ_STAT_OFF) {
+            if      (off == (uint32_t)KV_DMA_IRQ_STAT_OFF) {
                 d->irq_stat &= ~val;    /* W1C */
                 dma_update_irq(d);
-            } else if (off == (uint32_t)RV_DMA_IRQ_EN_OFF) {
+            } else if (off == (uint32_t)KV_DMA_IRQ_EN_OFF) {
                 d->irq_en = val;
                 dma_update_irq(d);
-            } else if (off == (uint32_t)RV_DMA_PERF_CTRL_OFF) {
+            } else if (off == (uint32_t)KV_DMA_PERF_CTRL_OFF) {
                 if (val & 2u) {         /* reset bit */
                     d->perf_cycles    = 0;
                     d->perf_rd_bytes  = 0;
@@ -152,36 +152,36 @@ static bool dma_access(void* dev, reg_t addr,
     }
 
     /* ----- per-channel registers ------------------------------------ */
-    int ch_idx = (int)(off / (uint32_t)RV_DMA_CH_STRIDE);
+    int ch_idx = (int)(off / (uint32_t)KV_DMA_CH_STRIDE);
     if (ch_idx >= DMA_NUM_CH) return true;
 
-    uint32_t  ch_off = off % (uint32_t)RV_DMA_CH_STRIDE;
+    uint32_t  ch_off = off % (uint32_t)KV_DMA_CH_STRIDE;
     dma_ch_t* ch     = &d->ch[ch_idx];
 
     if (!store) {
         uint32_t val = 0;
-        if      (ch_off == (uint32_t)RV_DMA_CH_CTRL_OFF)  val = ch->ctrl;
-        else if (ch_off == (uint32_t)RV_DMA_CH_STAT_OFF)  val = ch->stat;
-        else if (ch_off == (uint32_t)RV_DMA_CH_SRC_OFF)   val = ch->src;
-        else if (ch_off == (uint32_t)RV_DMA_CH_DST_OFF)   val = ch->dst;
-        else if (ch_off == (uint32_t)RV_DMA_CH_XFER_OFF)  val = ch->xfer;
+        if      (ch_off == (uint32_t)KV_DMA_CH_CTRL_OFF)  val = ch->ctrl;
+        else if (ch_off == (uint32_t)KV_DMA_CH_STAT_OFF)  val = ch->stat;
+        else if (ch_off == (uint32_t)KV_DMA_CH_SRC_OFF)   val = ch->src;
+        else if (ch_off == (uint32_t)KV_DMA_CH_DST_OFF)   val = ch->dst;
+        else if (ch_off == (uint32_t)KV_DMA_CH_XFER_OFF)  val = ch->xfer;
         fill_bytes(bytes, len, val);
     } else {
         uint32_t val = extract_val(bytes, len);
-        if (ch_off == (uint32_t)RV_DMA_CH_CTRL_OFF) {
+        if (ch_off == (uint32_t)KV_DMA_CH_CTRL_OFF) {
             ch->ctrl = val;
-            if ((val & (uint32_t)RV_DMA_CTRL_EN) &&
-                (val & (uint32_t)RV_DMA_CTRL_START)) {
+            if ((val & (uint32_t)KV_DMA_CTRL_EN) &&
+                (val & (uint32_t)KV_DMA_CTRL_START)) {
                 /* Arm and start: execute transfer immediately */
-                ch->stat |= (uint32_t)RV_DMA_STAT_BUSY;
+                ch->stat |= (uint32_t)KV_DMA_STAT_BUSY;
                 dma_do_transfer(d, ch_idx);
                 dma_update_irq(d);
-            } else if (val & (uint32_t)RV_DMA_CTRL_STOP) {
-                ch->stat &= ~(uint32_t)RV_DMA_STAT_BUSY;
+            } else if (val & (uint32_t)KV_DMA_CTRL_STOP) {
+                ch->stat &= ~(uint32_t)KV_DMA_STAT_BUSY;
             }
-        } else if (ch_off == (uint32_t)RV_DMA_CH_SRC_OFF)  { ch->src  = val; }
-        else if (ch_off == (uint32_t)RV_DMA_CH_DST_OFF)    { ch->dst  = val; }
-        else if (ch_off == (uint32_t)RV_DMA_CH_XFER_OFF)   { ch->xfer = val; }
+        } else if (ch_off == (uint32_t)KV_DMA_CH_SRC_OFF)  { ch->src  = val; }
+        else if (ch_off == (uint32_t)KV_DMA_CH_DST_OFF)    { ch->dst  = val; }
+        else if (ch_off == (uint32_t)KV_DMA_CH_XFER_OFF)   { ch->xfer = val; }
         /* stride / scatter-gather regs silently stored */
     }
     return true;
@@ -191,5 +191,5 @@ static const mmio_plugin_t dma_plugin = { dma_alloc, dma_dealloc, dma_access };
 
 __attribute__((constructor))
 static void plugin_init() {
-    register_mmio_plugin("rv32_dma", &dma_plugin);
+    register_mmio_plugin("kv32_dma", &dma_plugin);
 }

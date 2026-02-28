@@ -1,18 +1,18 @@
 /* ============================================================================
- * spike/plugin_plic.cc – Spike plugin for the RV32 PLIC
+ * spike/plugin_plic.cc – Spike plugin for the KV32 PLIC
  *
- * Base address : RV_PLIC_BASE  (0x0C00_0000)  from rv_platform.h
- * Window       : RV_PLIC_SIZE  (64 MB)
+ * Base address : KV_PLIC_BASE  (0x0C00_0000)  from kv_platform.h
+ * Window       : KV_PLIC_SIZE  (64 MB)
  *
- * Register offsets (all from rv_platform.h):
- *   RV_PLIC_PRIORITY_OFF  (0x000000 + src*4)  source priority registers
- *   RV_PLIC_PENDING_OFF   (0x001000)           pending bitmask (RO from CPU)
- *   RV_PLIC_ENABLE_OFF    (0x002000)           context-0 enable bitmask
- *   RV_PLIC_THRESHOLD_OFF (0x200000)           context-0 priority threshold
- *   RV_PLIC_CLAIM_OFF     (0x200004)           context-0 claim (R) / complete (W)
+ * Register offsets (all from kv_platform.h):
+ *   KV_PLIC_PRIORITY_OFF  (0x000000 + src*4)  source priority registers
+ *   KV_PLIC_PENDING_OFF   (0x001000)           pending bitmask (RO from CPU)
+ *   KV_PLIC_ENABLE_OFF    (0x002000)           context-0 enable bitmask
+ *   KV_PLIC_THRESHOLD_OFF (0x200000)           context-0 priority threshold
+ *   KV_PLIC_CLAIM_OFF     (0x200004)           context-0 claim (R) / complete (W)
  *
- * IRQ source IDs from rv_platform.h:
- *   RV_PLIC_SRC_UART=1  RV_PLIC_SRC_SPI=2  RV_PLIC_SRC_I2C=3  RV_PLIC_SRC_DMA=4
+ * IRQ source IDs from kv_platform.h:
+ *   KV_PLIC_SRC_UART=1  KV_PLIC_SRC_SPI=2  KV_PLIC_SRC_I2C=3  KV_PLIC_SRC_DMA=4
  *
  * plic_set_pending(src, asserted) is exported as extern "C" so that
  * peripheral plugins can inject pending bits via plic_notify() from
@@ -22,7 +22,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* All register offsets come from rv_platform.h via mmio_plugin_api.h */
+/* All register offsets come from kv_platform.h via mmio_plugin_api.h */
 #define PLIC_NUM_SRC   16      /* max source ID supported (1..15)        */
 #define PLIC_NUM_CTX    1      /* only context 0 (hart 0 M-mode)         */
 
@@ -91,18 +91,18 @@ static bool plic_access(void* dev, reg_t addr,
         /* ── Load ──────────────────────────────────────────────────────── */
         uint32_t val = 0;
 
-        if (off < (uint32_t)RV_PLIC_PENDING_OFF) {
-            /* Priority: RV_PLIC_PRIORITY_OFF + src*4 */
-            int src = (int)((off - (uint32_t)RV_PLIC_PRIORITY_OFF) >> 2);
+        if (off < (uint32_t)KV_PLIC_PENDING_OFF) {
+            /* Priority: KV_PLIC_PRIORITY_OFF + src*4 */
+            int src = (int)((off - (uint32_t)KV_PLIC_PRIORITY_OFF) >> 2);
             if (src >= 0 && src <= PLIC_NUM_SRC)
                 val = p->priority[src];
-        } else if (off == (uint32_t)RV_PLIC_PENDING_OFF) {
+        } else if (off == (uint32_t)KV_PLIC_PENDING_OFF) {
             val = p->pending;
-        } else if (off == (uint32_t)RV_PLIC_ENABLE_OFF) {
+        } else if (off == (uint32_t)KV_PLIC_ENABLE_OFF) {
             val = p->enable;
-        } else if (off == (uint32_t)RV_PLIC_THRESHOLD_OFF) {
+        } else if (off == (uint32_t)KV_PLIC_THRESHOLD_OFF) {
             val = p->threshold;
-        } else if (off == (uint32_t)RV_PLIC_CLAIM_OFF) {
+        } else if (off == (uint32_t)KV_PLIC_CLAIM_OFF) {
             /* Claim: return the highest-priority pending+enabled source */
             int src = plic_claim(p);
             if (src > 0) {
@@ -117,15 +117,15 @@ static bool plic_access(void* dev, reg_t addr,
         /* ── Store ─────────────────────────────────────────────────────── */
         uint32_t val = extract_val(bytes, len);
 
-        if (off < (uint32_t)RV_PLIC_PENDING_OFF) {
-            int src = (int)((off - (uint32_t)RV_PLIC_PRIORITY_OFF) >> 2);
+        if (off < (uint32_t)KV_PLIC_PENDING_OFF) {
+            int src = (int)((off - (uint32_t)KV_PLIC_PRIORITY_OFF) >> 2);
             if (src >= 1 && src <= PLIC_NUM_SRC)
                 p->priority[src] = val & 0x7u;
-        } else if (off == (uint32_t)RV_PLIC_ENABLE_OFF) {
+        } else if (off == (uint32_t)KV_PLIC_ENABLE_OFF) {
             p->enable = val & ~1u; /* bit 0 (source 0) always 0 */
-        } else if (off == (uint32_t)RV_PLIC_THRESHOLD_OFF) {
+        } else if (off == (uint32_t)KV_PLIC_THRESHOLD_OFF) {
             p->threshold = val & 0x7u;
-        } else if (off == (uint32_t)RV_PLIC_CLAIM_OFF) {
+        } else if (off == (uint32_t)KV_PLIC_CLAIM_OFF) {
             /* Complete: clear the in-service bit for this source */
             int src = (int)(val & 0x3Fu);
             if (src >= 1 && src <= PLIC_NUM_SRC)
@@ -140,5 +140,5 @@ static const mmio_plugin_t plugin = { plic_alloc, plic_dealloc, plic_access };
 
 __attribute__((constructor))
 static void plugin_init() {
-    register_mmio_plugin("rv32_plic", &plugin);
+    register_mmio_plugin("kv32_plic", &plugin);
 }

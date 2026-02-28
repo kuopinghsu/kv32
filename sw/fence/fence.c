@@ -1,6 +1,6 @@
 // ============================================================================
 // File: fence.c
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: Test program for RISC-V FENCE instruction
 //
 // Verifies that the FENCE instruction:

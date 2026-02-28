@@ -1,12 +1,12 @@
 // I2C Hardware Test
-// Refactored to use rv_i2c.h / rv_platform.h HAL APIs.
+// Refactored to use kv_i2c.h / kv_platform.h HAL APIs.
 
 #include <stdint.h>
 #include <stdio.h>
-#include "rv_i2c.h"
-#include "rv_irq.h"
-#include "rv_plic.h"
-#include "rv_clint.h"
+#include "kv_i2c.h"
+#include "kv_irq.h"
+#include "kv_plic.h"
+#include "kv_clint.h"
 
 /* EEPROM configuration */
 #define EEPROM_ADDR  0x50u
@@ -22,7 +22,7 @@ static volatile uint32_t reads         = 0;
 
 static void i2c_wait_ready(void)
 {
-    while (rv_i2c_busy()) busy_waits++;
+    while (kv_i2c_busy()) busy_waits++;
     status_checks++;
 }
 
@@ -30,43 +30,43 @@ static void i2c_start(void)
 {
     i2c_wait_ready();
     if (VERBOSE) printf("  [I2C] Sending START\n");
-    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_START;
-    RV_I2C_FENCE();
+    KV_I2C_CTRL = KV_I2C_CTRL_ENABLE | KV_I2C_CTRL_START;
+    KV_I2C_FENCE();
     i2c_wait_ready();
-    if (VERBOSE) printf("  [I2C] START complete, status=0x%02lX\n", (unsigned long)RV_I2C_STATUS);
+    if (VERBOSE) printf("  [I2C] START complete, status=0x%02lX\n", (unsigned long)KV_I2C_STATUS);
 }
 
 static void i2c_stop(void)
 {
     i2c_wait_ready();
-    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_STOP;
-    RV_I2C_FENCE();
+    KV_I2C_CTRL = KV_I2C_CTRL_ENABLE | KV_I2C_CTRL_STOP;
+    KV_I2C_FENCE();
     i2c_wait_ready();
 }
 
 static int i2c_write_byte(uint8_t data)
 {
     i2c_wait_ready();
-    RV_I2C_TX = data;
-    RV_I2C_FENCE();
+    KV_I2C_TX = data;
+    KV_I2C_FENCE();
     i2c_wait_ready();
     writes++;
-    uint32_t st = RV_I2C_STATUS;
+    uint32_t st = KV_I2C_STATUS;
     if (VERBOSE) printf("  [I2C] Write 0x%02X -> status=0x%02lX, ACK=%d\n",
-           data, (unsigned long)st, (st & RV_I2C_ST_ACK_RECV) ? 1 : 0);
-    return (st & RV_I2C_ST_ACK_RECV) ? 0 : -1;
+           data, (unsigned long)st, (st & KV_I2C_ST_ACK_RECV) ? 1 : 0);
+    return (st & KV_I2C_ST_ACK_RECV) ? 0 : -1;
 }
 
 static uint8_t i2c_read_byte(int send_ack)
 {
-    uint32_t ctrl = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_READ;
-    if (!send_ack) ctrl |= RV_I2C_CTRL_NACK;
+    uint32_t ctrl = KV_I2C_CTRL_ENABLE | KV_I2C_CTRL_READ;
+    if (!send_ack) ctrl |= KV_I2C_CTRL_NACK;
     i2c_wait_ready();
-    RV_I2C_CTRL = ctrl;
-    RV_I2C_FENCE();
+    KV_I2C_CTRL = ctrl;
+    KV_I2C_FENCE();
     i2c_wait_ready();
     reads++;
-    return (uint8_t)(RV_I2C_RX & 0xFFu);
+    return (uint8_t)(KV_I2C_RX & 0xFFu);
 }
 
 static int eeprom_write(uint8_t mem_addr, uint8_t data)
@@ -99,8 +99,8 @@ static int eeprom_read(uint8_t mem_addr, uint8_t *data)
  * just push bytes to the TX FIFO, then issue START.
  *
  * IRQ sources:
- *   RV_I2C_IE_STOP_DONE (bit 2) – write phase done signal
- *   RV_I2C_IE_RX_READY  (bit 0) – byte received and in RX FIFO
+ *   KV_I2C_IE_STOP_DONE (bit 2) – write phase done signal
+ *   KV_I2C_IE_RX_READY  (bit 0) – byte received and in RX FIFO
  * ═══════════════════════════════════════════════════════════════════ */
 #define T8_MEM_ADDR   0x20u
 #define T8_LEN        6u    /* ADDR_W(1) + MEM_ADDR(1) + T8_LEN <= FIFO_DEPTH(8) */
@@ -117,14 +117,14 @@ static volatile uint32_t t8_irq_count  = 0;
 static void t8_mei_handler(uint32_t cause)
 {
     (void)cause;
-    uint32_t src = rv_plic_claim();
-    if (src == (uint32_t)RV_PLIC_SRC_I2C) {
+    uint32_t src = kv_plic_claim();
+    if (src == (uint32_t)KV_PLIC_SRC_I2C) {
         t8_irq_count++;
 
         /* Drain RX FIFO if data available (Phase 2 reads) */
         uint32_t drained = 0;
-        while (rv_i2c_rx_valid()) {
-            uint8_t b = (uint8_t)(RV_I2C_RX & 0xFFu);
+        while (kv_i2c_rx_valid()) {
+            uint8_t b = (uint8_t)(KV_I2C_RX & 0xFFu);
             if (t8_rx_count < T8_LEN)
                 t8_rx_buf[t8_rx_count++] = b;
             drained++;
@@ -136,7 +136,7 @@ static void t8_mei_handler(uint32_t cause)
         if (drained == 0)
             t8_stop_count++;
     }
-    rv_plic_complete(src);
+    kv_plic_complete(src);
 }
 
 static int test7_fifo_irq_transfer(void)
@@ -152,10 +152,10 @@ static int test7_fifo_irq_transfer(void)
     t8_irq_count  = 0;
 
     /* ── interrupt setup ─────────────────────────────────────────── */
-    rv_irq_register(RV_CAUSE_MEI, t8_mei_handler);
-    rv_plic_init_source(RV_PLIC_SRC_I2C, 1);
-    rv_i2c_irq_enable(RV_I2C_IE_STOP_DONE | RV_I2C_IE_RX_READY);
-    rv_irq_enable();
+    kv_irq_register(KV_CAUSE_MEI, t8_mei_handler);
+    kv_plic_init_source(KV_PLIC_SRC_I2C, 1);
+    kv_i2c_irq_enable(KV_I2C_IE_STOP_DONE | KV_I2C_IE_RX_READY);
+    kv_irq_enable();
 
     /* ── Phase 1: burst write via TX FIFO ────────────────────────
      * IMPORTANT: The RTL I2C controller pops TX FIFO immediately in
@@ -165,33 +165,33 @@ static int test7_fifo_irq_transfer(void)
      * (= 8 bytes total = FIFO_DEPTH). The controller auto-pops each
      * byte from IDLE and transmits it, then returns to IDLE for next.
      * After TX FIFO drains we issue explicit STOP; STOP_DONE IRQ fires. */
-    while (rv_i2c_busy()) {}
+    while (kv_i2c_busy()) {}
 
     /* Issue START first – controller transitions: IDLE → START → IDLE */
-    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_START;
-    RV_I2C_FENCE();
-    while (rv_i2c_busy()) {}   /* wait for START to complete → IDLE */
+    KV_I2C_CTRL = KV_I2C_CTRL_ENABLE | KV_I2C_CTRL_START;
+    KV_I2C_FENCE();
+    while (kv_i2c_busy()) {}   /* wait for START to complete → IDLE */
 
     /* NOW fill TX FIFO (exactly FIFO_DEPTH = 8 bytes).
      * State machine auto-pops and sends each byte from IDLE. */
-    RV_I2C_TX = (uint8_t)((EEPROM_ADDR << 1) | 0u);  /* ADDR_W */
-    RV_I2C_TX = T8_MEM_ADDR;
+    KV_I2C_TX = (uint8_t)((EEPROM_ADDR << 1) | 0u);  /* ADDR_W */
+    KV_I2C_TX = T8_MEM_ADDR;
     for (uint32_t i = 0; i < T8_LEN; i++)
-        RV_I2C_TX = t8_pattern[i];
-    RV_I2C_FENCE();
+        KV_I2C_TX = t8_pattern[i];
+    KV_I2C_FENCE();
 
     printf("  [Phase 1] START issued; TX FIFO loaded: 1+1+%u = %u bytes\n",
            (unsigned)T8_LEN, (unsigned)(2 + T8_LEN));
 
     /* Wait until controller goes IDLE (TX FIFO empty + not busy) */
     uint32_t timeout = 5000000u;
-    while ((rv_i2c_busy() || (RV_I2C_IS & RV_I2C_IE_TX_EMPTY) == 0) && timeout-- > 0u)
+    while ((kv_i2c_busy() || (KV_I2C_IS & KV_I2C_IE_TX_EMPTY) == 0) && timeout-- > 0u)
         asm volatile("nop");
 
     /* Now issue explicit STOP – this will trigger STOP_DONE IRQ */
-    if (!rv_i2c_busy()) {
-        RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_STOP;
-        RV_I2C_FENCE();
+    if (!kv_i2c_busy()) {
+        KV_I2C_CTRL = KV_I2C_CTRL_ENABLE | KV_I2C_CTRL_STOP;
+        KV_I2C_FENCE();
     }
 
     timeout = 5000000u;
@@ -201,9 +201,9 @@ static int test7_fifo_irq_transfer(void)
     if (t8_stop_count == 0) {
         printf("  Phase 1 TIMEOUT – STOP_DONE IRQ not received\n");
         printf("  Result: FAIL\n\n");
-        rv_irq_disable();
-        rv_i2c_irq_disable(RV_I2C_IE_STOP_DONE | RV_I2C_IE_RX_READY);
-        rv_plic_disable_source(RV_PLIC_SRC_I2C);
+        kv_irq_disable();
+        kv_i2c_irq_disable(KV_I2C_IE_STOP_DONE | KV_I2C_IE_RX_READY);
+        kv_plic_disable_source(KV_PLIC_SRC_I2C);
         return -1;
     }
     printf("  Phase 1 done: STOP_DONE IRQ #%lu, irq_total=%lu\n",
@@ -217,48 +217,48 @@ static int test7_fifo_irq_transfer(void)
      * Then read:      START + ADDR_R + [T8_LEN READ commands] + STOP
      * RX FIFO bytes arrive via RX_READY IRQ.                         */
     printf("  [Phase 2] Issuing sequential read...\n");
-    while (rv_i2c_busy()) {}
+    while (kv_i2c_busy()) {}
 
     /* Set EEPROM read pointer: START first, then push ADDR_W + MEM_ADDR, then STOP */
-    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_START;
-    RV_I2C_FENCE();
-    while (rv_i2c_busy()) {}   /* wait for START to complete → IDLE */
+    KV_I2C_CTRL = KV_I2C_CTRL_ENABLE | KV_I2C_CTRL_START;
+    KV_I2C_FENCE();
+    while (kv_i2c_busy()) {}   /* wait for START to complete → IDLE */
 
-    RV_I2C_TX = (uint8_t)((EEPROM_ADDR << 1) | 0u);  /* ADDR_W */
-    RV_I2C_TX = T8_MEM_ADDR;
-    RV_I2C_FENCE();
+    KV_I2C_TX = (uint8_t)((EEPROM_ADDR << 1) | 0u);  /* ADDR_W */
+    KV_I2C_TX = T8_MEM_ADDR;
+    KV_I2C_FENCE();
 
     /* Wait for TX FIFO to drain (bytes sent), then issue explicit STOP */
     timeout = 5000000u;
-    while ((rv_i2c_busy() || (RV_I2C_IS & RV_I2C_IE_TX_EMPTY) == 0) && timeout-- > 0u)
+    while ((kv_i2c_busy() || (KV_I2C_IS & KV_I2C_IE_TX_EMPTY) == 0) && timeout-- > 0u)
         asm volatile("nop");
 
     /* Issue STOP to complete the write-pointer transaction */
-    if (!rv_i2c_busy()) {
-        RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_STOP;
-        RV_I2C_FENCE();
+    if (!kv_i2c_busy()) {
+        KV_I2C_CTRL = KV_I2C_CTRL_ENABLE | KV_I2C_CTRL_STOP;
+        KV_I2C_FENCE();
     }
-    while (rv_i2c_busy()) {}
+    while (kv_i2c_busy()) {}
 
     /* Brief pause before read transaction */
     for (volatile int i = 0; i < 500; i++) asm volatile("nop");
 
     /* Read transaction: START first, then ADDR_R */
-    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_START;
-    RV_I2C_FENCE();
-    while (rv_i2c_busy()) {}   /* wait for START to complete → IDLE */
+    KV_I2C_CTRL = KV_I2C_CTRL_ENABLE | KV_I2C_CTRL_START;
+    KV_I2C_FENCE();
+    while (kv_i2c_busy()) {}   /* wait for START to complete → IDLE */
 
-    RV_I2C_TX = (uint8_t)((EEPROM_ADDR << 1) | 1u);  /* ADDR_R */
-    RV_I2C_FENCE();
-    while (rv_i2c_busy()) {}
+    KV_I2C_TX = (uint8_t)((EEPROM_ADDR << 1) | 1u);  /* ADDR_R */
+    KV_I2C_FENCE();
+    while (kv_i2c_busy()) {}
 
     /* Issue T8_LEN READ commands; last one sends NACK */
     for (uint32_t i = 0; i < T8_LEN; i++) {
-        while (rv_i2c_busy()) {}
-        uint32_t ctrl = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_READ;
-        if (i == T8_LEN - 1u) ctrl |= RV_I2C_CTRL_NACK;
-        RV_I2C_CTRL = ctrl;
-        RV_I2C_FENCE();
+        while (kv_i2c_busy()) {}
+        uint32_t ctrl = KV_I2C_CTRL_ENABLE | KV_I2C_CTRL_READ;
+        if (i == T8_LEN - 1u) ctrl |= KV_I2C_CTRL_NACK;
+        KV_I2C_CTRL = ctrl;
+        KV_I2C_FENCE();
     }
 
     /* Wait for all RX bytes to arrive via IRQ */
@@ -267,15 +267,15 @@ static int test7_fifo_irq_transfer(void)
         asm volatile("nop");
 
     /* STOP */
-    while (rv_i2c_busy()) {}
-    RV_I2C_CTRL = RV_I2C_CTRL_ENABLE | RV_I2C_CTRL_STOP;
-    RV_I2C_FENCE();
-    while (rv_i2c_busy()) {}
+    while (kv_i2c_busy()) {}
+    KV_I2C_CTRL = KV_I2C_CTRL_ENABLE | KV_I2C_CTRL_STOP;
+    KV_I2C_FENCE();
+    while (kv_i2c_busy()) {}
 
     /* ── cleanup & verify ────────────────────────────────────────── */
-    rv_irq_disable();
-    rv_i2c_irq_disable(RV_I2C_IE_STOP_DONE | RV_I2C_IE_RX_READY);
-    rv_plic_disable_source(RV_PLIC_SRC_I2C);
+    kv_irq_disable();
+    kv_i2c_irq_disable(KV_I2C_IE_STOP_DONE | KV_I2C_IE_RX_READY);
+    kv_plic_disable_source(KV_PLIC_SRC_I2C);
 
     uint32_t errors = 0;
     for (uint32_t i = 0; i < T8_LEN; i++) {
@@ -303,23 +303,23 @@ int main(void)
 {
     printf("\n========================================\n");
     printf("  I2C Hardware Test (Master + EEPROM)\n");
-    printf("  Base Address: 0x%08X\n", (unsigned int)RV_I2C_BASE);
+    printf("  Base Address: 0x%08X\n", (unsigned int)KV_I2C_BASE);
     printf("  EEPROM: 24C02 @ 0x%02X (256 bytes)\n", EEPROM_ADDR);
     printf("========================================\n\n");
 
     /* TEST 1: Initialisation */
     printf("[TEST 1] I2C Controller Initialization\n");
-    rv_i2c_init(249);   /* 100 kHz at 100 MHz */
+    kv_i2c_init(249);   /* 100 kHz at 100 MHz */
     status_checks++;
 
-    uint32_t status = RV_I2C_STATUS;
+    uint32_t status = KV_I2C_STATUS;
     printf("  Clock divider: 249 (100kHz I2C)\n");
     printf("  Initial status: 0x%08lX\n", (unsigned long)status);
     printf("  BUSY: %d, TX_READY: %d, RX_VALID: %d, ACK_RECV: %d\n",
-           (status & RV_I2C_ST_BUSY)     ? 1 : 0,
-           (status & RV_I2C_ST_TX_READY) ? 1 : 0,
-           (status & RV_I2C_ST_RX_VALID) ? 1 : 0,
-           (status & RV_I2C_ST_ACK_RECV) ? 1 : 0);
+           (status & KV_I2C_ST_BUSY)     ? 1 : 0,
+           (status & KV_I2C_ST_TX_READY) ? 1 : 0,
+           (status & KV_I2C_ST_RX_VALID) ? 1 : 0,
+           (status & KV_I2C_ST_ACK_RECV) ? 1 : 0);
     printf("  Result: PASS\n\n");
     int t1 = 1;
 
@@ -391,7 +391,7 @@ int main(void)
     printf("  Busy waits:    %lu\n", (unsigned long)busy_waits);
     printf("  Writes:        %lu\n", (unsigned long)writes);
     printf("  Reads:         %lu\n", (unsigned long)reads);
-    printf("  Final status:  0x%08lX\n\n", (unsigned long)RV_I2C_STATUS);
+    printf("  Final status:  0x%08lX\n\n", (unsigned long)KV_I2C_STATUS);
 
     /* TEST 7 */
     int t7 = (test7_fifo_irq_transfer() == 0) ? 1 : 0;

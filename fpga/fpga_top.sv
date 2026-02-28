@@ -1,17 +1,17 @@
 // ============================================================================
 // File: fpga_top.sv
-// Project: RV32 RISC-V Processor - FPGA Top Level
+// Project: KV32 RISC-V Processor - FPGA Top Level
 // Description: FPGA top-level for Kintex UltraScale+ (xcku5p-ffvb676-1-e)
 //
 // Architecture:
 //   - 100MHz differential input clock → DDR4 MIG (internal MMCM)
 //   - DDR4 MIG outputs ui_clk (300MHz) → MMCME4_ADV PLL → cpu_clk (50MHz)
 //   - AXI clock converter (50MHz ↔ 300MHz) + data width converter (32b → 64b)
-//   - rv32_soc running at 50MHz with AXI connected to DDR4
+//   - kv32_soc running at 50MHz with AXI connected to DDR4
 //
 // Clock Domains:
 //   - ui_clk    (300MHz): DDR4 AXI interface, AXI infrastructure
-//   - cpu_clk   ( 50MHz): rv32_soc processor core
+//   - cpu_clk   ( 50MHz): kv32_soc processor core
 //
 // Reset Sequence:
 //   1. 100MHz differential clock starts
@@ -118,7 +118,7 @@ module fpga_top (
     wire        dbg_tdo_out, dbg_tdo_oe;
     wire        cjtag_online;
 
-    // rv32_soc AXI master signals (cpu_clk domain, 32-bit data)
+    // kv32_soc AXI master signals (cpu_clk domain, 32-bit data)
     wire [31:0] soc_axi_awaddr;
     wire        soc_axi_awvalid;
     wire        soc_axi_awready;
@@ -442,9 +442,9 @@ module fpga_top (
     assign cpu_rst_n = cpu_rst_sync[3];
 
     // ========================================================================
-    // RV32 SoC
+    // KV32 SoC
     // ========================================================================
-    rv32_soc #(
+    kv32_soc #(
         .CLK_FREQ   (CPU_CLK_FREQ),
         .BAUD_RATE  (BAUD_RATE),
         .IB_DEPTH   (4),
@@ -457,7 +457,7 @@ module fpga_top (
         .ICACHE_WAYS(2),
         .USE_CJTAG  (USE_CJTAG),
         .JTAG_IDCODE(JTAG_IDCODE)
-    ) u_rv32_soc (
+    ) u_kv32_soc (
         .clk                (cpu_clk),
         .rst_n              (cpu_rst_n),
 
@@ -524,9 +524,9 @@ module fpga_top (
     // AXI Clock Converter (axi_clock_converter_0)
     // ========================================================================
     // Bridges cpu_clk (50MHz) ↔ ui_clk (300MHz), 32-bit data, 4-bit ID.
-    // rv32_soc doesn't have AXI ID/burst signals on writes; tie them off.
+    // kv32_soc doesn't have AXI ID/burst signals on writes; tie them off.
     axi_clock_converter_0 u_axi_cdc (
-        // Slave interface (cpu_clk domain, from rv32_soc)
+        // Slave interface (cpu_clk domain, from kv32_soc)
         .s_axi_aclk     (cpu_clk),
         .s_axi_aresetn  (cpu_rst_n),
 

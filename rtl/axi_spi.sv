@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_spi.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4-Lite SPI Master Controller with TX/RX FIFOs and IRQ
 //
 // Provides memory-mapped SPI master interface for serial peripheral control.
@@ -38,7 +38,7 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 `endif
 module axi_spi #(
     parameter CLK_FREQ   = 100_000_000,  // System clock frequency
@@ -80,7 +80,7 @@ module axi_spi #(
     output logic [3:0]  spi_cs_n      // Chip Select (active low)
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
 `endif
 
     // Register offsets

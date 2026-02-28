@@ -1,5 +1,5 @@
 /* ============================================================================
- * spike/mmio_plugin_api.h – Spike mmio_plugin interface + RV32 address map
+ * spike/mmio_plugin_api.h – Spike mmio_plugin interface + KV32 address map
  *
  * All plugins include ONLY this header.  It provides:
  *
@@ -8,12 +8,12 @@
  *      is used; otherwise a portable self-contained shim is provided.
  *
  *   2. Every peripheral base address, register offset, and bit-field constant
- *      for the RV32 SoC – sourced directly from the SDK header
- *      ../sw/include/rv_platform.h so that plugins and firmware always agree.
+ *      for the KV32 SoC – sourced directly from the SDK header
+ *      ../sw/include/kv_platform.h so that plugins and firmware always agree.
  *
  * Build flags added by spike/Makefile:
- *   -DRV_PLATFORM_NO_INLINE_HELPERS   suppresses firmware-only MMIO helpers
- *   -I../sw/include                   makes rv_platform.h findable
+ *   -DKV_PLATFORM_NO_INLINE_HELPERS   suppresses firmware-only MMIO helpers
+ *   -I../sw/include                   makes kv_platform.h findable
  *   -I$(SPIKE_INCLUDE)                optional; activates real Spike types
  * =========================================================================*/
 #pragma once
@@ -23,20 +23,20 @@
 #include <string.h>
 #include <dlfcn.h>
 
-/* ── Tell rv_platform.h we are building host code ───────────────────────── */
-/* Suppresses the two inline helpers (rv_magic_putc / rv_magic_exit) that    *
+/* ── Tell kv_platform.h we are building host code ───────────────────────── */
+/* Suppresses the two inline helpers (kv_magic_putc / kv_magic_exit) that    *
  * dereference volatile MMIO pointers – meaningless and unsafe on the host.  */
-#ifndef RV_PLATFORM_NO_INLINE_HELPERS
-#  define RV_PLATFORM_NO_INLINE_HELPERS
+#ifndef KV_PLATFORM_NO_INLINE_HELPERS
+#  define KV_PLATFORM_NO_INLINE_HELPERS
 #endif
 
 /* ── SDK peripheral register map (single source of truth) ───────────────── */
-#include "rv_platform.h"     /* resolved via -I../sw/include in spike/Makefile */
+#include "kv_platform.h"     /* resolved via -I../sw/include in spike/Makefile */
 
-/* After the include, make any accidental RV_REG32 call a visible no-op so  *
+/* After the include, make any accidental KV_REG32 call a visible no-op so  *
  * nothing writes to random host-process memory.                             */
-#undef  RV_REG32
-#define RV_REG32(base, off)  ((void)((base)+(off)))
+#undef  KV_REG32
+#define KV_REG32(base, off)  ((void)((base)+(off)))
 
 /* ── Spike mmio_plugin_t ─────────────────────────────────────────────────── */
 /* reg_t: Spike uses uint64_t even in RV32 mode.                              */
@@ -89,7 +89,7 @@ static inline uint32_t extract_val(const uint8_t* bytes, size_t len) {
  * The symbol plic_set_pending is exported by plugin_plic.so (loaded with    *
  * RTLD_GLOBAL by Spike) and located lazily via dlsym so loading order does  *
  * not matter.  If plic_set_pending is not found the call is silently ignored.*
- * Use the RV_PLIC_SRC_* constants from rv_platform.h for the src argument.  */
+ * Use the KV_PLIC_SRC_* constants from kv_platform.h for the src argument.  */
 static inline void plic_notify(int src, int asserted) {
     typedef void (*fn_t)(int, int);
     static fn_t fn = (fn_t)(uintptr_t)-1;  /* sentinel: not yet resolved */

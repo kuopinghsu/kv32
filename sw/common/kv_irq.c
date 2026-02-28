@@ -1,15 +1,15 @@
 /*
- * rv_irq.c – Machine-mode IRQ / exception dispatch table
+ * kv_irq.c – Machine-mode IRQ / exception dispatch table
  *
  * Implements the dispatch table that the default trap_handler fills in
  * and calls into.  Each entry is a weak pointer; user code overrides it
- * by calling rv_irq_register() / rv_exc_register().
+ * by calling kv_irq_register() / kv_exc_register().
  *
  * This file is compiled as part of COMMON_SRCS (see top-level Makefile).
  */
 
 #include <stdint.h>
-#include "rv_irq.h"
+#include "kv_irq.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,7 +32,7 @@ static void _puthex(uint32_t v)
 
 static void _default_irq(uint32_t cause)
 {
-    _puts("[rv_irq] unhandled interrupt, cause="); _puthex(cause); _puts("\n");
+    _puts("[kv_irq] unhandled interrupt, cause="); _puthex(cause); _puts("\n");
 }
 
 static void _default_exc(uint32_t mcause, uint32_t mepc, uint32_t mtval)
@@ -49,21 +49,21 @@ static void _default_exc(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 
 /* Interrupt causes 0..15 (MSB stripped from mcause) */
 #define _IRQ_MAX 16u
-static rv_irq_handler_t _irq_table[_IRQ_MAX];
+static kv_irq_handler_t _irq_table[_IRQ_MAX];
 
 /* Exception causes 0..15 */
 #define _EXC_MAX 16u
-static rv_exc_handler_t _exc_table[_EXC_MAX];
+static kv_exc_handler_t _exc_table[_EXC_MAX];
 
 /* ── registration ─────────────────────────────────────────────────── */
 
-void rv_irq_register(uint32_t cause, rv_irq_handler_t handler)
+void kv_irq_register(uint32_t cause, kv_irq_handler_t handler)
 {
     if (cause < _IRQ_MAX)
         _irq_table[cause] = handler;
 }
 
-void rv_exc_register(uint32_t cause, rv_exc_handler_t handler)
+void kv_exc_register(uint32_t cause, kv_exc_handler_t handler)
 {
     if (cause < _EXC_MAX)
         _exc_table[cause] = handler;
@@ -71,7 +71,7 @@ void rv_exc_register(uint32_t cause, rv_exc_handler_t handler)
 
 /* ── dispatcher ───────────────────────────────────────────────────── */
 
-void rv_irq_dispatch(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+void kv_irq_dispatch(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 {
     if (mcause & 0x80000000u) {
         /* Interrupt */

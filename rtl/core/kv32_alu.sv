@@ -1,6 +1,6 @@
 // ============================================================================
-// File: rv32_alu.sv
-// Project: RV32 RISC-V Processor
+// File: kv32_alu.sv
+// Project: KV32 RISC-V Processor
 // Description: RISC-V 32-bit Arithmetic Logic Unit
 //
 // Performs arithmetic and logical operations for the processor core.
@@ -25,9 +25,9 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 `endif
-module rv32_alu #(
+module kv32_alu #(
     parameter FAST_MUL = 1, // 1=combinatorial multiply, 0=serial multiplier
     parameter FAST_DIV = 1  // 1=combinatorial divide, 0=serial divider
 )(
@@ -44,7 +44,7 @@ module rv32_alu #(
     output logic        ready
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
 `endif
 
     // ========================================================================

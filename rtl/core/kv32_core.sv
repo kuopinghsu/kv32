@@ -1,6 +1,6 @@
 // ============================================================================
-// File: rv32_core.sv
-// Project: RV32 RISC-V Processor
+// File: kv32_core.sv
+// Project: KV32 RISC-V Processor
 // Description: RV32IMA Processor Core with 5-Stage Pipeline
 //
 // Implements the RISC-V RV32IMA instruction set architecture:
@@ -38,9 +38,9 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 `endif
-module rv32_core #(
+module kv32_core #(
     parameter int IB_DEPTH = 4,  // Instruction buffer depth (outstanding fetches); must be power-of-2 and >= effective_latency+1
     parameter int SB_DEPTH = 4,  // Store buffer depth (buffered stores)
     parameter int FAST_MUL = 1,  // Multiply mode: 1=combinatorial, 0=serial
@@ -122,12 +122,12 @@ module rv32_core #(
     output logic [3:0]  wb_store_strb_out,  // store byte enables
     // Trace-compare mode: when asserted, cycle/time CSR reads return minstret
     // instead of mcycle, making them pipeline-stall-independent and identical
-    // to what the software simulator returns (see rv32_csr.sv for details).
+    // to what the software simulator returns (see kv32_csr.sv for details).
     input  logic        trace_mode
 `endif
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
 `endif
 
     // Timeout for detecting pipeline deadlocks (simulation only)
@@ -752,7 +752,7 @@ module rv32_core #(
 
     // Instruction Buffer Instance
     // Configurable depth allows multiple outstanding instruction fetch requests
-    rv32_ib #(
+    kv32_ib #(
         .DEPTH(IB_DEPTH),
         .ADDR_WIDTH(32)
     ) instruction_buffer (
@@ -896,7 +896,7 @@ module rv32_core #(
 
     // Instruction Decoder
     // Decodes 32-bit RISC-V instruction into control signals and immediate values
-    rv32_decoder decoder (
+    kv32_decoder decoder (
         .instr(instr_id),
         .valid(id_valid),
         .rs1_addr(rs1_addr),
@@ -947,7 +947,7 @@ module rv32_core #(
         end
     end
 
-    rv32_regfile regfile (
+    kv32_regfile regfile (
         .clk(clk),
         .rst_n(rst_n),
         .rs1_addr(rs1_addr),
@@ -1397,7 +1397,7 @@ module rv32_core #(
         end
     end
 
-    rv32_alu #(
+    kv32_alu #(
         .FAST_MUL(FAST_MUL),
         .FAST_DIV(FAST_DIV)
     ) alu (
@@ -1970,7 +1970,7 @@ module rv32_core #(
     // Configurable depth allows multiple stores to be buffered while awaiting completion.
     // Stores are issued to memory in FIFO order.
     // Buffer is flushed on branches/exceptions to maintain precise exceptions.
-    rv32_sb #(
+    kv32_sb #(
         .DEPTH(SB_DEPTH),
         .ADDR_WIDTH(32),
         .DATA_WIDTH(32)
@@ -2349,7 +2349,7 @@ module rv32_core #(
                           fence_i_drain_stall || fence_i_cmo_stall || cbo_cmo_stall;
 
     // ====== I-Cache CMO Outputs ======
-    // CMO opcodes (must match localparams in rv32_icache.sv)
+    // CMO opcodes (must match localparams in kv32_icache.sv)
     localparam logic [1:0] ICACHE_CMO_INVAL     = 2'b00;  // Invalidate specific cache line
     localparam logic [1:0] ICACHE_CMO_FLUSH_ALL = 2'b11;  // Flush entire cache (FENCE.I)
 
@@ -2731,7 +2731,7 @@ module rv32_core #(
     //   - mstatus, mie, mtvec, mscratch, mepc, mcause, mtval
     //   - minstret, mcycle (performance counters)
     //   - mvendorid, marchid, mimpid, mhartid (read-only identification)
-    rv32_csr csr (
+    kv32_csr csr (
         .clk(clk),
         .rst_n(rst_n),
 

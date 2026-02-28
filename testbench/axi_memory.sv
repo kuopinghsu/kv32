@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_memory.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4-Lite External Memory Module for Testbench
 //
 // Configurable AXI memory supporting single-port or dual-port operation.
@@ -59,7 +59,7 @@ module axi_memory #(
     input  logic                    axi_rready
 );
 
-    import rv32_pkg::*;
+    import kv32_pkg::*;
 
     // Memory array
     logic [7:0] mem [MEM_SIZE];

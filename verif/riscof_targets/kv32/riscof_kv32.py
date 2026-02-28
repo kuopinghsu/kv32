@@ -15,8 +15,8 @@ from riscof.pluginTemplate import pluginTemplate
 
 logger = logging.getLogger()
 
-class rv32(pluginTemplate):
-    __model__ = "rv32"
+class kv32(pluginTemplate):
+    __model__ = "kv32"
     __version__ = "1.0.0"
 
     def __init__(self, *args, **kwargs):
@@ -81,7 +81,7 @@ class rv32(pluginTemplate):
             self.verilator_bin = 'verilator'
 
         # Path to Verilator executable
-        self.dut_exe = os.path.join(self.project_root, 'build/rv32soc')
+        self.dut_exe = os.path.join(self.project_root, 'build/kv32soc')
 
         if 'target_run' in config and config['target_run']=='0':
             self.target_run = False
@@ -155,10 +155,10 @@ class rv32(pluginTemplate):
 
             if arch_test_trace:
                 # When TRACE=1: generate the RTL instruction trace only.
-                # The comparison against the REF (rv32sim) trace is done by
-                # the REF plugin (riscof_rv32sim.py) once rv32sim has run,
-                # because rv32sim is the configured reference in config_rtl.ini.
-                rtl_trace_file = os.path.join(test_dir, 'DUT-rv32.trace')
+                # The comparison against the REF (kv32sim) trace is done by
+                # the REF plugin (riscof_kv32sim.py) once kv32sim has run,
+                # because kv32sim is the configured reference in config_rtl.ini.
+                rtl_trace_file = os.path.join(test_dir, 'DUT-kv32.trace')
 
                 # RTL sim generates signature + instruction trace
                 simcmd = (debug_prefix +

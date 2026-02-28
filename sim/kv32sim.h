@@ -1,8 +1,8 @@
 // RISC-V RV32IMAC Functional Simulator - Header
 // Contains ELF definitions, magic addresses, and device classes
 
-#ifndef RV32SIM_H
-#define RV32SIM_H
+#ifndef KV32SIM_H
+#define KV32SIM_H
 
 #include <stdint.h>
 #include <vector>
@@ -124,7 +124,7 @@ struct Elf32_Sym {
 #define CAUSE_MACHINE_EXTERNAL_INT 0x8000000B  // MEIP (bit 11)
 
 // RV32IMAC CPU simulator
-class RV32Simulator {
+class KV32Simulator {
 public:
     struct SlaveRegion {
         uint32_t base;
@@ -197,8 +197,8 @@ public:
     bool exception_occurred;
     uint32_t exception_pc;
 
-    RV32Simulator(uint32_t base = MEM_BASE, uint32_t size = MEM_SIZE);
-    ~RV32Simulator();
+    KV32Simulator(uint32_t base = MEM_BASE, uint32_t size = MEM_SIZE);
+    ~KV32Simulator();
 
     void enable_trace(const char* filename, bool rtl_format = false);
     void enable_signature(const char* filename, uint32_t granularity = 4);
@@ -231,4 +231,4 @@ public:
     void run();
 };
 
-#endif // RV32SIM_H
+#endif // KV32SIM_H

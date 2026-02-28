@@ -222,7 +222,7 @@ static void handle_query(gdb_context_t *ctx, void *simulator,
         const char *xml = "l<?xml version=\"1.0\"?>"
                           "<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
                           "<target version=\"1.0\">"
-                          "<architecture>riscv:rv32</architecture>"
+                          "<architecture>riscv:kv32</architecture>"
                           "</target>";
         send_packet(&ctx->stub, xml);
     } else if (strncmp(packet, "qOffsets", 8) == 0) {

@@ -1,9 +1,9 @@
 // RISC-V Interrupt and Exception Test
-// Refactored to use rv_irq.h / rv_clint.h HAL APIs.
+// Refactored to use kv_irq.h / kv_clint.h HAL APIs.
 
 #include <stdint.h>
-#include "rv_irq.h"
-#include "rv_clint.h"
+#include "kv_irq.h"
+#include "kv_clint.h"
 
 /* ── low-level I/O (no printf dependency) ─────────────────────────── */
 extern void putc(char c);
@@ -32,27 +32,27 @@ static volatile uint32_t exception_count    = 0;
 static volatile uint32_t ecall_count        = 0;
 static volatile uint32_t test_phase         = 0;
 
-/* ── IRQ handlers registered via rv_irq_register() ───────────────── */
+/* ── IRQ handlers registered via kv_irq_register() ───────────────── */
 
 static void on_timer_irq(uint32_t cause)
 {
     (void)cause;
     timer_irq_count++;
     if (timer_irq_count < 5)
-        rv_clint_timer_set_rel(100000ULL);  /* next in 100 K cycles */
+        kv_clint_timer_set_rel(100000ULL);  /* next in 100 K cycles */
     else
-        rv_clint_timer_disable();
+        kv_clint_timer_disable();
 }
 
 static void on_software_irq(uint32_t cause)
 {
     (void)cause;
     software_irq_count++;
-    rv_clint_msip_irq_disable();   /* stop re-entry */
-    rv_clint_msip_clear();
+    kv_clint_msip_irq_disable();   /* stop re-entry */
+    kv_clint_msip_clear();
 }
 
-/* ── exception handlers registered via rv_exc_register() ─────────── */
+/* ── exception handlers registered via kv_exc_register() ─────────── */
 
 static void on_illegal_insn(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 {
@@ -68,7 +68,7 @@ static void on_illegal_insn(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 static void on_ecall(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 {
     (void)mtval;
-    if ((mcause & 0x7FFFFFFFu) == RV_EXC_ECALL_M) {
+    if ((mcause & 0x7FFFFFFFu) == KV_EXC_ECALL_M) {
         ecall_count++;
         _puts("  ECALL exception detected (mcause = 11)\n");
         write_csr_mepc(mepc + 4);
@@ -87,10 +87,10 @@ int main(void)
     _puts("========================================\n\n");
 
     /* Register handlers via the dispatch table */
-    rv_irq_register(RV_CAUSE_MTI, on_timer_irq);
-    rv_irq_register(RV_CAUSE_MSI, on_software_irq);
-    rv_exc_register(RV_EXC_ILLEGAL_INSN, on_illegal_insn);
-    rv_exc_register(RV_EXC_ECALL_M,      on_ecall);
+    kv_irq_register(KV_CAUSE_MTI, on_timer_irq);
+    kv_irq_register(KV_CAUSE_MSI, on_software_irq);
+    kv_exc_register(KV_EXC_ILLEGAL_INSN, on_illegal_insn);
+    kv_exc_register(KV_EXC_ECALL_M,      on_ecall);
 
     /* CSR sanity check */
     _puts("[CSR TEST] Testing CSR write/read...\n");
@@ -100,7 +100,7 @@ int main(void)
     _puts("  Result: PASS\n\n");
 
     /* Initial mtime */
-    uint64_t t0 = rv_clint_mtime();
+    uint64_t t0 = kv_clint_mtime();
     _puts("[INIT] Current mtime: 0x");
     _puthex((uint32_t)(t0 >> 32)); _puthex((uint32_t)t0); _puts("\n\n");
 
@@ -110,9 +110,9 @@ int main(void)
 
     _puts("  mtvec set to: 0x"); _puthex(read_csr_mtvec()); _puts("\n");
 
-    rv_clint_timer_irq_enable();
-    rv_clint_timer_set_rel(50000ULL);
-    rv_irq_enable();
+    kv_clint_timer_irq_enable();
+    kv_clint_timer_set_rel(50000ULL);
+    kv_irq_enable();
     _puts("  mtimecmp set to trigger in 50K cycles\n");
     _puts("  Waiting for timer interrupt...\n");
 
@@ -137,16 +137,16 @@ int main(void)
     _puts(timer_irq_count >= 4 ? "  Result: PASS\n" : "  Result: FAIL\n");
     _puts("\n");
 
-    rv_clint_timer_disable();
-    rv_clint_timer_irq_disable();
+    kv_clint_timer_disable();
+    kv_clint_timer_irq_disable();
     _puts("  Timer interrupts disabled\n\n");
 
     /* ── TEST 2: Software Interrupt ───────────────────────────────── */
     _puts("[TEST 2] Software Interrupt\n");
-    rv_clint_msip_irq_enable();
+    kv_clint_msip_irq_enable();
     _puts("  mie.MSIE enabled\n");
     _puts("  Triggering software interrupt via MSIP...\n");
-    rv_clint_msip_set();
+    kv_clint_msip_set();
 
     for (volatile uint32_t t = 0; t < 50000 && software_irq_count == 0; t++)
         asm volatile("nop");
@@ -157,7 +157,7 @@ int main(void)
     } else {
         _puts("  ERROR: Not received\n  Result: FAIL\n\n");
     }
-    rv_clint_msip_irq_disable();
+    kv_clint_msip_irq_disable();
     _puts("  Software interrupts disabled\n\n");
 
     /* ── TEST 3: Illegal Instruction Exception ────────────────────── */
@@ -189,7 +189,7 @@ int main(void)
     _puts("  mstatus: 0x"); _puthex(read_csr_mstatus()); _puts("\n");
     _puts("  mie:     0x"); _puthex(read_csr_mie());     _puts("\n");
     _puts("  mip:     0x"); _puthex(read_csr_mip());     _puts("\n");
-    uint64_t tf = rv_clint_mtime();
+    uint64_t tf = kv_clint_mtime();
     _puts("  mtime:   0x");
     _puthex((uint32_t)(tf >> 32)); _puthex((uint32_t)tf); _puts("\n");
     _puts("  Result: PASS\n\n");

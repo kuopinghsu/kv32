@@ -1,6 +1,6 @@
  ============================================================================
 # File: build.tcl
-# Project: RV32 RISC-V Processor - Vivado Batch Build Script
+# Project: KV32 RISC-V Processor - Vivado Batch Build Script
 # Target: xcku5p-ffvb676-1-e (Kintex UltraScale+)
 #
 # Usage:
@@ -13,7 +13,7 @@
 # ============================================================================
 # Configuration
 # ============================================================================
-set project_name    "rv32_fpga"
+set project_name    "kv32_fpga"
 set project_dir     "fpga/vivado"
 set part            "xcku5p-ffvb676-1-e"
 set top_module      "fpga_top"
@@ -29,7 +29,7 @@ if {[llength $argv] > 0} {
 }
 
 puts "============================================================"
-puts " RV32 FPGA Build"
+puts " KV32 FPGA Build"
 puts " Part:   $part"
 puts " Target: $build_target"
 puts " Root:   $proj_root"
@@ -48,7 +48,7 @@ puts "Adding RTL source files..."
 
 # Core package (must be compiled first)
 add_files -norecurse $proj_root/rtl/axi_pkg.sv
-add_files -norecurse $proj_root/rtl/core/rv32_pkg.sv
+add_files -norecurse $proj_root/rtl/core/kv32_pkg.sv
 
 # Processor core
 add_files -norecurse [glob $proj_root/rtl/core/*.sv]
@@ -67,17 +67,17 @@ add_files -norecurse $proj_root/rtl/mem_axi.sv
 add_files -norecurse $proj_root/rtl/mem_axi_ro.sv
 
 # I-cache
-add_files -norecurse $proj_root/rtl/rv32_icache.sv
+add_files -norecurse $proj_root/rtl/kv32_icache.sv
 
 # JTAG / Debug
 add_files -norecurse [glob $proj_root/rtl/jtag/*.sv]
-add_files -norecurse $proj_root/rtl/rv32_dtm.sv
+add_files -norecurse $proj_root/rtl/kv32_dtm.sv
 
 # Interrupt controller
-add_files -norecurse $proj_root/rtl/rv32_plic.sv
+add_files -norecurse $proj_root/rtl/kv32_plic.sv
 
 # SoC top level
-add_files -norecurse $proj_root/rtl/rv32_soc.sv
+add_files -norecurse $proj_root/rtl/kv32_soc.sv
 
 # Memories
 add_files -norecurse [glob $proj_root/rtl/memories/*.sv]

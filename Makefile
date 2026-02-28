@@ -48,7 +48,7 @@ LDFLAGS = -T$(SW_DIR)/common/link.ld -Wl,--gc-sections
 LDFLAGS += -Wl,--wrap=fflush
 LDFLAGS += -lc -lgcc -lm
 COMMON_SRCS = $(SW_DIR)/common/start.S $(SW_DIR)/common/syscall.c $(SW_DIR)/common/trap.c \
-              $(SW_DIR)/common/rv_irq.c \
+              $(SW_DIR)/common/kv_irq.c \
               $(SW_DIR)/common/puts.c $(SW_DIR)/common/putc.c
 
 # Optional per-test software makefile include.
@@ -67,8 +67,8 @@ TEST_NAMES = $(notdir $(TEST_DIRS))
 COMPARE_EXCLUDE = full i2c uart spi dma
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
-# Software simulator selection (rv32sim or spike)
-SIM ?= rv32sim
+# Software simulator selection (kv32sim or spike)
+SIM ?= kv32sim
 
 # Spike MMIO plugin support
 SPIKE_DIR     = spike
@@ -82,19 +82,19 @@ SPIKE_PLUGINS = \
 	$(BUILD_DIR)/spike_plugin_dma.so
 SPIKE_EXTLIBS  = $(patsubst %,--extlib=%,$(SPIKE_PLUGINS))
 SPIKE_DEVICES  = \
-	--device=rv32_magic,0xFFFF0000 \
-	--device=rv32_plic,0x0C000000  \
-	--device=rv32_clint,0x02000000 \
-	--device=rv32_uart,0x20000000  \
-	--device=rv32_spi,0x20020000   \
-	--device=rv32_i2c,0x20010000   \
-	--device=rv32_dma,0x20030000
+	--device=kv32_magic,0xFFFF0000 \
+	--device=kv32_plic,0x0C000000  \
+	--device=kv32_clint,0x02000000 \
+	--device=kv32_uart,0x20000000  \
+	--device=kv32_spi,0x20020000   \
+	--device=kv32_i2c,0x20010000   \
+	--device=kv32_dma,0x20030000
 
 # Verilator settings
 VERILATOR ?= verilator
 VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-UNSIGNED --trace --trace-fst --cc --exe --build
 VERILATOR_FLAGS += -sv --timing
-VERILATOR_FLAGS += --top-module tb_rv32_soc
+VERILATOR_FLAGS += --top-module tb_kv32_soc
 VERILATOR_FLAGS += -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNUSEDSIGNAL
 VERILATOR_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM
 VERILATOR_FLAGS += -I$(MEM_DIR)
@@ -159,10 +159,10 @@ ifdef ICACHE_WAYS
   VERILATOR_FLAGS += -pvalue+ICACHE_WAYS=$(ICACHE_WAYS)
 endif
 
-# Stamp file to detect compile-time parameter changes and force rebuild of rv32soc.
+# Stamp file to detect compile-time parameter changes and force rebuild of kv32soc.
 # Each variable that is passed to Verilator at elaboration time must be listed here.
 # When any value differs from the previous build the stamp file is updated, which
-# makes rv32soc appear out-of-date and triggers a fresh Verilator elaboration.
+# makes kv32soc appear out-of-date and triggers a fresh Verilator elaboration.
 FAST_MUL     ?= 1
 FAST_DIV     ?= 1
 COVERAGE     ?= 0
@@ -175,9 +175,9 @@ RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
 # RTL source files
 # Package files must be compiled first
 RTL_SOURCES = \
-	$(CORE_DIR)/rv32_pkg.sv \
+	$(CORE_DIR)/kv32_pkg.sv \
 	$(RTL_DIR)/axi_pkg.sv \
-	$(filter-out $(CORE_DIR)/rv32_pkg.sv, $(wildcard $(CORE_DIR)/*.sv)) \
+	$(filter-out $(CORE_DIR)/kv32_pkg.sv, $(wildcard $(CORE_DIR)/*.sv)) \
 	$(filter-out $(RTL_DIR)/axi_pkg.sv, $(wildcard $(RTL_DIR)/*.sv)) \
 	$(filter-out $(RTL_DIR)/jtag/PINMUX_EXAMPLES.sv, $(wildcard $(RTL_DIR)/jtag/*.sv)) \
 	$(wildcard $(MEM_DIR)/*.sv) \
@@ -186,13 +186,13 @@ RTL_SOURCES = \
 	$(TB_DIR)/uart_loopback.sv \
 	$(TB_DIR)/spi_slave_memory.sv \
 	$(TB_DIR)/i2c_slave_eeprom.sv \
-	$(TB_DIR)/tb_rv32_soc.sv
+	$(TB_DIR)/tb_kv32_soc.sv
 
 # Testbench source
-TB_SOURCES = $(TB_DIR)/tb_rv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-dis.cpp
+TB_SOURCES = $(TB_DIR)/tb_kv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-dis.cpp
 
 # Output executable
-BUILD_TARGET = $(BUILD_DIR)/rv32soc
+BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
 .PHONY: all build-rtl build-sim rtl-build sim-build build-spike-plugins clean clean-tests clean-spike-plugins run waves help info rtl-% sim-% spike-% plugin-spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
@@ -208,7 +208,7 @@ build-rtl: $(BUILD_TARGET)
 rtl-build: build-rtl
 
 # Stamp rule: always runs (FORCE), but only touches the file when params changed.
-# This means rv32soc is rebuilt only when a compile-time parameter actually differs.
+# This means kv32soc is rebuilt only when a compile-time parameter actually differs.
 $(RTL_PARAMS_STAMP): FORCE
 	@mkdir -p $(BUILD_DIR)
 	@printf '%s' "$(RTL_BUILD_PARAMS)" | cmp -s - $@ || printf '%s' "$(RTL_BUILD_PARAMS)" > $@
@@ -226,7 +226,7 @@ $(BUILD_TARGET): $(RTL_SOURCES) $(TB_SOURCES) $(RTL_PARAMS_STAMP)
 	@mkdir -p $(BUILD_DIR)
 	$(VERILATOR) $(VERILATOR_FLAGS) \
 		-Mdir $(BUILD_DIR)/objdir \
-		-o ../rv32soc \
+		-o ../kv32soc \
 		-I$(CORE_DIR) \
 		-I$(RTL_DIR) \
 		$(RTL_SOURCES) \
@@ -237,10 +237,10 @@ $(BUILD_TARGET): $(RTL_SOURCES) $(TB_SOURCES) $(RTL_PARAMS_STAMP)
 	@echo "Simulator: $(BUILD_TARGET)"
 	@echo "=========================================="
 
-# Build software simulator (rv32sim)
+# Build software simulator (kv32sim)
 build-sim:
 	@echo "=========================================="
-	@echo "Building Software Simulator (rv32sim)"
+	@echo "Building Software Simulator (kv32sim)"
 	@echo "=========================================="
 	@$(MAKE) -C $(SIM_DIR) all
 	@echo "=========================================="
@@ -324,7 +324,7 @@ ifdef DEBUG
 	@echo "Debug level: $(DEBUG)"
 endif
 	@echo "=========================================="
-	@cd $(BUILD_DIR) && ./rv32soc \
+	@cd $(BUILD_DIR) && ./kv32soc \
 		$(if $(TRACE),--trace) \
 		$(if $(filter 1 fst,$(WAVE)),--wave=fst) \
 		$(if $(filter vcd,$(WAVE)),--wave=vcd) \
@@ -335,9 +335,9 @@ endif
 		echo "Trace saved to: $(BUILD_DIR)/rtl_trace.txt"; \
 	fi
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
-		echo "Waveform saved to: $(BUILD_DIR)/rv32soc.fst"; \
+		echo "Waveform saved to: $(BUILD_DIR)/kv32soc.fst"; \
 	elif [ "$(WAVE)" = "vcd" ]; then \
-		echo "Waveform saved to: $(BUILD_DIR)/rv32soc.vcd"; \
+		echo "Waveform saved to: $(BUILD_DIR)/kv32soc.vcd"; \
 	fi
 	@if [ "$(TRACE)" != "1" ] && [ "$(WAVE)" = "" ]; then \
 		echo "Use TRACE=1 for instruction trace, WAVE=fst or WAVE=vcd for waveform dump"; \
@@ -346,7 +346,7 @@ endif
 
 # Target to run test with software simulator (e.g., make sim-hello)
 # Use TRACE=1 to enable instruction trace
-# Use SIM=spike to use Spike instead of rv32sim (default)
+# Use SIM=spike to use Spike instead of kv32sim (default)
 # Note: Spike polls tohost periodically (not every cycle), so programs loop after
 #       writing tohost to give Spike time to detect the exit. This causes Spike
 #       traces to be longer than RTL traces. Use timeout to limit trace capture.
@@ -516,7 +516,7 @@ endif
 		echo "Running RTL test: $$test";\
 		echo "==========================================";\
 		if $(MAKE) -s $(BUILD_DIR)/$$test.elf && \
-		   (cd $(BUILD_DIR) && ./rv32soc \
+		   (cd $(BUILD_DIR) && ./kv32soc \
 			$(if $(TRACE),--trace) \
 			$(if $(filter 1 fst,$(WAVE)),--wave=fst) \
 			$(if $(filter vcd,$(WAVE)),--wave=vcd) \
@@ -655,7 +655,7 @@ coverage-all:
 	for test in $(TEST_NAMES); do \
 		echo "Running: $$test"; \
 		if $(MAKE) -s $(BUILD_DIR)/$$test.elf > /dev/null 2>&1 && \
-		   (cd $(BUILD_DIR) && ./rv32soc \
+		   (cd $(BUILD_DIR) && ./kv32soc \
 			$(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
 			$$test.elf > /dev/null 2>&1); then \
 			echo "✓ $$test completed"; \
@@ -694,7 +694,7 @@ coverage-report:
 	@echo "Step 2: Generating HTML report with lcov..."
 	@if command -v genhtml > /dev/null 2>&1; then \
 		genhtml $(BUILD_DIR)/coverage.info --output-directory $(BUILD_DIR)/coverage_html \
-			--title "RV32 SoC Coverage Report" \
+			--title "KV32 SoC Coverage Report" \
 			--show-details --legend \
 			--rc genhtml_branch_coverage=1 2>&1 | grep -E "(Overall|Processing|Writing)" || true; \
 		echo ""; \
@@ -743,7 +743,7 @@ run: $(BUILD_TARGET)
 waves: run
 	@echo "Opening waveform viewer..."
 	@if command -v gtkwave > /dev/null; then \
-		cd $(SIM_DIR) && gtkwave rv32soc.vcd & \
+		cd $(SIM_DIR) && gtkwave kv32soc.vcd & \
 	else \
 		echo "GTKWave not found. Please install it to view waveforms."; \
 	fi
@@ -752,7 +752,7 @@ waves: run
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
-	@rm -f $(SIM_DIR)/rv32soc.vcd
+	@rm -f $(SIM_DIR)/kv32soc.vcd
 	@rm -f $(SIM_DIR)/*.vcd
 	@make -C rtos freertos-clean
 	@make -C verif arch-test-clean
@@ -770,7 +770,7 @@ clean-tests:
 	@rm -f $(BUILD_DIR)/firmware.elf
 	@rm -f $(BUILD_DIR)/firmware.dis
 	@rm -f $(BUILD_DIR)/firmware.readelf
-	@rm -f $(BUILD_DIR)/rv32soc.vcd
+	@rm -f $(BUILD_DIR)/kv32soc.vcd
 	@echo "Test clean complete!"
 
 # Show environment info
@@ -804,7 +804,7 @@ help:
 	@echo "Main Targets:"
 	@echo "  all        - Build RTL (default)"
 	@echo "  build-rtl  - Build RTL with Verilator"
-	@echo "  build-sim  - Build software simulator (rv32sim)"
+	@echo "  build-sim  - Build software simulator (kv32sim)"
 	@echo "  clean      - Remove all build artifacts"
 	@echo "  clean-tests- Remove only test program builds"
 	@echo "  info       - Show environment configuration"
@@ -838,7 +838,7 @@ help:
 	@echo "  make hello           # Build hello test"
 	@echo "  make rtl-hello       # Run hello test with RTL"
 	@echo "  make rtl-all         # Run all tests with RTL"
-	@echo "  make sim-uart        # Run uart test with software sim (rv32sim)"
+	@echo "  make sim-uart        # Run uart test with software sim (kv32sim)"
 	@echo "  make sim-all         # Run all tests with software sim"
 	@echo "  make spike-hello           # Run hello test with Spike (HTIF-enabled)"
 	@echo "  make plugin-spike-uart     # Run uart test with Spike MMIO plugins"
@@ -865,7 +865,7 @@ help:
 	@echo "  build/firmware.elf          - Executable"
 	@echo "  build/firmware.dis          - Disassembly"
 	@echo "  build/firmware.readelf      - ELF info"
-	@echo "  build/rv32soc.fst           - Waveform (RTL, FST format)"
+	@echo "  build/kv32soc.fst           - Waveform (RTL, FST format)"
 	@echo "  build/coverage_html/        - Coverage report (HTML)"
 	@echo "  build/coverage.info         - Coverage data (lcov format)"
 	@echo ""

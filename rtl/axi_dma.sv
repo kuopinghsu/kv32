@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_dma.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4 DMA Controller
 //
 // Features:
@@ -56,7 +56,7 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 `endif
 
 module axi_dma #(
@@ -126,7 +126,7 @@ module axi_dma #(
     output logic irq
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
 `endif
 
     // ========================================================================

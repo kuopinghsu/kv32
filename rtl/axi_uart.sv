@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_uart.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4-Lite UART Peripheral with TX/RX FIFOs and IRQ
 //
 // Memory-mapped UART with AXI4-Lite interface. Provides serial communication

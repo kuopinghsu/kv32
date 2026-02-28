@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_i2c.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4-Lite I2C Master Controller with TX/RX FIFOs and IRQ
 //
 // Provides memory-mapped I2C master interface for interfacing with I2C devices.
@@ -39,7 +39,7 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 `endif
 module axi_i2c #(
     parameter CLK_FREQ   = 100_000_000,  // System clock frequency
@@ -83,7 +83,7 @@ module axi_i2c #(
     output logic        i2c_sda_oe    // SDA tristate (1=output disabled/high-Z)
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
 `endif
 
     // Register offsets

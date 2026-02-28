@@ -1,8 +1,8 @@
-# RV32 Pipeline Architecture
+# KV32 Pipeline Architecture
 
 ## Overview
 
-The RV32 core implements a classic 5-stage RISC pipeline with data forwarding to minimize stalls and maximize instruction throughput. This document describes the pipeline architecture, forwarding mechanism, and hazard handling strategies.
+The KV32 core implements a classic 5-stage RISC pipeline with data forwarding to minimize stalls and maximize instruction throughput. This document describes the pipeline architecture, forwarding mechanism, and hazard handling strategies.
 
 ## Pipeline Diagram
 
@@ -39,8 +39,8 @@ The RV32 core implements a classic 5-stage RISC pipeline with data forwarding to
 **Purpose**: Decode instruction and read source registers.
 
 **Components**:
-- **Instruction Decoder** (`rv32_decoder`): Decodes 32-bit RISC-V instruction into control signals
-- **Register File** (`rv32_regfile`): 32 general-purpose registers (x0-x31), x0 hardwired to zero
+- **Instruction Decoder** (`kv32_decoder`): Decodes 32-bit RISC-V instruction into control signals
+- **Register File** (`kv32_regfile`): 32 general-purpose registers (x0-x31), x0 hardwired to zero
 - **Hazard Detection**: Detects load-use hazards
 
 **Outputs**:
@@ -65,7 +65,7 @@ The RV32 core implements a classic 5-stage RISC pipeline with data forwarding to
 
 **Components**:
 - **Forwarding Multiplexers**: Select operand sources (register file, MEM stage, or WB stage)
-- **ALU** (`rv32_alu`): Arithmetic, logical, shift, multiply, and divide operations
+- **ALU** (`kv32_alu`): Arithmetic, logical, shift, multiply, and divide operations
 - **Branch Unit**: Evaluates branch conditions and computes branch targets
 
 **Data Forwarding**:
@@ -112,7 +112,7 @@ forward_a, forward_b:
 
 **Components**:
 - **Data Memory Interface**: AXI read/write interface
-- **Store Buffer** (`rv32_sb`): Asynchronous store completion buffer (depth configurable via `SB_DEPTH` parameter)
+- **Store Buffer** (`kv32_sb`): Asynchronous store completion buffer (depth configurable via `SB_DEPTH` parameter)
 - **Load/Store Data Encoding**: Handles byte/halfword/word alignment and sign extension
 
 **Store Buffer**:
@@ -300,13 +300,13 @@ The pipeline supports **precise exceptions**:
 
 ## Related Files
 
-- **Core**: [rtl/core/rv32_core.sv](../rtl/core/rv32_core.sv)
-- **ALU**: [rtl/core/rv32_alu.sv](../rtl/core/rv32_alu.sv)
-- **Decoder**: [rtl/core/rv32_decoder.sv](../rtl/core/rv32_decoder.sv)
-- **Register File**: [rtl/core/rv32_regfile.sv](../rtl/core/rv32_regfile.sv)
-- **Instruction Buffer**: [rtl/core/rv32_ib.sv](../rtl/core/rv32_ib.sv)
-- **Store Buffer**: [rtl/core/rv32_sb.sv](../rtl/core/rv32_sb.sv)
-- **CSR**: [rtl/core/rv32_csr.sv](../rtl/core/rv32_csr.sv)
+- **Core**: [rtl/core/kv32_core.sv](../rtl/core/kv32_core.sv)
+- **ALU**: [rtl/core/kv32_alu.sv](../rtl/core/kv32_alu.sv)
+- **Decoder**: [rtl/core/kv32_decoder.sv](../rtl/core/kv32_decoder.sv)
+- **Register File**: [rtl/core/kv32_regfile.sv](../rtl/core/kv32_regfile.sv)
+- **Instruction Buffer**: [rtl/core/kv32_ib.sv](../rtl/core/kv32_ib.sv)
+- **Store Buffer**: [rtl/core/kv32_sb.sv](../rtl/core/kv32_sb.sv)
+- **CSR**: [rtl/core/kv32_csr.sv](../rtl/core/kv32_csr.sv)
 
 ## References
 

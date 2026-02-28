@@ -1,6 +1,6 @@
-# Spike MMIO Plugins for RV32 SoC
+# Spike MMIO Plugins for KV32 SoC
 
-This directory contains MMIO (Memory-Mapped I/O) plugin implementations for the Spike RISC-V ISA Simulator. These plugins emulate the peripheral devices used in the RV32 SoC, allowing firmware to run on Spike with the same MMIO interface as the RTL.
+This directory contains MMIO (Memory-Mapped I/O) plugin implementations for the Spike RISC-V ISA Simulator. These plugins emulate the peripheral devices used in the KV32 SoC, allowing firmware to run on Spike with the same MMIO interface as the RTL.
 
 ## Plugins
 
@@ -100,7 +100,7 @@ typedef struct {
 
 ### Register Map
 
-The plugins use register definitions from `../sw/include/rv_platform.h`, ensuring consistency between firmware and simulation:
+The plugins use register definitions from `../sw/include/kv_platform.h`, ensuring consistency between firmware and simulation:
 
 - **Magic Device**: `0xFFFF_0000` - `0xFFFF_FFFF`
 - **PLIC**: `0x0C00_0000` - `0x0FFF_FFFF`
@@ -118,7 +118,7 @@ The PLIC plugin exports a `plic_set_pending()` function that other plugins can c
 
 ### Compilation Issues
 
-**Warning about RV_REG32 macro redefinition:**
+**Warning about KV_REG32 macro redefinition:**
 - This has been fixed in `mmio_plugin_api.h` by properly ordering the include and macro definitions.
 
 **Linker error on macOS about undefined symbols:**
@@ -143,7 +143,7 @@ The PLIC plugin exports a `plic_set_pending()` function that other plugins can c
 2. Implement the `mmio_plugin_t` interface
 3. Add `plugin_init()` function to register the plugin
 4. Add the plugin to `PLUGINS` in `Makefile`
-5. Define device base address and registers in `../sw/include/rv_platform.h`
+5. Define device base address and registers in `../sw/include/kv_platform.h`
 
 ### Testing
 
@@ -158,4 +158,4 @@ This generates an instruction trace in `build/spike_plugin_trace.txt` for debugg
 
 - [Spike ISA Simulator](https://github.com/riscv-software-src/riscv-isa-sim)
 - [RISC-V MMIO Plugin API](https://github.com/riscv-software-src/riscv-isa-sim/blob/master/riscv/mmio_plugin.h)
-- RV32 SoC Register Map: `../sw/include/rv_platform.h`
+- KV32 SoC Register Map: `../sw/include/kv_platform.h`

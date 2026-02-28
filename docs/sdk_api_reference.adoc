@@ -1,4 +1,4 @@
-= RV32 SoC SDK API Reference
+= KV32 SoC SDK API Reference
 :doctype: book
 :toc: left
 :toclevels: 3
@@ -9,15 +9,15 @@
 :imagesdir: .
 :version: 1.0
 :revdate: 2026-02-25
-:author: RV32 SoC Project
-:email: rv32@example.com
+:author: KV32 SoC Project
+:email: kv32@example.com
 
 [abstract]
 == Abstract
 
-This document provides a comprehensive reference for the RV32 SoC Software Development Kit (SDK).
+This document provides a comprehensive reference for the KV32 SoC Software Development Kit (SDK).
 It describes the API functions, register definitions, and programming model for all peripherals
-and system components in the RV32 RISC-V System-on-Chip.
+and system components in the KV32 RISC-V System-on-Chip.
 
 The SDK provides a header-only C library optimized for bare-metal embedded applications,
 with zero overhead when functions are not used.
@@ -38,7 +38,7 @@ This API reference covers:
 
 === SDK Architecture
 
-The RV32 SDK follows these design principles:
+The KV32 SDK follows these design principles:
 
 Header-Only Design:: All driver functions are implemented as `static inline` functions,
 eliminating the need to link against a separate library. Unused functions contribute zero code size.
@@ -47,7 +47,7 @@ Zero Overhead Abstraction:: Direct register access with no additional memory or 
 
 Type Safety:: All register addresses and bit fields are defined as compile-time constants with proper types.
 
-Portability:: Works with both RTL simulation and software simulators (rv32sim, Spike).
+Portability:: Works with both RTL simulation and software simulators (kv32sim, Spike).
 
 === Header Organization
 
@@ -55,31 +55,31 @@ Portability:: Works with both RTL simulation and software simulators (rv32sim, S
 |===
 | Header File | Peripheral/Module | Description
 
-| `rv_platform.h`
+| `kv_platform.h`
 | Platform definitions
 | Base addresses, register offsets, bit-field constants for all peripherals
 
-| `rv_uart.h`
+| `kv_uart.h`
 | UART
 | Serial communication driver (polling and interrupt modes)
 
-| `rv_spi.h`
+| `kv_spi.h`
 | SPI
 | SPI master controller driver
 
-| `rv_i2c.h`
+| `kv_i2c.h`
 | I2C
 | I2C master controller driver
 
-| `rv_plic.h`
+| `kv_plic.h`
 | PLIC
 | Platform-Level Interrupt Controller configuration
 
-| `rv_clint.h`
+| `kv_clint.h`
 | CLINT
 | Core-Local Interrupt Controller (timer and software interrupts)
 
-| `rv_irq.h`
+| `kv_irq.h`
 | Interrupt Management
 | Global and per-source interrupt control, handler registration
 
@@ -146,11 +146,11 @@ Portability:: Works with both RTL simulation and software simulators (rv32sim, S
 
 === Memory-Mapped Register Access
 
-All peripherals use 32-bit aligned registers. The SDK provides the `RV_REG32` macro for safe MMIO access:
+All peripherals use 32-bit aligned registers. The SDK provides the `KV_REG32` macro for safe MMIO access:
 
 [source,c]
 ----
-#define RV_REG32(base, off) \
+#define KV_REG32(base, off) \
     (*(volatile uint32_t *)((uintptr_t)(base) + (uintptr_t)(off)))
 ----
 
@@ -158,8 +158,8 @@ Example usage:
 
 [source,c]
 ----
-uint32_t status = RV_REG32(RV_UART_BASE, RV_UART_STATUS_OFF);
-RV_REG32(RV_UART_BASE, RV_UART_DATA_OFF) = 0x41; // Write 'A'
+uint32_t status = KV_REG32(KV_UART_BASE, KV_UART_STATUS_OFF);
+KV_REG32(KV_UART_BASE, KV_UART_DATA_OFF) = 0x41; // Write 'A'
 ----
 
 '''
@@ -176,8 +176,8 @@ The UART peripheral (`axi_uart.sv`) provides full-duplex serial communication wi
 * Interrupt generation on RX data available and TX FIFO empty
 * Internal loopback mode for testing
 
-Base Address:: `0x2000_0000` (RV_UART_BASE)
-PLIC Source ID:: 1 (RV_PLIC_SRC_UART)
+Base Address:: `0x2000_0000` (KV_UART_BASE)
+PLIC Source ID:: 1 (KV_PLIC_SRC_UART)
 
 === Register Map
 
@@ -241,7 +241,7 @@ PLIC Source ID:: 1 (RV_PLIC_SRC_UART)
 
 [source,c]
 ----
-void rv_uart_init(uint32_t baud_div);
+void kv_uart_init(uint32_t baud_div);
 ----
 
 Initialize the UART peripheral with the specified baud rate divisor.
@@ -256,45 +256,45 @@ Initialize the UART peripheral with the specified baud rate divisor.
 ----
 // Configure for 115200 baud at 100 MHz system clock
 // baud_div = (100000000 / (115200 * 8)) - 1 = 107
-rv_uart_init(107);
+kv_uart_init(107);
 ----
 
 ==== Status Queries
 
 [source,c]
 ----
-int rv_uart_tx_busy(void);    // Returns 1 if TX FIFO full
-int rv_uart_rx_ready(void);   // Returns 1 if RX data available
+int kv_uart_tx_busy(void);    // Returns 1 if TX FIFO full
+int kv_uart_rx_ready(void);   // Returns 1 if RX data available
 ----
 
 ==== Polling Transmit
 
 [source,c]
 ----
-void rv_uart_putc(char c);
-void rv_uart_puts(const char *s);
-void rv_uart_write(const uint8_t *buf, uint32_t len);
+void kv_uart_putc(char c);
+void kv_uart_puts(const char *s);
+void kv_uart_write(const uint8_t *buf, uint32_t len);
 ----
 
 *Description:*
 
-* `rv_uart_putc()`: Block until TX FIFO has space, then transmit one character
-* `rv_uart_puts()`: Transmit a null-terminated string
-* `rv_uart_write()`: Transmit len bytes from buffer
+* `kv_uart_putc()`: Block until TX FIFO has space, then transmit one character
+* `kv_uart_puts()`: Transmit a null-terminated string
+* `kv_uart_write()`: Transmit len bytes from buffer
 
 *Example:*
 
 [source,c]
 ----
-rv_uart_puts("Hello, World!\n");
+kv_uart_puts("Hello, World!\n");
 ----
 
 ==== Polling Receive
 
 [source,c]
 ----
-int rv_uart_getc(void);              // Non-blocking, returns -1 if empty
-uint8_t rv_uart_getc_blocking(void); // Blocks until data available
+int kv_uart_getc(void);              // Non-blocking, returns -1 if empty
+uint8_t kv_uart_getc_blocking(void); // Blocks until data available
 ----
 
 *Example:*
@@ -302,8 +302,8 @@ uint8_t rv_uart_getc_blocking(void); // Blocks until data available
 [source,c]
 ----
 int c;
-while ((c = rv_uart_getc()) != -1) {
-    rv_uart_putc((char)c);  // Echo received character
+while ((c = kv_uart_getc()) != -1) {
+    kv_uart_putc((char)c);  // Echo received character
 }
 ----
 
@@ -311,27 +311,27 @@ while ((c = rv_uart_getc()) != -1) {
 
 [source,c]
 ----
-void rv_uart_irq_enable(uint32_t mask);
-void rv_uart_irq_disable(uint32_t mask);
-uint32_t rv_uart_irq_status(void);
+void kv_uart_irq_enable(uint32_t mask);
+void kv_uart_irq_disable(uint32_t mask);
+uint32_t kv_uart_irq_status(void);
 ----
 
 *Interrupt Sources:*
 
-* `RV_UART_IE_RX_READY` (bit 0): RX FIFO not empty
-* `RV_UART_IE_TX_EMPTY` (bit 1): TX FIFO drained (empty)
+* `KV_UART_IE_RX_READY` (bit 0): RX FIFO not empty
+* `KV_UART_IE_TX_EMPTY` (bit 1): TX FIFO drained (empty)
 
 *Example:*
 
 [source,c]
 ----
 // Enable RX interrupt
-rv_uart_irq_enable(RV_UART_IE_RX_READY);
+kv_uart_irq_enable(KV_UART_IE_RX_READY);
 
 // In interrupt handler:
-uint32_t status = rv_uart_irq_status();
-if (status & RV_UART_IE_RX_READY) {
-    char c = rv_uart_getc();
+uint32_t status = kv_uart_irq_status();
+if (status & KV_UART_IE_RX_READY) {
+    char c = kv_uart_getc();
     // Process received character
 }
 ----
@@ -340,8 +340,8 @@ if (status & RV_UART_IE_RX_READY) {
 
 [source,c]
 ----
-void rv_uart_loopback_enable(void);
-void rv_uart_loopback_disable(void);
+void kv_uart_loopback_enable(void);
+void kv_uart_loopback_disable(void);
 ----
 
 Enable internal TX→RX loopback for hardware testing. Transmitted bytes are fed back to the RX path without leaving the chip.
@@ -361,8 +361,8 @@ The SPI peripheral (`axi_spi.sv`) provides a master-mode SPI controller with:
 * Full-duplex operation
 * Internal loopback mode
 
-Base Address:: `0x2002_0000` (RV_SPI_BASE)
-PLIC Source ID:: 2 (RV_PLIC_SRC_SPI)
+Base Address:: `0x2002_0000` (KV_SPI_BASE)
+PLIC Source ID:: 2 (KV_PLIC_SRC_SPI)
 
 === Register Map
 
@@ -437,13 +437,13 @@ PLIC Source ID:: 2 (RV_PLIC_SRC_SPI)
 
 [source,c]
 ----
-void rv_spi_init(uint32_t clk_div, uint32_t mode);
+void kv_spi_init(uint32_t clk_div, uint32_t mode);
 ----
 
 *Parameters:*
 
 * `clk_div`: SCK frequency = `sys_clk / (2 * (clk_div + 1))`
-* `mode`: `RV_SPI_MODE0`, `MODE1`, `MODE2`, or `MODE3`
+* `mode`: `KV_SPI_MODE0`, `MODE1`, `MODE2`, or `MODE3`
 
 *Example:*
 
@@ -451,40 +451,40 @@ void rv_spi_init(uint32_t clk_div, uint32_t mode);
 ----
 // Configure for 1 MHz SPI clock at 100 MHz system clock, mode 0
 // clk_div = (100000000 / (2 * 1000000)) - 1 = 49
-rv_spi_init(49, RV_SPI_MODE0);
+kv_spi_init(49, KV_SPI_MODE0);
 ----
 
 ==== Chip Select Control
 
 [source,c]
 ----
-void rv_spi_cs_select(uint32_t n);   // Assert CS[n] (0-3)
-void rv_spi_cs_deselect(void);       // Deassert all CS lines
+void kv_spi_cs_select(uint32_t n);   // Assert CS[n] (0-3)
+void kv_spi_cs_deselect(void);       // Deassert all CS lines
 ----
 
 *Example:*
 
 [source,c]
 ----
-rv_spi_cs_select(0);        // Assert CS0
+kv_spi_cs_select(0);        // Assert CS0
 // Perform transfer
-rv_spi_cs_deselect();       // Release CS0
+kv_spi_cs_deselect();       // Release CS0
 ----
 
 ==== Data Transfer
 
 [source,c]
 ----
-uint8_t rv_spi_transfer(uint8_t data);
-void rv_spi_transfer_buf(const uint8_t *tx_buf, uint8_t *rx_buf, uint32_t len);
-void rv_spi_read_buf(uint8_t *rx_buf, uint32_t len);
+uint8_t kv_spi_transfer(uint8_t data);
+void kv_spi_transfer_buf(const uint8_t *tx_buf, uint8_t *rx_buf, uint32_t len);
+void kv_spi_read_buf(uint8_t *rx_buf, uint32_t len);
 ----
 
 *Description:*
 
-* `rv_spi_transfer()`: Full-duplex transfer of one byte
-* `rv_spi_transfer_buf()`: Transfer multiple bytes (tx_buf or rx_buf may be NULL)
-* `rv_spi_read_buf()`: Read len bytes by clocking out 0xFF
+* `kv_spi_transfer()`: Full-duplex transfer of one byte
+* `kv_spi_transfer_buf()`: Transfer multiple bytes (tx_buf or rx_buf may be NULL)
+* `kv_spi_read_buf()`: Read len bytes by clocking out 0xFF
 
 *Example:*
 
@@ -493,42 +493,42 @@ void rv_spi_read_buf(uint8_t *rx_buf, uint32_t len);
 uint8_t tx_data[] = {0x03, 0x00, 0x00, 0x00}; // Read command + address
 uint8_t rx_data[256];
 
-rv_spi_cs_select(0);
-rv_spi_transfer_buf(tx_data, NULL, 4);  // Send command
-rv_spi_read_buf(rx_data, 256);          // Read data
-rv_spi_cs_deselect();
+kv_spi_cs_select(0);
+kv_spi_transfer_buf(tx_data, NULL, 4);  // Send command
+kv_spi_read_buf(rx_data, 256);          // Read data
+kv_spi_cs_deselect();
 ----
 
 ==== Status and Control
 
 [source,c]
 ----
-int rv_spi_busy(void);        // Transfer in progress
-int rv_spi_tx_ready(void);    // Can accept TX data
-int rv_spi_rx_valid(void);    // RX data available
-void rv_spi_wait_ready(void); // Block until idle
+int kv_spi_busy(void);        // Transfer in progress
+int kv_spi_tx_ready(void);    // Can accept TX data
+int kv_spi_rx_valid(void);    // RX data available
+void kv_spi_wait_ready(void); // Block until idle
 ----
 
 ==== Interrupt Control
 
 [source,c]
 ----
-void rv_spi_irq_enable(uint32_t mask);
-void rv_spi_irq_disable(uint32_t mask);
-uint32_t rv_spi_irq_status(void);
+void kv_spi_irq_enable(uint32_t mask);
+void kv_spi_irq_disable(uint32_t mask);
+uint32_t kv_spi_irq_status(void);
 ----
 
 *Interrupt Sources:*
 
-* `RV_SPI_IE_RX_READY` (bit 0): RX FIFO not empty
-* `RV_SPI_IE_TX_EMPTY` (bit 1): TX FIFO empty
+* `KV_SPI_IE_RX_READY` (bit 0): RX FIFO not empty
+* `KV_SPI_IE_TX_EMPTY` (bit 1): TX FIFO empty
 
 ==== Loopback Mode
 
 [source,c]
 ----
-void rv_spi_loopback_enable(void);
-void rv_spi_loopback_disable(void);
+void kv_spi_loopback_enable(void);
+void kv_spi_loopback_disable(void);
 ----
 
 '''
@@ -545,8 +545,8 @@ The I2C peripheral (`axi_i2c.sv`) provides a master-mode I2C controller with:
 * ACK/NACK detection
 * Interrupt support
 
-Base Address:: `0x2001_0000` (RV_I2C_BASE)
-PLIC Source ID:: 3 (RV_PLIC_SRC_I2C)
+Base Address:: `0x2001_0000` (KV_I2C_BASE)
+PLIC Source ID:: 3 (KV_PLIC_SRC_I2C)
 
 === Register Map
 
@@ -596,7 +596,7 @@ PLIC Source ID:: 3 (RV_PLIC_SRC_I2C)
 
 [source,c]
 ----
-void rv_i2c_init(uint32_t clk_div);
+void kv_i2c_init(uint32_t clk_div);
 ----
 
 *Parameters:*
@@ -609,29 +609,29 @@ void rv_i2c_init(uint32_t clk_div);
 ----
 // Configure for 100 kHz at 100 MHz system clock
 // clk_div = (100000000 / (4 * 100000)) - 1 = 249
-rv_i2c_init(249);
+kv_i2c_init(249);
 
 // Configure for 400 kHz at 100 MHz system clock
 // clk_div = (100000000 / (4 * 400000)) - 1 = 62
-rv_i2c_init(62);
+kv_i2c_init(62);
 ----
 
 ==== Low-Level Operations
 
 [source,c]
 ----
-void rv_i2c_start(void);                    // Issue START condition
-void rv_i2c_stop(void);                     // Issue STOP condition
-int rv_i2c_write_byte(uint8_t data);        // Write byte, return 0 if ACK
-uint8_t rv_i2c_read_byte(int send_ack);     // Read byte, send ACK if 1
+void kv_i2c_start(void);                    // Issue START condition
+void kv_i2c_stop(void);                     // Issue STOP condition
+int kv_i2c_write_byte(uint8_t data);        // Write byte, return 0 if ACK
+uint8_t kv_i2c_read_byte(int send_ack);     // Read byte, send ACK if 1
 ----
 
 ==== High-Level Transfers
 
 [source,c]
 ----
-int rv_i2c_master_write(uint8_t addr, const uint8_t *buf, uint32_t len);
-int rv_i2c_master_read(uint8_t addr, uint8_t *buf, uint32_t len);
+int kv_i2c_master_write(uint8_t addr, const uint8_t *buf, uint32_t len);
+int kv_i2c_master_read(uint8_t addr, uint8_t *buf, uint32_t len);
 ----
 
 *Description:*
@@ -658,13 +658,13 @@ Complete write or read transactions including START, address, data, and STOP.
 uint8_t eeprom_addr = 0x50;
 uint8_t write_data[] = {0x00, 0x10, 0xAA, 0xBB}; // Addr MSB, LSB, data
 
-if (rv_i2c_master_write(eeprom_addr, write_data, 4) < 0) {
+if (kv_i2c_master_write(eeprom_addr, write_data, 4) < 0) {
     // Handle error
 }
 
 // Read from EEPROM
 uint8_t read_buf[2];
-if (rv_i2c_master_read(eeprom_addr, read_buf, 2) < 0) {
+if (kv_i2c_master_read(eeprom_addr, read_buf, 2) < 0) {
     // Handle error
 }
 ----
@@ -673,26 +673,26 @@ if (rv_i2c_master_read(eeprom_addr, read_buf, 2) < 0) {
 
 [source,c]
 ----
-int rv_i2c_busy(void);           // Transfer in progress
-int rv_i2c_ack_received(void);   // Slave ACKed last byte
-int rv_i2c_rx_valid(void);       // RX data available
-void rv_i2c_wait_ready(void);    // Block until idle
+int kv_i2c_busy(void);           // Transfer in progress
+int kv_i2c_ack_received(void);   // Slave ACKed last byte
+int kv_i2c_rx_valid(void);       // RX data available
+void kv_i2c_wait_ready(void);    // Block until idle
 ----
 
 ==== Interrupt Control
 
 [source,c]
 ----
-void rv_i2c_irq_enable(uint32_t mask);
-void rv_i2c_irq_disable(uint32_t mask);
-uint32_t rv_i2c_irq_status(void);
+void kv_i2c_irq_enable(uint32_t mask);
+void kv_i2c_irq_disable(uint32_t mask);
+uint32_t kv_i2c_irq_status(void);
 ----
 
 *Interrupt Sources:*
 
-* `RV_I2C_IE_RX_READY` (bit 0): RX FIFO not empty
-* `RV_I2C_IE_TX_EMPTY` (bit 1): TX FIFO empty
-* `RV_I2C_IE_STOP_DONE` (bit 2): STOP condition completed
+* `KV_I2C_IE_RX_READY` (bit 0): RX FIFO not empty
+* `KV_I2C_IE_TX_EMPTY` (bit 1): TX FIFO empty
+* `KV_I2C_IE_STOP_DONE` (bit 2): STOP condition completed
 
 '''
 
@@ -708,14 +708,14 @@ The DMA controller (`axi_dma.sv`) provides high-performance data transfers with:
 * Interrupt generation on completion or error
 * Performance counters for throughput monitoring
 
-Base Address:: `0x2003_0000` (RV_DMA_BASE)
-PLIC Source ID:: 4 (RV_PLIC_SRC_DMA)
+Base Address:: `0x2003_0000` (KV_DMA_BASE)
+PLIC Source ID:: 4 (KV_PLIC_SRC_DMA)
 
 === Register Map
 
 ==== Per-Channel Registers
 
-Each channel has registers at `RV_DMA_BASE + channel * 0x40`:
+Each channel has registers at `KV_DMA_BASE + channel * 0x40`:
 
 [cols="2,2,2,6"]
 |===
@@ -892,15 +892,15 @@ Simple linear memory copy:
 [source,c]
 ----
 // Copy 1024 bytes from src to dst
-RV_DMA_CH_REG(0, RV_DMA_CH_SRC_OFF) = src_addr;
-RV_DMA_CH_REG(0, RV_DMA_CH_DST_OFF) = dst_addr;
-RV_DMA_CH_REG(0, RV_DMA_CH_XFER_OFF) = 1024;
-RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) =
-    RV_DMA_CTRL_EN | RV_DMA_CTRL_MODE_1D |
-    RV_DMA_CTRL_SRC_INC | RV_DMA_CTRL_DST_INC | RV_DMA_CTRL_START;
+KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF) = src_addr;
+KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF) = dst_addr;
+KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 1024;
+KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
+    KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_1D |
+    KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_START;
 
 // Wait for completion
-while (RV_DMA_CH_REG(0, RV_DMA_CH_STAT_OFF) & RV_DMA_STAT_BUSY) {}
+while (KV_DMA_CH_REG(0, KV_DMA_CH_STAT_OFF) & KV_DMA_STAT_BUSY) {}
 ----
 
 ==== 2D Strided Transfer Mode
@@ -912,15 +912,15 @@ Copy rectangular regions with different pitches:
 // Copy 640x480 image with padding
 // Source: 640 bytes/row, stride 1024
 // Dest:   640 bytes/row, stride 800
-RV_DMA_CH_REG(0, RV_DMA_CH_SRC_OFF) = src_addr;
-RV_DMA_CH_REG(0, RV_DMA_CH_DST_OFF) = dst_addr;
-RV_DMA_CH_REG(0, RV_DMA_CH_XFER_OFF) = 640;        // Bytes per row
-RV_DMA_CH_REG(0, RV_DMA_CH_SSTRIDE_OFF) = 1024;    // Source row stride
-RV_DMA_CH_REG(0, RV_DMA_CH_DSTRIDE_OFF) = 800;     // Dest row stride
-RV_DMA_CH_REG(0, RV_DMA_CH_ROWCNT_OFF) = 480;      // Number of rows
-RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) =
-    RV_DMA_CTRL_EN | RV_DMA_CTRL_MODE_2D |
-    RV_DMA_CTRL_SRC_INC | RV_DMA_CTRL_DST_INC | RV_DMA_CTRL_START;
+KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF) = src_addr;
+KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF) = dst_addr;
+KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 640;        // Bytes per row
+KV_DMA_CH_REG(0, KV_DMA_CH_SSTRIDE_OFF) = 1024;    // Source row stride
+KV_DMA_CH_REG(0, KV_DMA_CH_DSTRIDE_OFF) = 800;     // Dest row stride
+KV_DMA_CH_REG(0, KV_DMA_CH_ROWCNT_OFF) = 480;      // Number of rows
+KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
+    KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_2D |
+    KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_START;
 ----
 
 ==== 3D Planar Transfer Mode
@@ -930,18 +930,18 @@ Copy 3D data structures (e.g., video frames):
 [source,c]
 ----
 // Copy video buffer: 640x480x3 (RGB planes)
-RV_DMA_CH_REG(0, RV_DMA_CH_SRC_OFF) = src_addr;
-RV_DMA_CH_REG(0, RV_DMA_CH_DST_OFF) = dst_addr;
-RV_DMA_CH_REG(0, RV_DMA_CH_XFER_OFF) = 640;           // Bytes per row
-RV_DMA_CH_REG(0, RV_DMA_CH_SSTRIDE_OFF) = 640;        // Source row stride
-RV_DMA_CH_REG(0, RV_DMA_CH_DSTRIDE_OFF) = 640;        // Dest row stride
-RV_DMA_CH_REG(0, RV_DMA_CH_ROWCNT_OFF) = 480;         // Rows per plane
-RV_DMA_CH_REG(0, RV_DMA_CH_SPSTRIDE_OFF) = 307200;    // Source plane stride
-RV_DMA_CH_REG(0, RV_DMA_CH_DPSTRIDE_OFF) = 307200;    // Dest plane stride
-RV_DMA_CH_REG(0, RV_DMA_CH_PLANECNT_OFF) = 3;         // Number of planes
-RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) =
-    RV_DMA_CTRL_EN | RV_DMA_CTRL_MODE_3D |
-    RV_DMA_CTRL_SRC_INC | RV_DMA_CTRL_DST_INC | RV_DMA_CTRL_START;
+KV_DMA_CH_REG(0, KV_DMA_CH_SRC_OFF) = src_addr;
+KV_DMA_CH_REG(0, KV_DMA_CH_DST_OFF) = dst_addr;
+KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = 640;           // Bytes per row
+KV_DMA_CH_REG(0, KV_DMA_CH_SSTRIDE_OFF) = 640;        // Source row stride
+KV_DMA_CH_REG(0, KV_DMA_CH_DSTRIDE_OFF) = 640;        // Dest row stride
+KV_DMA_CH_REG(0, KV_DMA_CH_ROWCNT_OFF) = 480;         // Rows per plane
+KV_DMA_CH_REG(0, KV_DMA_CH_SPSTRIDE_OFF) = 307200;    // Source plane stride
+KV_DMA_CH_REG(0, KV_DMA_CH_DPSTRIDE_OFF) = 307200;    // Dest plane stride
+KV_DMA_CH_REG(0, KV_DMA_CH_PLANECNT_OFF) = 3;         // Number of planes
+KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) =
+    KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_3D |
+    KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_START;
 ----
 
 === Performance Monitoring
@@ -949,7 +949,7 @@ RV_DMA_CH_REG(0, RV_DMA_CH_CTRL_OFF) =
 [source,c]
 ----
 // Enable performance counters
-RV_DMA_GLB_REG(RV_DMA_PERF_CTRL_OFF) = 0x3; // Reset + enable
+KV_DMA_GLB_REG(KV_DMA_PERF_CTRL_OFF) = 0x3; // Reset + enable
 
 // Start DMA transfer
 // ...
@@ -958,9 +958,9 @@ RV_DMA_GLB_REG(RV_DMA_PERF_CTRL_OFF) = 0x3; // Reset + enable
 // ...
 
 // Read statistics
-uint32_t cycles = RV_DMA_GLB_REG(RV_DMA_PERF_CYCLES_OFF);
-uint32_t rd_bytes = RV_DMA_GLB_REG(RV_DMA_PERF_RD_BYTES_OFF);
-uint32_t wr_bytes = RV_DMA_GLB_REG(RV_DMA_PERF_WR_BYTES_OFF);
+uint32_t cycles = KV_DMA_GLB_REG(KV_DMA_PERF_CYCLES_OFF);
+uint32_t rd_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_RD_BYTES_OFF);
+uint32_t wr_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_WR_BYTES_OFF);
 
 // Calculate throughput
 float mbps = (float)(rd_bytes + wr_bytes) / cycles * sys_clk_hz / 1e6;
@@ -974,7 +974,7 @@ float mbps = (float)(rd_bytes + wr_bytes) / cycles * sys_clk_hz / 1e6;
 
 The PLIC (`axi_plic.sv`) manages external interrupt sources from peripherals.
 
-Base Address:: `0x0C00_0000` (RV_PLIC_BASE)
+Base Address:: `0x0C00_0000` (KV_PLIC_BASE)
 
 === Interrupt Sources
 
@@ -1005,11 +1005,11 @@ Base Address:: `0x0C00_0000` (RV_PLIC_BASE)
 
 [source,c]
 ----
-void rv_plic_set_priority(uint32_t src, uint32_t priority);
-void rv_plic_enable_source(uint32_t src);
-void rv_plic_disable_source(uint32_t src);
-int rv_plic_is_pending(uint32_t src);
-void rv_plic_set_threshold(uint32_t threshold);
+void kv_plic_set_priority(uint32_t src, uint32_t priority);
+void kv_plic_enable_source(uint32_t src);
+void kv_plic_disable_source(uint32_t src);
+int kv_plic_is_pending(uint32_t src);
+void kv_plic_set_threshold(uint32_t threshold);
 ----
 
 *Parameters:*
@@ -1022,20 +1022,20 @@ void rv_plic_set_threshold(uint32_t threshold);
 
 [source,c]
 ----
-uint32_t rv_plic_claim(void);
-void rv_plic_complete(uint32_t src);
+uint32_t kv_plic_claim(void);
+void kv_plic_complete(uint32_t src);
 ----
 
 *Description:*
 
-* `rv_plic_claim()`: Read the highest-priority pending interrupt source (returns 0 if none)
-* `rv_plic_complete()`: Signal completion of interrupt handling
+* `kv_plic_claim()`: Read the highest-priority pending interrupt source (returns 0 if none)
+* `kv_plic_complete()`: Signal completion of interrupt handling
 
 ==== Initialization Helper
 
 [source,c]
 ----
-void rv_plic_init_source(uint32_t src, uint32_t priority);
+void kv_plic_init_source(uint32_t src, uint32_t priority);
 ----
 
 Convenience function that sets priority, enables source, sets threshold to 0, and enables external interrupts in `mie`.
@@ -1045,27 +1045,27 @@ Convenience function that sets priority, enables source, sets threshold to 0, an
 [source,c]
 ----
 // Initialize PLIC for UART interrupts
-rv_plic_init_source(RV_PLIC_SRC_UART, 5);  // Priority 5
+kv_plic_init_source(KV_PLIC_SRC_UART, 5);  // Priority 5
 
 // Enable UART RX interrupt
-rv_uart_irq_enable(RV_UART_IE_RX_READY);
+kv_uart_irq_enable(KV_UART_IE_RX_READY);
 
 // Enable global interrupts
-rv_irq_enable();
+kv_irq_enable();
 
 // Interrupt handler
 void external_irq_handler(void) {
-    uint32_t src = rv_plic_claim();
+    uint32_t src = kv_plic_claim();
 
-    if (src == RV_PLIC_SRC_UART) {
-        uint32_t status = rv_uart_irq_status();
-        if (status & RV_UART_IE_RX_READY) {
-            char c = rv_uart_getc();
+    if (src == KV_PLIC_SRC_UART) {
+        uint32_t status = kv_uart_irq_status();
+        if (status & KV_UART_IE_RX_READY) {
+            char c = kv_uart_getc();
             // Process character
         }
     }
 
-    rv_plic_complete(src);
+    kv_plic_complete(src);
 }
 ----
 
@@ -1077,7 +1077,7 @@ void external_irq_handler(void) {
 
 The CLINT (`axi_clint.sv`) provides timer and software interrupts.
 
-Base Address:: `0x0200_0000` (RV_CLINT_BASE)
+Base Address:: `0x0200_0000` (KV_CLINT_BASE)
 
 === Features
 
@@ -1091,35 +1091,35 @@ Base Address:: `0x0200_0000` (RV_CLINT_BASE)
 
 [source,c]
 ----
-uint64_t rv_clint_mtime(void);
-void rv_clint_set_mtimecmp(uint64_t cmp);
-void rv_clint_timer_disable(void);
-void rv_clint_timer_set_rel(uint64_t ticks);
-void rv_clint_timer_irq_enable(void);
-void rv_clint_timer_irq_disable(void);
+uint64_t kv_clint_mtime(void);
+void kv_clint_set_mtimecmp(uint64_t cmp);
+void kv_clint_timer_disable(void);
+void kv_clint_timer_set_rel(uint64_t ticks);
+void kv_clint_timer_irq_enable(void);
+void kv_clint_timer_irq_disable(void);
 ----
 
 *Description:*
 
-* `rv_clint_mtime()`: Read current timer value (safe against high-word rollover)
-* `rv_clint_set_mtimecmp()`: Set compare value for timer interrupt
-* `rv_clint_timer_set_rel()`: Schedule interrupt N ticks from now
+* `kv_clint_mtime()`: Read current timer value (safe against high-word rollover)
+* `kv_clint_set_mtimecmp()`: Set compare value for timer interrupt
+* `kv_clint_timer_set_rel()`: Schedule interrupt N ticks from now
 
 *Example:*
 
 [source,c]
 ----
 // Schedule timer interrupt in 1000000 cycles (~10ms at 100 MHz)
-rv_clint_timer_set_rel(1000000);
-rv_clint_timer_irq_enable();
-rv_irq_enable();
+kv_clint_timer_set_rel(1000000);
+kv_clint_timer_irq_enable();
+kv_irq_enable();
 
 // Timer interrupt handler
 void timer_irq_handler(void) {
     // Handle timer interrupt
 
     // Re-arm for next interrupt
-    rv_clint_timer_set_rel(1000000);
+    kv_clint_timer_set_rel(1000000);
 }
 ----
 
@@ -1127,10 +1127,10 @@ void timer_irq_handler(void) {
 
 [source,c]
 ----
-void rv_clint_msip_set(void);
-void rv_clint_msip_clear(void);
-void rv_clint_msip_irq_enable(void);
-void rv_clint_msip_irq_disable(void);
+void kv_clint_msip_set(void);
+void kv_clint_msip_clear(void);
+void kv_clint_msip_irq_enable(void);
+void kv_clint_msip_irq_disable(void);
 ----
 
 Software interrupts can be used for inter-processor communication (IPI) in multi-core systems or for self-interrupts.
@@ -1141,7 +1141,7 @@ Software interrupts can be used for inter-processor communication (IPI) in multi
 
 === Overview
 
-The `rv_irq.h` module provides high-level interrupt management functions.
+The `kv_irq.h` module provides high-level interrupt management functions.
 
 === Interrupt Source Bits (mie/mip)
 
@@ -1149,15 +1149,15 @@ The `rv_irq.h` module provides high-level interrupt management functions.
 |===
 | Constant | Bit | Description
 
-| `RV_IRQ_MSIE`
+| `KV_IRQ_MSIE`
 | 3
 | Machine software interrupt enable
 
-| `RV_IRQ_MTIE`
+| `KV_IRQ_MTIE`
 | 7
 | Machine timer interrupt enable
 
-| `RV_IRQ_MEIE`
+| `KV_IRQ_MEIE`
 | 11
 | Machine external interrupt enable (PLIC)
 |===
@@ -1168,15 +1168,15 @@ The `rv_irq.h` module provides high-level interrupt management functions.
 |===
 | Constant | Code | Description
 
-| `RV_CAUSE_MSI`
+| `KV_CAUSE_MSI`
 | 3
 | Machine software interrupt
 
-| `RV_CAUSE_MTI`
+| `KV_CAUSE_MTI`
 | 7
 | Machine timer interrupt
 
-| `RV_CAUSE_MEI`
+| `KV_CAUSE_MEI`
 | 11
 | Machine external interrupt
 |===
@@ -1187,39 +1187,39 @@ The `rv_irq.h` module provides high-level interrupt management functions.
 |===
 | Constant | Code | Description
 
-| `RV_EXC_INSN_MISALIGN`
+| `KV_EXC_INSN_MISALIGN`
 | 0
 | Instruction address misaligned
 
-| `RV_EXC_INSN_FAULT`
+| `KV_EXC_INSN_FAULT`
 | 1
 | Instruction access fault
 
-| `RV_EXC_ILLEGAL_INSN`
+| `KV_EXC_ILLEGAL_INSN`
 | 2
 | Illegal instruction
 
-| `RV_EXC_BREAKPOINT`
+| `KV_EXC_BREAKPOINT`
 | 3
 | Breakpoint (EBREAK)
 
-| `RV_EXC_LOAD_MISALIGN`
+| `KV_EXC_LOAD_MISALIGN`
 | 4
 | Load address misaligned
 
-| `RV_EXC_LOAD_FAULT`
+| `KV_EXC_LOAD_FAULT`
 | 5
 | Load access fault
 
-| `RV_EXC_STORE_MISALIGN`
+| `KV_EXC_STORE_MISALIGN`
 | 6
 | Store address misaligned
 
-| `RV_EXC_STORE_FAULT`
+| `KV_EXC_STORE_FAULT`
 | 7
 | Store access fault
 
-| `RV_EXC_ECALL_M`
+| `KV_EXC_ECALL_M`
 | 11
 | Environment call from M-mode
 |===
@@ -1230,9 +1230,9 @@ The `rv_irq.h` module provides high-level interrupt management functions.
 
 [source,c]
 ----
-void rv_irq_enable(void);
-uint32_t rv_irq_disable(void);
-void rv_irq_restore(uint32_t saved_mstatus);
+void kv_irq_enable(void);
+uint32_t kv_irq_disable(void);
+void kv_irq_restore(uint32_t saved_mstatus);
 ----
 
 *Example:*
@@ -1240,18 +1240,18 @@ void rv_irq_restore(uint32_t saved_mstatus);
 [source,c]
 ----
 // Critical section
-uint32_t mstatus = rv_irq_disable();
+uint32_t mstatus = kv_irq_disable();
 // ... critical code ...
-rv_irq_restore(mstatus);
+kv_irq_restore(mstatus);
 ----
 
 ==== Per-Source Control
 
 [source,c]
 ----
-void rv_irq_source_enable(uint32_t mask);
-void rv_irq_source_disable(uint32_t mask);
-int rv_irq_source_is_enabled(uint32_t mask);
+void kv_irq_source_enable(uint32_t mask);
+void kv_irq_source_disable(uint32_t mask);
+int kv_irq_source_is_enabled(uint32_t mask);
 ----
 
 *Example:*
@@ -1259,10 +1259,10 @@ int rv_irq_source_is_enabled(uint32_t mask);
 [source,c]
 ----
 // Enable timer and external interrupts
-rv_irq_source_enable(RV_IRQ_MTIE | RV_IRQ_MEIE);
+kv_irq_source_enable(KV_IRQ_MTIE | KV_IRQ_MEIE);
 
 // Disable timer interrupt
-rv_irq_source_disable(RV_IRQ_MTIE);
+kv_irq_source_disable(KV_IRQ_MTIE);
 ----
 
 '''
@@ -1354,9 +1354,9 @@ float cpi = (float)cycles / instructions;
 
 The Magic Device provides a simple interface for firmware to communicate with simulation environments without requiring a full UART implementation.
 
-Base Address:: `0xFFFF_0000` (RV_MAGIC_BASE)
+Base Address:: `0xFFFF_0000` (KV_MAGIC_BASE)
 
-NOTE: This peripheral is only available in simulation (RTL testbench, rv32sim, Spike plugins).
+NOTE: This peripheral is only available in simulation (RTL testbench, kv32sim, Spike plugins).
 It will not be synthesized for production FPGA/ASIC.
 
 === Registers
@@ -1385,31 +1385,31 @@ The EXIT register uses HTIF tohost encoding:
 
 [source,c]
 ----
-void rv_magic_putc(char c);
-void rv_magic_exit(int code);
+void kv_magic_putc(char c);
+void kv_magic_exit(int code);
 ----
 
 *Description:*
 
-* `rv_magic_putc()`: Output one character to simulation console
-* `rv_magic_exit()`: Signal program exit and halt (infinite loop)
+* `kv_magic_putc()`: Output one character to simulation console
+* `kv_magic_exit()`: Signal program exit and halt (infinite loop)
 
 *Example:*
 
 [source,c]
 ----
-#include "rv_platform.h"
+#include "kv_platform.h"
 
 int main(void) {
-    const char *msg = "Hello from RV32!\n";
+    const char *msg = "Hello from KV32!\n";
 
     // Output string
     for (const char *p = msg; *p; p++) {
-        rv_magic_putc(*p);
+        kv_magic_putc(*p);
     }
 
     // Signal successful completion
-    rv_magic_exit(0);  // Simulation will stop here
+    kv_magic_exit(0);  // Simulation will stop here
 
     return 0;
 }
@@ -1423,10 +1423,10 @@ int main(void) {
 
 [source,c]
 ----
-#include "rv_platform.h"
-#include "rv_uart.h"
-#include "rv_plic.h"
-#include "rv_irq.h"
+#include "kv_platform.h"
+#include "kv_uart.h"
+#include "kv_plic.h"
+#include "kv_irq.h"
 
 #define UART_BAUD_DIV 107  // 115200 baud at 100 MHz
 
@@ -1435,37 +1435,37 @@ volatile uint8_t rx_head = 0;
 volatile uint8_t rx_tail = 0;
 
 void external_irq_handler(void) {
-    uint32_t src = rv_plic_claim();
+    uint32_t src = kv_plic_claim();
 
-    if (src == RV_PLIC_SRC_UART) {
-        uint32_t status = rv_uart_irq_status();
+    if (src == KV_PLIC_SRC_UART) {
+        uint32_t status = kv_uart_irq_status();
 
-        if (status & RV_UART_IE_RX_READY) {
+        if (status & KV_UART_IE_RX_READY) {
             // Read all available characters
-            while (rv_uart_rx_ready()) {
-                rx_buffer[rx_head++] = rv_uart_getc();
+            while (kv_uart_rx_ready()) {
+                rx_buffer[rx_head++] = kv_uart_getc();
             }
         }
     }
 
-    rv_plic_complete(src);
+    kv_plic_complete(src);
 }
 
 int main(void) {
     // Initialize UART
-    rv_uart_init(UART_BAUD_DIV);
-    rv_uart_puts("UART Echo Demo\n");
+    kv_uart_init(UART_BAUD_DIV);
+    kv_uart_puts("UART Echo Demo\n");
 
     // Configure PLIC and enable interrupts
-    rv_plic_init_source(RV_PLIC_SRC_UART, 5);
-    rv_uart_irq_enable(RV_UART_IE_RX_READY);
-    rv_irq_enable();
+    kv_plic_init_source(KV_PLIC_SRC_UART, 5);
+    kv_uart_irq_enable(KV_UART_IE_RX_READY);
+    kv_irq_enable();
 
     // Main loop: echo received characters
     while (1) {
         if (rx_head != rx_tail) {
             char c = rx_buffer[rx_tail++];
-            rv_uart_putc(c);
+            kv_uart_putc(c);
         }
     }
 
@@ -1477,8 +1477,8 @@ int main(void) {
 
 [source,c]
 ----
-#include "rv_platform.h"
-#include "rv_spi.h"
+#include "kv_platform.h"
+#include "kv_spi.h"
 
 #define SPI_CLK_DIV 49  // 1 MHz at 100 MHz system clock
 #define FLASH_CMD_READ 0x03
@@ -1490,24 +1490,24 @@ void spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len) {
     cmd[2] = (addr >> 8) & 0xFF;
     cmd[3] = addr & 0xFF;
 
-    rv_spi_cs_select(0);
-    rv_spi_transfer_buf(cmd, NULL, 4);
-    rv_spi_read_buf(buf, len);
-    rv_spi_cs_deselect();
+    kv_spi_cs_select(0);
+    kv_spi_transfer_buf(cmd, NULL, 4);
+    kv_spi_read_buf(buf, len);
+    kv_spi_cs_deselect();
 }
 
 int main(void) {
     uint8_t data[256];
 
     // Initialize SPI
-    rv_spi_init(SPI_CLK_DIV, RV_SPI_MODE0);
+    kv_spi_init(SPI_CLK_DIV, KV_SPI_MODE0);
 
     // Read 256 bytes from address 0x00010000
     spi_flash_read(0x00010000, data, 256);
 
     // Process data...
 
-    rv_magic_exit(0);
+    kv_magic_exit(0);
     return 0;
 }
 ----
@@ -1516,8 +1516,8 @@ int main(void) {
 
 [source,c]
 ----
-#include "rv_platform.h"
-#include "rv_i2c.h"
+#include "kv_platform.h"
+#include "kv_i2c.h"
 
 #define I2C_CLK_DIV 249  // 100 kHz at 100 MHz
 #define EEPROM_ADDR 0x50
@@ -1533,7 +1533,7 @@ int eeprom_write(uint16_t mem_addr, const uint8_t *data, uint8_t len) {
         buf[i + 2] = data[i];
     }
 
-    return rv_i2c_master_write(EEPROM_ADDR, buf, len + 2);
+    return kv_i2c_master_write(EEPROM_ADDR, buf, len + 2);
 }
 
 int eeprom_read(uint16_t mem_addr, uint8_t *data, uint8_t len) {
@@ -1542,24 +1542,24 @@ int eeprom_read(uint16_t mem_addr, uint8_t *data, uint8_t len) {
     addr_buf[1] = mem_addr & 0xFF;
 
     // Write address
-    rv_i2c_start();
-    if (rv_i2c_write_byte((EEPROM_ADDR << 1) | 0) < 0) {
-        rv_i2c_stop();
+    kv_i2c_start();
+    if (kv_i2c_write_byte((EEPROM_ADDR << 1) | 0) < 0) {
+        kv_i2c_stop();
         return -1;
     }
-    rv_i2c_write_byte(addr_buf[0]);
-    rv_i2c_write_byte(addr_buf[1]);
+    kv_i2c_write_byte(addr_buf[0]);
+    kv_i2c_write_byte(addr_buf[1]);
 
     // Read data
-    rv_i2c_start();  // Repeated START
-    if (rv_i2c_write_byte((EEPROM_ADDR << 1) | 1) < 0) {
-        rv_i2c_stop();
+    kv_i2c_start();  // Repeated START
+    if (kv_i2c_write_byte((EEPROM_ADDR << 1) | 1) < 0) {
+        kv_i2c_stop();
         return -1;
     }
     for (uint8_t i = 0; i < len; i++) {
-        data[i] = rv_i2c_read_byte(i < len - 1);
+        data[i] = kv_i2c_read_byte(i < len - 1);
     }
-    rv_i2c_stop();
+    kv_i2c_stop();
 
     return 0;
 }
@@ -1568,11 +1568,11 @@ int main(void) {
     uint8_t write_data[] = {0xAA, 0xBB, 0xCC, 0xDD};
     uint8_t read_data[4];
 
-    rv_i2c_init(I2C_CLK_DIV);
+    kv_i2c_init(I2C_CLK_DIV);
 
     // Write to EEPROM
     if (eeprom_write(0x0100, write_data, 4) < 0) {
-        rv_magic_exit(1);
+        kv_magic_exit(1);
     }
 
     // Small delay for write cycle
@@ -1580,17 +1580,17 @@ int main(void) {
 
     // Read back
     if (eeprom_read(0x0100, read_data, 4) < 0) {
-        rv_magic_exit(2);
+        kv_magic_exit(2);
     }
 
     // Verify
     for (int i = 0; i < 4; i++) {
         if (read_data[i] != write_data[i]) {
-            rv_magic_exit(3);
+            kv_magic_exit(3);
         }
     }
 
-    rv_magic_exit(0);
+    kv_magic_exit(0);
     return 0;
 }
 ----
@@ -1599,7 +1599,7 @@ int main(void) {
 
 [source,c]
 ----
-#include "rv_platform.h"
+#include "kv_platform.h"
 
 #define DMA_CHANNEL 0
 #define DATA_SIZE 4096
@@ -1609,29 +1609,29 @@ __attribute__((aligned(4))) uint8_t dst_buffer[DATA_SIZE];
 
 void dma_memcpy(void *dst, const void *src, uint32_t len) {
     // Configure DMA channel 0 for 1D transfer
-    RV_DMA_CH_REG(DMA_CHANNEL, RV_DMA_CH_SRC_OFF) = (uint32_t)src;
-    RV_DMA_CH_REG(DMA_CHANNEL, RV_DMA_CH_DST_OFF) = (uint32_t)dst;
-    RV_DMA_CH_REG(DMA_CHANNEL, RV_DMA_CH_XFER_OFF) = len;
+    KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_SRC_OFF) = (uint32_t)src;
+    KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_DST_OFF) = (uint32_t)dst;
+    KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_XFER_OFF) = len;
 
     // Reset and enable performance counters
-    RV_DMA_GLB_REG(RV_DMA_PERF_CTRL_OFF) = 0x3;
+    KV_DMA_GLB_REG(KV_DMA_PERF_CTRL_OFF) = 0x3;
 
     // Start transfer
-    RV_DMA_CH_REG(DMA_CHANNEL, RV_DMA_CH_CTRL_OFF) =
-        RV_DMA_CTRL_EN | RV_DMA_CTRL_MODE_1D |
-        RV_DMA_CTRL_SRC_INC | RV_DMA_CTRL_DST_INC | RV_DMA_CTRL_START;
+    KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_CTRL_OFF) =
+        KV_DMA_CTRL_EN | KV_DMA_CTRL_MODE_1D |
+        KV_DMA_CTRL_SRC_INC | KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_START;
 
     // Wait for completion
-    while (RV_DMA_CH_REG(DMA_CHANNEL, RV_DMA_CH_STAT_OFF) & RV_DMA_STAT_BUSY);
+    while (KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_STAT_OFF) & KV_DMA_STAT_BUSY);
 
     // Check for errors
-    uint32_t stat = RV_DMA_CH_REG(DMA_CHANNEL, RV_DMA_CH_STAT_OFF);
-    if (stat & RV_DMA_STAT_ERR) {
-        rv_magic_exit(1);
+    uint32_t stat = KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_STAT_OFF);
+    if (stat & KV_DMA_STAT_ERR) {
+        kv_magic_exit(1);
     }
 
     // Clear done flag
-    RV_DMA_CH_REG(DMA_CHANNEL, RV_DMA_CH_STAT_OFF) = RV_DMA_STAT_DONE;
+    KV_DMA_CH_REG(DMA_CHANNEL, KV_DMA_CH_STAT_OFF) = KV_DMA_STAT_DONE;
 }
 
 int main(void) {
@@ -1644,18 +1644,18 @@ int main(void) {
     dma_memcpy(dst_buffer, src_buffer, DATA_SIZE);
 
     // Read performance counters
-    uint32_t cycles = RV_DMA_GLB_REG(RV_DMA_PERF_CYCLES_OFF);
-    uint32_t rd_bytes = RV_DMA_GLB_REG(RV_DMA_PERF_RD_BYTES_OFF);
-    uint32_t wr_bytes = RV_DMA_GLB_REG(RV_DMA_PERF_WR_BYTES_OFF);
+    uint32_t cycles = KV_DMA_GLB_REG(KV_DMA_PERF_CYCLES_OFF);
+    uint32_t rd_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_RD_BYTES_OFF);
+    uint32_t wr_bytes = KV_DMA_GLB_REG(KV_DMA_PERF_WR_BYTES_OFF);
 
     // Verify data
     for (int i = 0; i < DATA_SIZE; i++) {
         if (dst_buffer[i] != src_buffer[i]) {
-            rv_magic_exit(2);
+            kv_magic_exit(2);
         }
     }
 
-    rv_magic_exit(0);
+    kv_magic_exit(0);
     return 0;
 }
 ----
@@ -1813,7 +1813,7 @@ For bulk data transfers > 256 bytes, DMA provides significant performance benefi
 
 === Cache Coherency
 
-The RV32 core includes an instruction cache but no data cache. When using DMA:
+The KV32 core includes an instruction cache but no data cache. When using DMA:
 
 * No explicit cache maintenance required for data transfers
 * Use `fence` instruction after MMIO writes to ensure ordering
@@ -1854,7 +1854,7 @@ Creates `wave.fst` for viewing in GTKWave.
 
 *DMA transfer fails*:: Verify source and destination addresses are within valid memory ranges
 
-*Interrupts not firing*:: Ensure global interrupts enabled (`rv_irq_enable()`)
+*Interrupts not firing*:: Ensure global interrupts enabled (`kv_irq_enable()`)
 
 *I2C NACK errors*:: Check device address and pull-up resistors on SCL/SDA
 
@@ -1867,7 +1867,7 @@ Creates `wave.fst` for viewing in GTKWave.
 
 *Last Updated*: {revdate}
 
-*Copyright*: © 2026 RV32 SoC Project
+*Copyright*: © 2026 KV32 SoC Project
 
 *License*: This documentation is provided under the MIT License.
 

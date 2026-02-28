@@ -1,12 +1,12 @@
 // SPI Hardware Test
-// Refactored to use rv_spi.h / rv_platform.h HAL APIs.
+// Refactored to use kv_spi.h / kv_platform.h HAL APIs.
 
 #include <stdint.h>
 #include <stdio.h>
-#include "rv_spi.h"
-#include "rv_irq.h"
-#include "rv_plic.h"
-#include "rv_clint.h"
+#include "kv_spi.h"
+#include "kv_irq.h"
+#include "kv_plic.h"
+#include "kv_clint.h"
 
 /* Flash commands */
 #define FLASH_CMD_READ  0x03u
@@ -20,21 +20,21 @@ static volatile uint32_t transfers     = 0;
 
 static void spi_init(uint32_t clk_div, uint8_t mode)
 {
-    rv_spi_init(clk_div, mode);
+    kv_spi_init(clk_div, mode);
     status_checks++;
 }
 
-static void spi_cs_select(uint8_t cs)   { rv_spi_cs_select(cs); }
-static void spi_cs_deselect(void)       { rv_spi_cs_deselect(); }
+static void spi_cs_select(uint8_t cs)   { kv_spi_cs_select(cs); }
+static void spi_cs_deselect(void)       { kv_spi_cs_deselect(); }
 
 static uint8_t spi_transfer(uint8_t data)
 {
-    while (rv_spi_busy()) busy_waits++;
-    RV_SPI_TX = data;
-    while (!rv_spi_busy()) busy_waits++;
-    while (rv_spi_busy())  busy_waits++;
+    while (kv_spi_busy()) busy_waits++;
+    KV_SPI_TX = data;
+    while (!kv_spi_busy()) busy_waits++;
+    while (kv_spi_busy())  busy_waits++;
     transfers++;
-    return (uint8_t)(RV_SPI_RX & 0xFFu);
+    return (uint8_t)(KV_SPI_RX & 0xFFu);
 }
 
 /* Flash read: CS_LOW + READ_CMD + ADDR + DATA... + CS_HIGH */
@@ -55,27 +55,27 @@ static int flash_read(uint8_t cs, uint8_t addr, uint8_t *buf, uint32_t len)
 int test1_init(void)
 {
     printf("\n[TEST 1] SPI Controller Initialization\n");
-    spi_init(49, RV_SPI_MODE0);
+    spi_init(49, KV_SPI_MODE0);
 
-    uint32_t ctrl   = RV_SPI_CTRL;
-    uint32_t div    = RV_SPI_DIV;
-    uint32_t status = RV_SPI_STATUS;
+    uint32_t ctrl   = KV_SPI_CTRL;
+    uint32_t div    = KV_SPI_DIV;
+    uint32_t status = KV_SPI_STATUS;
 
     printf("  Control: 0x%02lX (ENABLE=%ld, CPOL=%ld, CPHA=%ld, CS=0x%lX)\n",
            (unsigned long)ctrl,
-           (unsigned long)((ctrl & RV_SPI_CTRL_ENABLE) ? 1 : 0),
-           (unsigned long)((ctrl & RV_SPI_CTRL_CPOL)   ? 1 : 0),
-           (unsigned long)((ctrl & RV_SPI_CTRL_CPHA)   ? 1 : 0),
+           (unsigned long)((ctrl & KV_SPI_CTRL_ENABLE) ? 1 : 0),
+           (unsigned long)((ctrl & KV_SPI_CTRL_CPOL)   ? 1 : 0),
+           (unsigned long)((ctrl & KV_SPI_CTRL_CPHA)   ? 1 : 0),
            (unsigned long)((ctrl >> 4) & 0xFu));
     printf("  Clock divider: %lu (1MHz SPI)\n", (unsigned long)div);
     printf("  Initial status: 0x%02lX\n", (unsigned long)status);
     printf("  BUSY: %ld, TX_READY: %ld, RX_VALID: %ld\n",
-           (unsigned long)((status & RV_SPI_ST_BUSY)     ? 1 : 0),
-           (unsigned long)((status & RV_SPI_ST_TX_READY) ? 1 : 0),
-           (unsigned long)((status & RV_SPI_ST_RX_VALID) ? 1 : 0));
+           (unsigned long)((status & KV_SPI_ST_BUSY)     ? 1 : 0),
+           (unsigned long)((status & KV_SPI_ST_TX_READY) ? 1 : 0),
+           (unsigned long)((status & KV_SPI_ST_RX_VALID) ? 1 : 0));
 
-    if (!(ctrl & RV_SPI_CTRL_ENABLE)) { printf("  Result: FAIL - Enable not set\n");  return -1; }
-    if (status & RV_SPI_ST_BUSY)      { printf("  Result: FAIL - Should not be busy\n"); return -1; }
+    if (!(ctrl & KV_SPI_CTRL_ENABLE)) { printf("  Result: FAIL - Enable not set\n");  return -1; }
+    if (status & KV_SPI_ST_BUSY)      { printf("  Result: FAIL - Should not be busy\n"); return -1; }
     printf("  Result: PASS\n");
     return 0;
 }
@@ -172,15 +172,15 @@ int test6_spi_modes(void)
                            "Mode 2 (CPOL=1,CPHA=0)", "Mode 3 (CPOL=1,CPHA=1)"};
     int errors = 0;
     for (int m = 0; m < 4; m++) {
-        rv_spi_init(49, (uint32_t)m);
-        uint32_t ctrl = RV_SPI_CTRL;
-        int cpol = (ctrl & RV_SPI_CTRL_CPOL) ? 1 : 0;
-        int cpha = (ctrl & RV_SPI_CTRL_CPHA) ? 1 : 0;
+        kv_spi_init(49, (uint32_t)m);
+        uint32_t ctrl = KV_SPI_CTRL;
+        int cpol = (ctrl & KV_SPI_CTRL_CPOL) ? 1 : 0;
+        int cpha = (ctrl & KV_SPI_CTRL_CPHA) ? 1 : 0;
         int ok   = (cpol == ((m >> 1) & 1)) && (cpha == (m & 1));
         printf("  %s: CPOL=%d, CPHA=%d (%s)\n", names[m], cpol, cpha, ok ? "PASS" : "FAIL");
         if (!ok) errors++;
     }
-    rv_spi_init(49, RV_SPI_MODE0);   /* restore */
+    kv_spi_init(49, KV_SPI_MODE0);   /* restore */
     printf("  Result: %s\n", errors ? "FAIL" : "PASS");
     return errors ? -1 : 0;
 }
@@ -191,7 +191,7 @@ void print_statistics(void)
     printf("  Status checks: %lu\n", (unsigned long)status_checks);
     printf("  Busy waits:    %lu\n", (unsigned long)busy_waits);
     printf("  Transfers:     %lu\n", (unsigned long)transfers);
-    printf("  Final status:  0x%02lX\n\n", (unsigned long)RV_SPI_STATUS);
+    printf("  Final status:  0x%02lX\n\n", (unsigned long)KV_SPI_STATUS);
 }
 
 /* ═══════════════════════════════════════════════════════════════════ * Test 7: Internal hardware loopback (MOSI→MISO)
@@ -204,7 +204,7 @@ static int test7_loopback(void)
 {
     printf("\n[TEST 7] Internal Hardware Loopback (MOSI->MISO)\n");
     printf("  Enabling RTL SPI loopback (CTRL[3]=1)\n");
-    rv_spi_loopback_enable();
+    kv_spi_loopback_enable();
 
     spi_cs_select(0);
     uint32_t errors = 0;
@@ -220,7 +220,7 @@ static int test7_loopback(void)
     }
     spi_cs_deselect();
 
-    rv_spi_loopback_disable();
+    kv_spi_loopback_disable();
     printf("  Loopback bytes: 16\n");
     printf("  Errors: %lu\n", (unsigned long)errors);
     int pass = (errors == 0);
@@ -233,7 +233,7 @@ static int test7_loopback(void)
  * Strategy:
  *  1. CS_SELECT(0), push READ_CMD + ADDR into TX FIFO, then push 64x0xFF
  *     to clock out flash data — all pipelined back-to-back.
- *  2. Enable RV_SPI_IE_RX_READY (bit 0) → IRQ fires whenever RX FIFO
+ *  2. Enable KV_SPI_IE_RX_READY (bit 0) → IRQ fires whenever RX FIFO
  *     is non-empty.  The PLIC MEI handler drains the RX FIFO each time.
  *  3. Wait until we have collected all 64 expected bytes.
  *  4. Verify received data against known flash address pattern.
@@ -255,19 +255,19 @@ static volatile uint32_t t8_rx_overflow = 0;
 static void t8_mei_handler(uint32_t cause)
 {
     (void)cause;
-    uint32_t src = rv_plic_claim();
-    if (src == (uint32_t)RV_PLIC_SRC_SPI) {
+    uint32_t src = kv_plic_claim();
+    if (src == (uint32_t)KV_PLIC_SRC_SPI) {
         t8_irq_count++;
         /* drain complete RX FIFO in one handler invocation */
-        while (rv_spi_rx_valid()) {
-            uint8_t b = (uint8_t)(RV_SPI_RX & 0xFFu);
+        while (kv_spi_rx_valid()) {
+            uint8_t b = (uint8_t)(KV_SPI_RX & 0xFFu);
             if (t8_rx_count < T8_TX_TOTAL)
                 t8_rx_buf[t8_rx_count++] = b;
             else
                 t8_rx_overflow++;
         }
     }
-    rv_plic_complete(src);
+    kv_plic_complete(src);
 }
 
 static int test8_fifo_irq_transfer(void)
@@ -283,10 +283,10 @@ static int test8_fifo_irq_transfer(void)
     t8_irq_count   = 0;
     t8_rx_overflow = 0;
 
-    rv_irq_register(RV_CAUSE_MEI, t8_mei_handler);
-    rv_plic_init_source(RV_PLIC_SRC_SPI, 1);   /* priority=1, enable, threshold=0, MEIE on */
-    rv_spi_irq_enable(RV_SPI_IE_RX_READY);     /* bit 0: fire while RX FIFO non-empty */
-    rv_irq_enable();
+    kv_irq_register(KV_CAUSE_MEI, t8_mei_handler);
+    kv_plic_init_source(KV_PLIC_SRC_SPI, 1);   /* priority=1, enable, threshold=0, MEIE on */
+    kv_spi_irq_enable(KV_SPI_IE_RX_READY);     /* bit 0: fire while RX FIFO non-empty */
+    kv_irq_enable();
 
     /* ── TX: 2-byte command header + 64x 0xFF ─────────────────────
      * The SPI TX FIFO depth is 8.  We fill as many slots as TX_READY
@@ -295,15 +295,15 @@ static int test8_fifo_irq_transfer(void)
 
     uint32_t tx_sent   = 0;
     uint32_t tx_bursts = 0;
-    uint32_t t_start   = (uint32_t)rv_clint_mtime();
+    uint32_t t_start   = (uint32_t)kv_clint_mtime();
 
     /* byte stream: [0]=READ_CMD, [1]=ADDR, [2..65]=0xFF */
     static const uint8_t tx_hdr[2] = { FLASH_CMD_READ, T8_FLASH_ADDR };
 
     while (tx_sent < T8_TX_TOTAL) {
-        if (rv_spi_tx_ready()) {
+        if (kv_spi_tx_ready()) {
             uint8_t b = (tx_sent < 2u) ? tx_hdr[tx_sent] : 0xFFu;
-            RV_SPI_TX = b;
+            KV_SPI_TX = b;
             tx_sent++;
             if (tx_sent % T8_FIFO_DEPTH == 0 || tx_sent == T8_TX_TOTAL)
                 tx_bursts++;
@@ -315,13 +315,13 @@ static int test8_fifo_irq_transfer(void)
     while (t8_rx_count < T8_TX_TOTAL && timeout-- > 0u)
         asm volatile("nop");
 
-    uint32_t t_end = (uint32_t)rv_clint_mtime();
+    uint32_t t_end = (uint32_t)kv_clint_mtime();
 
     /* ── cleanup ─────────────────────────────────────────────────── */
     spi_cs_deselect();
-    rv_spi_irq_disable(RV_SPI_IE_RX_READY);
-    rv_irq_disable();
-    rv_plic_disable_source(RV_PLIC_SRC_SPI);
+    kv_spi_irq_disable(KV_SPI_IE_RX_READY);
+    kv_irq_disable();
+    kv_plic_disable_source(KV_PLIC_SRC_SPI);
 
     /* ── verify the data bytes (skip first 2 CMD/ADDR echo bytes) ── */
     uint32_t errors = 0;
@@ -343,7 +343,7 @@ static int test8_fifo_irq_transfer(void)
     printf("  Data errors  : %lu\n", (unsigned long)errors);
     printf("  RX overflow  : %lu\n", (unsigned long)t8_rx_overflow);
     printf("  Cycles       : %lu\n", (unsigned long)(t_end - t_start));
-    printf("  Status       : 0x%02lX\n", (unsigned long)RV_SPI_STATUS);
+    printf("  Status       : 0x%02lX\n", (unsigned long)KV_SPI_STATUS);
 
     int pass = (errors == 0 && t8_rx_overflow == 0 &&
                 t8_rx_count == T8_TX_TOTAL && timeout > 0u);
@@ -355,7 +355,7 @@ int main(void)
 {
     printf("\n========================================\n");
     printf("  SPI Hardware Test (Master + Flash)\n");
-    printf("  Base Address: 0x%08X\n", (unsigned int)RV_SPI_BASE);
+    printf("  Base Address: 0x%08X\n", (unsigned int)KV_SPI_BASE);
     printf("  4 flash memories, each 4KB\n");
     printf("========================================\n");
 

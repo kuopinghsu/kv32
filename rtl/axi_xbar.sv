@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_xbar.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4 1-to-8 Crossbar (Interconnect)
 //
 // Routes AXI4 transactions from a single master to eight slave devices:

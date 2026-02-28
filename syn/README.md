@@ -1,6 +1,6 @@
-# Synthesis for rv32
+# Synthesis for kv32
 
-This directory contains synthesis files for the RV32IM rv32 using open-source tools.
+This directory contains synthesis files for the RV32IM kv32 using open-source tools.
 
 ## Overview
 
@@ -57,7 +57,7 @@ make synth
 This will:
 - Synthesize RTL to gate-level netlist
 - Generate synthesis reports (area, cell count, timing estimate)
-- Output: `results/rv32_synth.v`
+- Output: `results/kv32_synth.v`
 
 ### View Results
 
@@ -89,16 +89,16 @@ Edit [config.tcl](config.tcl) to modify:
 
 ```tcl
 # Design parameters
-set DESIGN_NAME "rv32"
-set TOP_MODULE "rv32"
+set DESIGN_NAME "kv32"
+set TOP_MODULE "kv32"
 set TARGET_FREQ_MHZ 120
 set CLOCK_PERIOD 8.33  ;# ns (120 MHz)
 
 # RTL files
 set RTL_FILES {
-    ../rtl/rv32.sv
-    ../rtl/csr.sv
-    ../rtl/clint.sv
+    "$RTL_ROOT/core/kv32_pkg.sv" \
+    "$RTL_ROOT/core/kv32_ib.sv" \
+    ... \
 }
 
 # PDK configuration
@@ -242,7 +242,7 @@ This project also includes RISC-V Formal verification in [verif/riscv-formal/](.
 
 ### Synthesis Fails
 
-**Error**: "Cannot find module 'rv32'"
+**Error**: "Cannot find module 'kv32'"
 - Check RTL file paths in config.tcl
 - Verify all dependencies are included
 
@@ -310,6 +310,6 @@ alumacc
 
 ## License
 
-The synthesis scripts are provided under the same license as the rv32 project.
+The synthesis scripts are provided under the same license as the kv32 project.
 
 ASAP7 PDK has its own license terms (BSD 3-Clause).

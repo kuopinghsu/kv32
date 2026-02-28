@@ -1,6 +1,6 @@
 // ============================================================================
-// File: rv32_dtm.sv
-// Project: RV32 RISC-V Processor
+// File: kv32_dtm.sv
+// Project: KV32 RISC-V Processor
 // Description: RISC-V Debug Transport Module (DTM) with Debug Module
 //
 // Implements the JTAG Debug Transport Module interface per RISC-V Debug Spec 0.13
@@ -24,7 +24,7 @@
 //
 // ============================================================================
 
-module rv32_dtm #(
+module kv32_dtm #(
     parameter IDCODE = 32'h1DEAD3FF
 ) (
     // JTAG Interface (from TAP controller)

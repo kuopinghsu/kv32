@@ -1,6 +1,6 @@
 // ============================================================================
 // File: spi_slave_memory.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: SPI Slave Memory Target for Testbench
 //
 // 256-byte memory with SPI slave interface for testing SPI master.

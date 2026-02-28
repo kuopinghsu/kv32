@@ -100,7 +100,7 @@ else
 	@$(MAKE) build-rtl
 endif
 	@$(MAKE) zephyr-$*
-	@cd $(BUILD_DIR) && ./rv32soc \
+	@cd $(BUILD_DIR) && ./kv32soc \
 		$(if $(TRACE),--trace) \
 		$(if $(filter 1 fst,$(WAVE)),--wave=fst) \
 		$(if $(filter vcd,$(WAVE)),--wave=vcd) \
@@ -111,9 +111,9 @@ endif
 		echo "Trace saved to: $(BUILD_DIR)/rtl_trace.txt"; \
 	fi
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
-		echo "Waveform saved to: $(BUILD_DIR)/rv32soc.fst"; \
+		echo "Waveform saved to: $(BUILD_DIR)/kv32soc.fst"; \
 	elif [ "$(WAVE)" = "vcd" ]; then \
-		echo "Waveform saved to: $(BUILD_DIR)/rv32soc.vcd"; \
+		echo "Waveform saved to: $(BUILD_DIR)/kv32soc.vcd"; \
 	fi
 	@if [ "$(TRACE)" != "1" ] && [ "$(WAVE)" = "" ]; then \
 		echo "Use TRACE=1 for instruction trace, WAVE=fst or WAVE=vcd for waveform dump"; \

@@ -1,6 +1,6 @@
 // ============================================================================
-// File: rv32_regfile.sv
-// Project: RV32 RISC-V Processor
+// File: kv32_regfile.sv
+// Project: KV32 RISC-V Processor
 // Description: RISC-V 32-bit Register File
 //
 // Implements the 32 general-purpose registers specified by RISC-V ISA:
@@ -14,7 +14,7 @@
 //   - x0 returns 0 regardless of write attempts
 // ============================================================================
 
-module rv32_regfile (
+module kv32_regfile (
     input  logic        clk,
     input  logic        rst_n,
 

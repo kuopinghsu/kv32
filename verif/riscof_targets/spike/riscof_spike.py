@@ -124,9 +124,9 @@ class spike(pluginTemplate):
             cmd = self.compile_cmd.format(test, elf, compile_macros)
 
             if arch_test_trace:
-                # REF role with TRACE=1: generate spike trace in ref/, compare vs ../dut/DUT-rv32.trace
+                # REF role with TRACE=1: generate spike trace in ref/, compare vs ../dut/DUT-kv32.trace
                 spike_trace_file = os.path.join(test_dir, 'REF-spike.trace')
-                rtl_trace_file   = os.path.join(test_dir, '..', 'dut', 'DUT-rv32.trace')
+                rtl_trace_file   = os.path.join(test_dir, '..', 'dut', 'DUT-kv32.trace')
                 trace_cmp_log    = os.path.join(test_dir, '..', 'dut', 'trace_compare.log')
 
                 # spike --log-commits writes trace to stderr; redirect to trace file

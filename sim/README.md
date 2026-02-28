@@ -4,16 +4,16 @@ This directory contains tools for software-based verification using ISA simulato
 
 **Supported Simulators**:
 - **Spike**: Official RISC-V ISA simulator (default, `USE_SPIKE=1`)
-- **rv32sim**: Built-in RV32IMAC simulator with GDB support (`USE_SPIKE=0`)
+- **kv32sim**: Built-in RV32IMAC simulator with GDB support (`USE_SPIKE=0`)
 
 > **Note**: For memory transaction-level verification (CPU ↔ AXI memory interface), see [../docs/memory_trace_analysis.md](../docs/memory_trace_analysis.md) and use `make memtrace` or `make memtrace-<test>` targets.
 
 ## Files
 
-- **rv32sim.cpp**: RV32IMAC software simulator with GDB stub support
-- **rv32sim.h**: Simulator class definition and interfaces
+- **kv32sim.cpp**: RV32IMAC software simulator with GDB stub support
+- **kv32sim.h**: Simulator class definition and interfaces
 - **gdb_stub.c/h**: GDB Remote Serial Protocol implementation
-- **Makefile**: Build system for rv32sim simulator
+- **Makefile**: Build system for kv32sim simulator
 
 ## Features
 
@@ -42,14 +42,14 @@ Use `USE_SPIKE` to choose between simulators:
 make sim              # Uses Spike by default
 make compare          # Compares with Spike
 
-# Use rv32sim
-make sim USE_SPIKE=0       # Use built-in rv32sim
-make compare USE_SPIKE=0   # Compare with rv32sim
+# Use kv32sim
+make sim USE_SPIKE=0       # Use built-in kv32sim
+make compare USE_SPIKE=0   # Compare with kv32sim
 ```
 
 ## Usage
 
-### Build software simulator (rv32sim):
+### Build software simulator (kv32sim):
 ```bash
 make build-sim
 ```
@@ -58,7 +58,7 @@ make build-sim
 ```bash
 make sim             # Run default test (uses Spike by default)
 make sim-full        # Run full test (shortcut)
-make sim USE_SPIKE=0 # Use rv32sim instead of Spike
+make sim USE_SPIKE=0 # Use kv32sim instead of Spike
 make TEST=mytest sim # Run specific test (explicit)
 ```
 
@@ -82,7 +82,7 @@ The simulator includes a GDB stub for interactive debugging with full breakpoint
 
 **Terminal 1** - Start simulator with GDB stub:
 ```bash
-./build/rv32sim --gdb --gdb-port=3333 build/test.elf
+./build/kv32sim --gdb --gdb-port=3333 build/test.elf
 ```
 
 **Terminal 2** - Connect with GDB:

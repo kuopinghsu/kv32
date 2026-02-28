@@ -11,7 +11,7 @@ Debug Options:
   make WAVE=1 rtl-simple   # Enable waveform dump
 
 Debugging RTL:
-  The software simulator (rv32sim) is the golden reference implementation.
+  The software simulator (kv32sim) is the golden reference implementation.
   To debug RTL issues, compare instruction traces:
 
   1. Run RTL and software simulator and compare the traces:

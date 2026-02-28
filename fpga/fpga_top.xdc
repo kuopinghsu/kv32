@@ -1,6 +1,6 @@
 # ============================================================================
 # File: fpga_top.xdc
-# Project: RV32 RISC-V Processor - FPGA Constraints
+# Project: KV32 RISC-V Processor - FPGA Constraints
 # Target: xcku5p-ffvb676-1-e (Kintex UltraScale+)
 # Description: Pin assignments, IO standards, and timing constraints
 # ============================================================================

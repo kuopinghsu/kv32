@@ -1,6 +1,6 @@
 = RV32IMA System-on-Chip Datasheet
 :doctype: book
-:author: RV32 Development Team
+:author: KV32 Development Team
 :revnumber: 1.0
 :revdate: 2026-02-25
 :toc: left
@@ -98,7 +98,7 @@ This datasheet is organized as follows:
                       |           RV32IMA SoC Top Level                     |
                       |                                                     |
     +-----------------+-------------------------------------------------+   |
-    |  RV32 Core      |                                                 |   |
+    |  KV32 Core      |                                                 |   |
     |  +------------+ |                                                 |   |
     |  |   IF       |-+->Instruction                                    |   |
     |  |   (Fetch)  |<+--  Buffer                                       |   |
@@ -186,7 +186,7 @@ This datasheet is organized as follows:
 
 === System Components
 
-==== Processor Core (rv32_core)
+==== Processor Core (kv32_core)
 
 The RV32IMA processor core implements a 5-stage pipeline with the following key features:
 
@@ -205,7 +205,7 @@ The core supports:
 * Instruction buffer (IB_DEPTH=4) for outstanding instruction fetches
 * Store buffer (SB_DEPTH=2) for non-blocking stores
 
-==== Instruction Cache (rv32_icache)
+==== Instruction Cache (kv32_icache)
 
 An optional configurable instruction cache improves performance by reducing memory latency:
 
@@ -593,7 +593,7 @@ Return from trap: `MRET` instruction restores `mepc` to PC and restores interrup
 
 === Overview
 
-The instruction cache (rv32_icache) reduces instruction fetch latency by caching frequently accessed code:
+The instruction cache (kv32_icache) reduces instruction fetch latency by caching frequently accessed code:
 
 [cols="1,3"]
 .I-Cache Configuration
@@ -2064,9 +2064,9 @@ For simulation, the ELF loader (`elfloader.cpp`) loads program sections into RAM
 [source,c]
 ----
 #include "csr.h"
-#include "rv_platform.h"
-#include "rv_plic.h"
-#include "rv_clint.h"
+#include "kv_platform.h"
+#include "kv_plic.h"
+#include "kv_clint.h"
 
 void setup_interrupts(void) {
     // Set trap vector (must be 4-byte aligned)
@@ -2079,13 +2079,13 @@ void setup_interrupts(void) {
     set_csr(mie, MIE_MEIE | MIE_MTIE | MIE_MSIE);
 
     // Configure PLIC
-    rv_plic_set_priority(RV_PLIC_SRC_UART, 5);
-    rv_plic_enable_interrupt(RV_PLIC_SRC_UART);
-    rv_plic_set_threshold(0);
+    kv_plic_set_priority(KV_PLIC_SRC_UART, 5);
+    kv_plic_enable_interrupt(KV_PLIC_SRC_UART);
+    kv_plic_set_threshold(0);
 
     // Configure CLINT timer for periodic interrupt (1ms)
-    uint64_t mtime = rv_clint_read_mtime();
-    rv_clint_write_mtimecmp(mtime + 100000);  // +1ms @ 100MHz
+    uint64_t mtime = kv_clint_read_mtime();
+    kv_clint_write_mtimecmp(mtime + 100000);  // +1ms @ 100MHz
 }
 ----
 
@@ -2119,26 +2119,26 @@ void trap_handler(void) {
 
 void handle_timer_interrupt(void) {
     // Advance mtimecmp for next interrupt
-    uint64_t mtimecmp = rv_clint_read_mtimecmp();
-    rv_clint_write_mtimecmp(mtimecmp + 100000);  // +1ms
+    uint64_t mtimecmp = kv_clint_read_mtimecmp();
+    kv_clint_write_mtimecmp(mtimecmp + 100000);  // +1ms
 }
 
 void handle_external_interrupt(void) {
     // Claim interrupt from PLIC
-    uint32_t source = rv_plic_claim_interrupt();
+    uint32_t source = kv_plic_claim_interrupt();
 
     switch (source) {
-    case RV_PLIC_SRC_UART:
+    case KV_PLIC_SRC_UART:
         uart_isr();
         break;
-    case RV_PLIC_SRC_SPI:
+    case KV_PLIC_SRC_SPI:
         spi_isr();
         break;
     // ... handle other sources ...
     }
 
     // Complete interrupt
-    rv_plic_complete_interrupt(source);
+    kv_plic_complete_interrupt(source);
 }
 ----
 
@@ -2148,15 +2148,15 @@ void handle_external_interrupt(void) {
 
 [source,c]
 ----
-#include "rv_uart.h"
+#include "kv_uart.h"
 
 void uart_echo(void) {
-    rv_uart_init(115200);  // Configure baud rate
+    kv_uart_init(115200);  // Configure baud rate
 
     while (1) {
-        if (rv_uart_rx_ready()) {
-            uint8_t c = rv_uart_getc();
-            rv_uart_putc(c);  // Echo character
+        if (kv_uart_rx_ready()) {
+            uint8_t c = kv_uart_getc();
+            kv_uart_putc(c);  // Echo character
         }
     }
 }
@@ -2166,27 +2166,27 @@ void uart_echo(void) {
 
 [source,c]
 ----
-#include "rv_spi.h"
+#include "kv_spi.h"
 
 #define SPI_CMD_READ 0x03
 
 void spi_read_flash(uint32_t addr, uint8_t *buf, size_t len) {
-    rv_spi_init(1000000, RV_SPI_MODE0);  // 1 MHz, Mode 0
+    kv_spi_init(1000000, KV_SPI_MODE0);  // 1 MHz, Mode 0
 
-    rv_spi_select(0);  // Assert CS[0]
+    kv_spi_select(0);  // Assert CS[0]
 
     // Send READ command + 24-bit address
-    rv_spi_transfer(SPI_CMD_READ);
-    rv_spi_transfer((addr >> 16) & 0xFF);
-    rv_spi_transfer((addr >> 8) & 0xFF);
-    rv_spi_transfer(addr & 0xFF);
+    kv_spi_transfer(SPI_CMD_READ);
+    kv_spi_transfer((addr >> 16) & 0xFF);
+    kv_spi_transfer((addr >> 8) & 0xFF);
+    kv_spi_transfer(addr & 0xFF);
 
     // Read data
     for (size_t i = 0; i < len; i++) {
-        buf[i] = rv_spi_transfer(0x00);
+        buf[i] = kv_spi_transfer(0x00);
     }
 
-    rv_spi_deselect(0);  // De-assert CS[0]
+    kv_spi_deselect(0);  // De-assert CS[0]
 }
 ----
 
@@ -2194,18 +2194,18 @@ void spi_read_flash(uint32_t addr, uint8_t *buf, size_t len) {
 
 [source,c]
 ----
-#include "rv_i2c.h"
+#include "kv_i2c.h"
 
 #define EEPROM_ADDR 0x50  // 7-bit I2C address
 
 void i2c_eeprom_write(uint8_t mem_addr, uint8_t data) {
-    rv_i2c_init(100000);  // 100 kHz
+    kv_i2c_init(100000);  // 100 kHz
 
-    rv_i2c_start();
-    rv_i2c_write(EEPROM_ADDR << 1);  // Address + W bit
-    rv_i2c_write(mem_addr);           // Memory address
-    rv_i2c_write(data);               // Data byte
-    rv_i2c_stop();
+    kv_i2c_start();
+    kv_i2c_write(EEPROM_ADDR << 1);  // Address + W bit
+    kv_i2c_write(mem_addr);           // Memory address
+    kv_i2c_write(data);               // Data byte
+    kv_i2c_stop();
 
     // Wait for write cycle to complete (typical 5ms)
     for (volatile int i = 0; i < 500000; i++);
@@ -2216,26 +2216,26 @@ void i2c_eeprom_write(uint8_t mem_addr, uint8_t data) {
 
 [source,c]
 ----
-#include "rv_dma.h"
+#include "kv_dma.h"
 
 void dma_memcpy(void *dst, const void *src, size_t len) {
     // Configure channel 0 for 1D transfer
-    rv_dma_channel_config(0, (uint32_t)src, (uint32_t)dst, len,
-                          RV_DMA_CTRL_MODE_1D |
-                          RV_DMA_CTRL_SRC_INC |
-                          RV_DMA_CTRL_DST_INC);
+    kv_dma_channel_config(0, (uint32_t)src, (uint32_t)dst, len,
+                          KV_DMA_CTRL_MODE_1D |
+                          KV_DMA_CTRL_SRC_INC |
+                          KV_DMA_CTRL_DST_INC);
 
     // Enable interrupt
-    rv_dma_channel_enable_interrupt(0);
+    kv_dma_channel_enable_interrupt(0);
 
     // Start transfer
-    rv_dma_channel_start(0);
+    kv_dma_channel_start(0);
 
     // Wait for completion (or use interrupt)
-    while (rv_dma_channel_busy(0));
+    while (kv_dma_channel_busy(0));
 
     // Check for errors
-    if (rv_dma_channel_error(0)) {
+    if (kv_dma_channel_error(0)) {
         // Handle error
     }
 }
@@ -2264,7 +2264,7 @@ Use the magic device for quick debugging:
         char buf[128]; \
         snprintf(buf, sizeof(buf), fmt, ##__VA_ARGS__); \
         for (char *p = buf; *p; p++) \
-            RV_MAGIC_CONSOLE = *p; \
+            KV_MAGIC_CONSOLE = *p; \
     } while(0)
 
 debug_printf("Checkpoint: pc=0x%08x, x10=%d\n", read_csr(mepc), x10);
@@ -2276,12 +2276,12 @@ Generate VCD waveform dumps for RTL simulation:
 
 ----
 make WAVE=1 rtl-simple
-gtkwave build/tb_rv32_soc.vcd
+gtkwave build/tb_kv32_soc.vcd
 ----
 
 Key signals to observe:
 
-* **Pipeline stages**: `rv32_core.pc_if`, `state_id`, `alu_result_ex`
+* **Pipeline stages**: `kv32_core.pc_if`, `state_id`, `alu_result_ex`
 * **Memory transactions**: `imem_req_valid`, `dmem_resp_valid`, `axi_xbar` signals
 * **Interrupts**: `timer_irq`, `external_irq`, `trap_entry`
 
@@ -2308,7 +2308,7 @@ This datasheet provides a complete reference for the RV32IMA SoC, covering archi
 
 * **RISC-V Specifications**: https://riscv.org/technical/specifications/
 * **AMBA AXI4 Specification**: https://developer.arm.com/documentation/ihi0022/latest/
-* **Project Repository**: https://github.com/YourOrg/rv32 (example)
+* **Project Repository**: https://github.com/YourOrg/kv32 (example)
 
 For questions or support, contact: support@example.com
 
@@ -2865,7 +2865,7 @@ NOTE: I2C requires external pull-up resistors (4.7kΩ typical) on SCL and SDA.
 
 |1.0
 |2026-02-25
-|RV32 Dev Team
+|KV32 Dev Team
 |Initial release
 |===
 

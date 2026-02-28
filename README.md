@@ -23,7 +23,7 @@ K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IM
   - Magic addresses for console I/O and simulation control
 - **Simulation**:
   - Verilator-based RTL simulation with VCD tracing
-  - Fast functional ISA simulator (rv32sim) with GDB support
+  - Fast functional ISA simulator (kv32sim) with GDB support
   - ELF file loader for both simulators
 
 ## Memory Map
@@ -68,16 +68,16 @@ K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IM
 ## Directory Structure
 
 ```
-rv32/
+kv32/
 ├── rtl/                    # RTL source files
 │   ├── core/              # Core processor modules
-│   │   ├── rv32_pkg.sv    # Package definitions
-│   │   ├── rv32_core.sv   # Top-level core
-│   │   ├── rv32_alu.sv    # ALU
-│   │   ├── rv32_decoder.sv # Instruction decoder
-│   │   ├── rv32_regfile.sv # Register file
-│   │   └── rv32_csr.sv    # CSR unit
-│   ├── rv32_soc.sv        # SoC top-level
+│   │   ├── kv32_pkg.sv    # Package definitions
+│   │   ├── kv32_core.sv   # Top-level core
+│   │   ├── kv32_alu.sv    # ALU
+│   │   ├── kv32_decoder.sv # Instruction decoder
+│   │   ├── kv32_regfile.sv # Register file
+│   │   └── kv32_csr.sv    # CSR unit
+│   ├── kv32_soc.sv        # SoC top-level
 │   ├── axi_pkg.sv         # AXI definitions
 │   ├── axi_xbar.sv        # AXI crossbar/interconnect
 │   ├── axi_arbiter.sv     # AXI arbiter
@@ -89,14 +89,14 @@ rv32/
 │   ├── mem_axi.sv         # Memory to AXI bridge (read/write)
 │   └── mem_axi_ro.sv      # Memory to AXI bridge (read-only)
 ├── testbench/             # Testbench files
-│   ├── tb_rv32_soc.sv     # SystemVerilog wrapper
-│   ├── tb_rv32_soc.cpp    # Verilator C++ testbench
+│   ├── tb_kv32_soc.sv     # SystemVerilog wrapper
+│   ├── tb_kv32_soc.cpp    # Verilator C++ testbench
 │   ├── axi_memory.sv      # 2MB memory with DPI-C
 │   ├── elfloader.h        # ELF loader header
 │   └── elfloader.cpp      # ELF loader implementation
 ├── sim/                   # Software simulator
-│   ├── rv32sim.cpp        # Main simulator
-│   ├── rv32sim.h          # Header
+│   ├── kv32sim.cpp        # Main simulator
+│   ├── kv32sim.h          # Header
 │   ├── riscv-dis.cpp      # Disassembler
 │   └── Makefile           # Build file
 ├── sw/                    # Software directory
@@ -104,8 +104,8 @@ rv32/
 │   ├── pipeline_architecture.md  # Pipeline design doc
 │   └── pipeline_forwarding.svg   # Pipeline diagram
 ├── build/                 # Build outputs
-│   ├── rv32soc            # Verilator simulator
-│   └── rv32sim            # Software simulator
+│   ├── kv32soc            # Verilator simulator
+│   └── kv32sim            # Software simulator
 ├── Makefile              # Main build system
 └── env.config            # Environment configuration
 ```
@@ -124,13 +124,13 @@ rv32/
 ```bash
 make build-rtl
 ```
-This creates `build/rv32soc` Verilator simulator.
+This creates `build/kv32soc` Verilator simulator.
 
 #### Build Software Simulator
 ```bash
 make build-sim
 ```
-This creates `build/rv32sim` functional simulator.
+This creates `build/kv32sim` functional simulator.
 
 #### Build Both
 ```bash
@@ -187,16 +187,16 @@ See [Testing](#testing) section for available tests and details.
 
 #### Run RTL Simulation with ELF File
 ```bash
-./build/rv32soc program.elf
+./build/kv32soc program.elf
 ```
-- Generates `rv32soc.vcd` waveform file
+- Generates `kv32soc.vcd` waveform file
 - Outputs console text via magic address writes
 - Exits when program writes to EXIT_MAGIC_ADDR
 
 #### Run Software Simulator
 
 ```bash
-Usage: ./rv32sim [options] <elf_file>
+Usage: ./kv32sim [options] <elf_file>
 Options:
   --isa=<name>         Specify ISA (default: rv32ima_zicsr)
                        Supported: rv32ima, rv32ima_zicsr
@@ -212,17 +212,17 @@ Options:
   --gdb                Enable GDB stub for remote debugging
   --gdb-port=<port>    Specify GDB port (default: 3333)
 Examples:
-  ./rv32sim program.elf
-  ./rv32sim --log-commits --log=output.log program.elf
-  ./rv32sim --rtl-trace --log=rtl_trace.txt program.elf
-  ./rv32sim --log-commits -m0x80000000:0x200000 program.elf
-  ./rv32sim --gdb --gdb-port=3333 program.elf
-  ./rv32sim +signature=output.sig +signature-granularity=4 test.elf
+  ./kv32sim program.elf
+  ./kv32sim --log-commits --log=output.log program.elf
+  ./kv32sim --rtl-trace --log=rtl_trace.txt program.elf
+  ./kv32sim --log-commits -m0x80000000:0x200000 program.elf
+  ./kv32sim --gdb --gdb-port=3333 program.elf
+  ./kv32sim +signature=output.sig +signature-granularity=4 test.elf
 ```
 
 #### View Waveforms
 ```bash
-gtkwave rv32soc.vcd
+gtkwave kv32soc.vcd
 ```
 
 ## ELF File Loading
@@ -313,7 +313,7 @@ VERILATOR=/usr/local/bin/verilator
 1. Create AXI slave module in `rtl/`
 2. Add slave port to `axi_xbar.sv`
 3. Update address decode logic
-4. Instantiate in `rv32_soc.sv`
+4. Instantiate in `kv32_soc.sv`
 5. Update memory map documentation
 
 ## Testing
@@ -372,12 +372,12 @@ When building test programs with `make <test>` or `make rtl-<test>`, the followi
 - **<test>.elf**: Executable ELF file
 - **<test>.dis**: Disassembly listing (objdump output)
 - **<test>.readelf**: ELF file information
-- **rv32soc.vcd**: Waveform file (RTL simulation only)
+- **kv32soc.vcd**: Waveform file (RTL simulation only)
 
 ### Debugging with GDB (Software Simulator)
 ```bash
 # Terminal 1: Start simulator with GDB server
-./build/rv32sim -g 3333 program.elf
+./build/kv32sim -g 3333 program.elf
 
 # Terminal 2: Connect GDB
 riscv32-unknown-elf-gdb program.elf

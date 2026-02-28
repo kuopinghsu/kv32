@@ -1,6 +1,6 @@
 // ============================================================================
 // File: atomic.c
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: Test program for RISC-V Atomic (A) Extension
 //
 // Tests all atomic memory operations (AMO) instructions:

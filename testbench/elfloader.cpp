@@ -1,6 +1,6 @@
 // ============================================================================
 // File: elfloader.cpp
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: ELF File Loader for Simulation
 //
 // Loads RISC-V ELF binaries into simulated memory using DPI-C interface.
@@ -119,7 +119,7 @@ bool load_elf(void* dut, const std::string& filename) {
     printf("Entry point: 0x%08x\n", ehdr.e_entry);
 
     // Set the scope for DPI calls to the memory module
-    svSetScope(svGetScopeFromName("TOP.tb_rv32_soc.ext_mem"));
+    svSetScope(svGetScopeFromName("TOP.tb_kv32_soc.ext_mem"));
 
     // Load program headers (segments)
     size_t total_bytes = 0;
@@ -246,7 +246,7 @@ bool load_bin(void* dut, const std::string& filename) {
     }
 
     // Set the scope for DPI calls to the memory module
-    svSetScope(svGetScopeFromName("TOP.tb_rv32_soc.ext_mem"));
+    svSetScope(svGetScopeFromName("TOP.tb_kv32_soc.ext_mem"));
 
     // Read file and write to memory via DPI-C
     int addr = 0;

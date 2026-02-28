@@ -54,5 +54,5 @@ Object: StaticObject, Value: 777
 ```bash
 make sw TEST=cpp       # Build C++ test
 make rtl TEST=cpp      # Run on RTL simulation
-./build/rv32sim build/test.elf  # Run on software simulator
+./build/kv32sim build/test.elf  # Run on software simulator
 ```

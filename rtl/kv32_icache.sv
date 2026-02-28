@@ -1,6 +1,6 @@
 // ============================================================================
-// File: rv32_icache.sv
-// Project: RV32 RISC-V Processor
+// File: kv32_icache.sv
+// Project: KV32 RISC-V Processor
 // Description: Configurable Instruction Cache
 //
 // Parameters
@@ -42,7 +42,7 @@
 //   - Backpressure handling: if core is not ready, response is registered
 // ============================================================================
 
-module rv32_icache #(
+module kv32_icache #(
     parameter int  CACHE_SIZE      = 4096,   // bytes, must be power-of-2
     parameter int  CACHE_LINE_SIZE = 64,     // bytes, must be power-of-2 >= 4
     parameter int  CACHE_WAYS      = 2,      // ways,  must be power-of-2 >= 1

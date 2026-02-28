@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_arbiter.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4 Tri-Master Arbiter
 //
 // Arbitrates AXI4 transactions between three masters:
@@ -17,7 +17,7 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 import axi_pkg::*;
 `endif
 module axi_arbiter #(
@@ -127,7 +127,7 @@ module axi_arbiter #(
     output logic                     s_axi_rready
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
     import axi_pkg::*;
 `endif
 

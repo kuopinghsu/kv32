@@ -1,6 +1,6 @@
 // ============================================================================
 // File: cjtag_bridge.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: cJTAG Bridge (IEEE 1149.7 Subset)
 //
 // Converts 2-pin cJTAG (TCKC/TMSC) to 4-pin JTAG (TCK/TMS/TDI/TDO)

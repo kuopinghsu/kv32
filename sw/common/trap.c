@@ -4,9 +4,9 @@
  * The default trap_handler is a *weak* symbol.  User code can override
  * it by defining a non-weak trap_handler().
  *
- * When not overridden, trap_handler() delegates to rv_irq_dispatch()
+ * When not overridden, trap_handler() delegates to kv_irq_dispatch()
  * which routes each cause to the handler registered with
- * rv_irq_register() / rv_exc_register() (see rv_irq.h).
+ * kv_irq_register() / kv_exc_register() (see kv_irq.h).
  * This allows fine-grained per-cause hooks without replacing the whole
  * trap entry point.
  */
@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
-#include "rv_irq.h"
+#include "kv_irq.h"
 
 /*
  * trap_handler – called by the trap_vector in start.S.
@@ -27,7 +27,7 @@ extern "C" {
 __attribute__((weak))
 void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 {
-    rv_irq_dispatch(mcause, mepc, mtval);
+    kv_irq_dispatch(mcause, mepc, mtval);
 }
 
 #ifdef __cplusplus

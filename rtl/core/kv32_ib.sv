@@ -1,6 +1,7 @@
 // ============================================================================
-// RISC-V Instruction Buffer (IB)
-// ============================================================================
+// File: kv32_ib.sv
+// Project: KV32 RISC-V Processor
+// Description: Instruction Buffer (IB)
 //
 // Purpose:
 //   Tracks Program Counter (PC) values for outstanding instruction fetch
@@ -35,9 +36,9 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 `endif
-module rv32_ib #(
+module kv32_ib #(
     parameter int DEPTH = 2,  // Number of outstanding requests supported
     parameter int ADDR_WIDTH = 32
 ) (
@@ -63,7 +64,7 @@ module rv32_ib #(
     output logic [$clog2(DEPTH+1)-1:0] outstanding_count
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
 `endif
 
     localparam int PTR_WIDTH = $clog2(DEPTH);

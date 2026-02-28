@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_plic.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: Platform-Level Interrupt Controller (PLIC)
 //
 // Implements a simplified RISC-V PLIC supporting:

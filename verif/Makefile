@@ -1,7 +1,7 @@
 # ============================================================================
 # RISC-V Architecture Test Makefile
 # ============================================================================
-# This Makefile runs RISCOF architectural compliance tests for the rv32 processor.
+# This Makefile runs RISCOF architectural compliance tests for the kv32 processor.
 # 
 # Quick Start:
 #   make arch-test-setup      - Set up RISCOF environment (one-time)
@@ -40,7 +40,7 @@ RISCOF_ACTIVATE = source $(RISCOF_VENV)/bin/activate
 RISCOF_DEBUG ?=
 
 # Trace comparison mode: when TRACE=1 (passed from parent or command line)
-# each test also runs rv32sim + rv32soc to generate per-test instruction traces
+# each test also runs kv32sim + kv32soc to generate per-test instruction traces
 # that are compared with trace_compare.py after RISCOF signature checking.
 TRACE ?= 0
 ifeq ($(TRACE),1)
@@ -84,7 +84,7 @@ endef
 VERILATOR ?= verilator
 
 # Output executable
-BUILD_TARGET = $(BUILD_DIR)/rv32soc
+BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
 # ============================================================================
 # Build Targets
@@ -123,13 +123,13 @@ arch-test-setup:
 		echo "✓ Virtual environment already exists at $(RISCOF_VENV)"; \
 	fi
 	@echo ""
-	@echo "=== Building rv32sim reference simulator ==="
+	@echo "=== Building kv32sim reference simulator ==="
 	@$(MAKE) -C $(SIM_DIR) clean
 	@$(MAKE) -C $(SIM_DIR)
-	@if [ -f "$(BUILD_DIR)/rv32sim" ]; then \
-		echo "✓ rv32sim built successfully: $(BUILD_DIR)/rv32sim"; \
+	@if [ -f "$(BUILD_DIR)/kv32sim" ]; then \
+		echo "✓ kv32sim built successfully: $(BUILD_DIR)/kv32sim"; \
 	else \
-		echo "⚠ Warning: rv32sim build failed"; \
+		echo "⚠ Warning: kv32sim build failed"; \
 	fi
 	@echo ""
 	@echo "=== RISCOF version ==="
@@ -140,7 +140,7 @@ arch-test-setup:
 	@echo "=========================================="
 	@echo "Reference models available:"
 	@echo "  - spike (default): Official RISC-V ISA simulator"
-	@echo "  - rv32sim: rv32 software simulator (built)"
+	@echo "  - kv32sim: kv32 software simulator (built)"
 	@echo ""
 	@echo "Next steps:"
 	@echo "  make arch-test-validate    - Validate configuration"
@@ -153,10 +153,10 @@ arch-test-validate: arch-test-setup
 	@echo "=========================================="
 	@echo "Validating RISCOF configuration"
 	@echo "=========================================="
-	@echo "Validating RTL configuration (rv32 vs spike)..."
+	@echo "Validating RTL configuration (kv32 vs spike)..."
 	@cd $(RISCOF_DIR) && bash -c "$(RISCOF_ACTIVATE) && riscof validateyaml --config=config_rtl.ini"
 	@echo ""
-	@echo "Validating simulator configuration (rv32sim vs spike)..."
+	@echo "Validating simulator configuration (kv32sim vs spike)..."
 	@cd $(RISCOF_DIR) && bash -c "$(RISCOF_ACTIVATE) && riscof validateyaml --config=config_sim.ini"
 	@echo ""
 	@echo "✓ Configuration validation complete"
@@ -233,45 +233,45 @@ arch-test-all: arch-test-rv32i arch-test-rv32m arch-test-rv32a arch-test-rv32zic
 	@echo "=========================================="
 
 # ============================================================================
-# rv32sim Validation Tests (DUT=rv32sim, REF=spike)
+# kv32sim Validation Tests (DUT=kv32sim, REF=spike)
 # ============================================================================
 
 .PHONY: arch-test-sim
 arch-test-sim: arch-test-setup
 	@echo "========================================================================"
-	@echo "rv32sim Architectural Validation (DUT=rv32sim, REF=spike)"
+	@echo "kv32sim Architectural Validation (DUT=kv32sim, REF=spike)"
 	@echo "========================================================================"
-	@if [ ! -f "$(BUILD_DIR)/rv32sim" ]; then \
-		echo "Building rv32sim..."; \
-		$(MAKE) -C $(SIM_DIR) || { echo "Error: Failed to build rv32sim"; exit 1; }; \
+	@if [ ! -f "$(BUILD_DIR)/kv32sim" ]; then \
+		echo "Building kv32sim..."; \
+		$(MAKE) -C $(SIM_DIR) || { echo "Error: Failed to build kv32sim"; exit 1; }; \
 	fi
 	@if [ ! -f "$(RISCOF_DIR)/config_sim.ini" ]; then \
 		echo "Error: config_sim.ini not found"; \
 		exit 1; \
 	fi
 	@echo ""
-	@echo "=== Running RV32I tests with rv32sim ==="
+	@echo "=== Running RV32I tests with kv32sim ==="
 	@mkdir -p $(RISCOF_WORK)
 	@cd $(RISCOF_DIR) && bash -c "$(RISCOF_ACTIVATE) && riscof run --config=config_sim.ini --suite=../riscv-arch-test/riscv-test-suite/rv32i_m/I --env=../riscv-arch-test/riscv-test-suite/env --work-dir=riscof_work --no-browser"
 	@echo "✓ RV32I tests complete"
 	$(TRACE_SUMMARY)
 	@echo ""
-	@echo "=== Running RV32M tests with rv32sim ==="
+	@echo "=== Running RV32M tests with kv32sim ==="
 	@cd $(RISCOF_DIR) && bash -c "$(RISCOF_ACTIVATE) && riscof run --config=config_sim.ini --suite=../riscv-arch-test/riscv-test-suite/rv32i_m/M --env=../riscv-arch-test/riscv-test-suite/env --work-dir=riscof_work --no-browser"
 	@echo "✓ RV32M tests complete"
 	$(TRACE_SUMMARY)
 	@echo ""
-	@echo "=== Running RV32A tests with rv32sim ==="
+	@echo "=== Running RV32A tests with kv32sim ==="
 	@cd $(RISCOF_DIR) && bash -c "$(RISCOF_ACTIVATE) && riscof run --config=config_sim.ini --suite=../riscv-arch-test/riscv-test-suite/rv32i_m/A --env=../riscv-arch-test/riscv-test-suite/env --work-dir=riscof_work --no-browser"
 	@echo "✓ RV32A tests complete"
 	$(TRACE_SUMMARY)
 	@echo ""
-	@echo "=== Running Zicsr tests with rv32sim ==="
+	@echo "=== Running Zicsr tests with kv32sim ==="
 	@cd $(RISCOF_DIR) && bash -c "$(RISCOF_ACTIVATE) && riscof run --config=config_sim.ini --suite=../riscv-arch-test/riscv-test-suite/rv32i_m/privilege --env=../riscv-arch-test/riscv-test-suite/env --work-dir=riscof_work --no-browser"
 	@echo "✓ Zicsr tests complete"
 	@echo ""
 	@echo "========================================================================"
-	@echo "✓ rv32sim Validation Complete"
+	@echo "✓ kv32sim Validation Complete"
 	@echo "========================================================================"
 	@echo "Report: $(RISCOF_WORK)/report.html"
 	$(TRACE_SUMMARY)
@@ -336,21 +336,21 @@ arch-test-info help:
 	@echo "  arch-test-rv32a       - Run RV32A atomic instruction tests"
 	@echo "  arch-test-rv32zicsr   - Run Zicsr CSR instruction tests"
 	@echo "  arch-test-all         - Run all architectural tests (I+M+A+Zicsr)"
-	@echo "  arch-test-sim         - Test rv32sim (DUT) vs spike (REF) - all ISAs"
+	@echo "  arch-test-sim         - Test kv32sim (DUT) vs spike (REF) - all ISAs"
 	@echo "  arch-test-report      - Open test report in browser"
 	@echo "  arch-test-clean       - Clean RISCOF work directory"
 	@echo "  arch-test-clean-all   - Clean RISCOF work directory and virtual environment"
 	@echo ""
 	@echo "Trace Comparison (TRACE=1):"
-	@echo "  When TRACE=1 is set, each test also runs both rv32soc (RTL) and rv32sim"
+	@echo "  When TRACE=1 is set, each test also runs both kv32soc (RTL) and kv32sim"
 	@echo "  with instruction-trace enabled and compares the traces side-by-side."
 	@echo "  Example:  make TRACE=1 arch-test-rv32i"
 	@echo "  Example:  make TRACE=1 arch-test-sim"
 	@echo "  Per-test results: $(RISCOF_WORK)/src/<test>/dut/trace_compare.log"
 	@echo ""
 	@echo "Test Configurations:"
-	@echo "  RTL Tests:        rv32 (Verilator RTL) vs spike (reference)"
-	@echo "  Simulator Tests:  rv32sim (C++ sim) vs spike (reference)"
+	@echo "  RTL Tests:        kv32 (Verilator RTL) vs spike (reference)"
+	@echo "  Simulator Tests:  kv32sim (C++ sim) vs spike (reference)"
 	@echo ""
 	@echo "Directories:"
 	@echo "  Configuration:   $(RISCOF_DIR)"

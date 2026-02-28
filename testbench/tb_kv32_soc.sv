@@ -1,15 +1,15 @@
 // ============================================================================
-// File: tb_rv32_soc.sv
-// Project: RV32 RISC-V Processor
-// Description: Testbench Wrapper for RV32 SoC
+// File: tb_kv32_soc.sv
+// Project: KV32 RISC-V Processor
+// Description: Testbench Wrapper for KV32 SoC
 //
-// Wraps the RV32 SoC with external AXI memory and peripheral test targets.
+// Wraps the KV32 SoC with external AXI memory and peripheral test targets.
 // Includes UART loopback, SPI slave memory, and I2C EEPROM for realistic
 // peripheral testing in simulation.
 // ============================================================================
 
 /* verilator lint_off SYNCASYNCNET */
-module tb_rv32_soc #(
+module tb_kv32_soc #(
     parameter int FAST_MUL         = 1,     // Multiply mode: 1=combinatorial, 0=serial
     parameter int FAST_DIV         = 1,     // Division mode: 1=combinatorial, 0=serial
     parameter int ICACHE_EN        = 1,     // I-cache: 1=enabled, 0=bypass
@@ -102,7 +102,7 @@ module tb_rv32_soc #(
     logic i2c_slave_sda_out, i2c_slave_sda_oe;
 
     // Instantiate RISC-V SoC
-    rv32_soc #(
+    kv32_soc #(
         .FAST_MUL       (FAST_MUL),
         .FAST_DIV       (FAST_DIV),
         .ICACHE_EN      (ICACHE_EN),

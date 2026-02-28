@@ -1,6 +1,6 @@
 // ============================================================================
 // File: axi_monitor.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: AXI4-Lite Write-Channel Monitor for tohost Detection
 //
 // Passively snoops the AXI write bus to detect writes to the HTIF tohost

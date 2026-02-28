@@ -1,6 +1,6 @@
 // ============================================================================
 // File: uart_loopback.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: UART Loopback Target for Testbench
 //
 // Echoes back any received character on UART TX.

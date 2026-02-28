@@ -1,6 +1,6 @@
 // ============================================================================
-// File: rv32_decoder.sv
-// Project: RV32 RISC-V Processor
+// File: kv32_decoder.sv
+// Project: KV32 RISC-V Processor
 // Description: RISC-V 32-bit Instruction Decoder
 //
 // Decodes 32-bit RISC-V instructions into control signals for pipeline stages.
@@ -17,9 +17,9 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 `endif
-module rv32_decoder (
+module kv32_decoder (
     input  logic [31:0] instr,
     input  logic        valid,
 
@@ -70,7 +70,7 @@ module rv32_decoder (
     output logic        is_cbo        // Zicbom CBO (funct3=010): cache block operation
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
 `endif
 
     logic [6:0] opcode;

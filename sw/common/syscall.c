@@ -5,7 +5,7 @@
 #include <errno.h>
 
 #include "csr.h"
-#include "rv_platform.h"
+#include "kv_platform.h"
 
 // HTIF tohost/fromhost symbols (defined in linker script / crt0)
 #ifdef __cplusplus
@@ -21,11 +21,11 @@ extern volatile unsigned long long fromhost;
 extern "C" {
 #endif
 
-// Magic console address - write character to output (for RTL/rv32sim)
-// Use RV_MAGIC_CONSOLE_ADDR from rv_platform.h (= RV_MAGIC_BASE + RV_MAGIC_CONSOLE_OFF)
+// Magic console address - write character to output (for RTL/kv32sim)
+// Use KV_MAGIC_CONSOLE_ADDR from kv_platform.h (= KV_MAGIC_BASE + KV_MAGIC_CONSOLE_OFF)
 
 // Memory-mapped console magic address
-volatile unsigned int* const console_putc = (unsigned int*)RV_MAGIC_CONSOLE_ADDR;
+volatile unsigned int* const console_putc = (unsigned int*)KV_MAGIC_CONSOLE_ADDR;
 
 // HTIF device numbers
 #define HTIF_DEV_SYSCALL 0
@@ -38,7 +38,7 @@ volatile unsigned int* const console_putc = (unsigned int*)RV_MAGIC_CONSOLE_ADDR
 void console_putchar(char c) {
 #ifdef USE_HTIF
     // HTIF protocol: tohost = (dev << 56) | (cmd << 48) | payload
-    // Use explicit pointer writes to avoid compiler optimization issues on RV32
+    // Use explicit pointer writes to avoid compiler optimization issues on KV32
     volatile unsigned int *tohost_ptr = (volatile unsigned int *)&tohost;
 
     // Note: Spike doesn't acknowledge via fromhost for console output
@@ -49,7 +49,7 @@ void console_putchar(char c) {
     // Give Spike time to process by reading tohost back (acts as memory barrier)
     (void)tohost_ptr[0];
 #else
-    // Magic address for RTL testbench and rv32sim
+    // Magic address for RTL testbench and kv32sim
     *console_putc = (unsigned int)c;
 #endif
 }
@@ -122,8 +122,8 @@ void *_sbrk(int incr) {
 // Exit program by writing to tohost
 void _exit(int status) {
     // Also write to magic exit address as fallback (for testbenches without tohost support)
-    // Encoding: (status << 1) | 1  matches HTIF and rv_magic_exit() in rv_platform.h
-    volatile unsigned int* exit_addr = (volatile unsigned int*)RV_MAGIC_EXIT_ADDR;
+    // Encoding: (status << 1) | 1  matches HTIF and kv_magic_exit() in kv_platform.h
+    volatile unsigned int* exit_addr = (volatile unsigned int*)KV_MAGIC_EXIT_ADDR;
     *exit_addr = (status == 0) ? 1u : (((unsigned int)status << 1) | 1u);
 
     // tohost protocol: write (exit_code << 1) | 1

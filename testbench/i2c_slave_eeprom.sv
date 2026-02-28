@@ -1,6 +1,6 @@
 // ============================================================================
 // File: i2c_slave_eeprom.sv
-// Project: RV32 RISC-V Processor
+// Project: KV32 RISC-V Processor
 // Description: I2C EEPROM Slave Target for Testbench
 //
 // Emulates 24C02-style I2C EEPROM with 256 bytes for testing I2C master.

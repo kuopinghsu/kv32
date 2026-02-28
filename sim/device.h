@@ -1,4 +1,4 @@
-// Device Driver Interface for RV32 Simulator
+// Device Driver Interface for KV32 Simulator
 // Provides abstract interface for peripheral devices (UART, I2C, SPI, etc.)
 
 #ifndef DEVICE_H
@@ -11,30 +11,30 @@
 
 // HAL register map – base addresses, register offsets, and bit-field constants
 // are sourced from the firmware header so simulator and firmware always agree.
-// Note: RV_REG32 (volatile pointer accessor used only by firmware) is defined
-// by rv_platform.h but is never called by simulator code.
-#include "../sw/include/rv_platform.h"
+// Note: KV_REG32 (volatile pointer accessor used only by firmware) is defined
+// by kv_platform.h but is never called by simulator code.
+#include "../sw/include/kv_platform.h"
 
 // =============================================================================
 // Simulator address-space layout
-// Window sizes and base addresses are all sourced from rv_platform.h.
-// Short aliases below are kept for rv32sim.cpp which uses the unprefixed names.
+// Window sizes and base addresses are all sourced from kv_platform.h.
+// Short aliases below are kept for kv32sim.cpp which uses the unprefixed names.
 // =============================================================================
 
-#define MEM_BASE            RV_RAM_BASE
-#define MEM_SIZE            RV_RAM_SIZE
-#define CLINT_BASE          RV_CLINT_BASE
-#define CLINT_SIZE          RV_CLINT_SIZE
-#define PLIC_BASE           RV_PLIC_BASE
-#define PLIC_SIZE           RV_PLIC_SIZE
-#define UART_BASE           RV_UART_BASE
-#define UART_SIZE           RV_UART_SIZE
-#define I2C_BASE            RV_I2C_BASE
-#define I2C_SIZE            RV_I2C_SIZE
-#define SPI_BASE            RV_SPI_BASE
-#define SPI_SIZE            RV_SPI_SIZE
-#define MAGIC_BASE          RV_MAGIC_BASE
-#define MAGIC_SIZE          RV_MAGIC_SIZE
+#define MEM_BASE            KV_RAM_BASE
+#define MEM_SIZE            KV_RAM_SIZE
+#define CLINT_BASE          KV_CLINT_BASE
+#define CLINT_SIZE          KV_CLINT_SIZE
+#define PLIC_BASE           KV_PLIC_BASE
+#define PLIC_SIZE           KV_PLIC_SIZE
+#define UART_BASE           KV_UART_BASE
+#define UART_SIZE           KV_UART_SIZE
+#define I2C_BASE            KV_I2C_BASE
+#define I2C_SIZE            KV_I2C_SIZE
+#define SPI_BASE            KV_SPI_BASE
+#define SPI_SIZE            KV_SPI_SIZE
+#define MAGIC_BASE          KV_MAGIC_BASE
+#define MAGIC_SIZE          KV_MAGIC_SIZE
 
 // Abstract base class for all peripheral devices
 class Device {
@@ -304,7 +304,7 @@ private:
 // PLIC Device Driver
 // Base address: 0x0C000000
 // Implements standard SiFive PLIC register layout (7 sources, 1 context = hart 0 M-mode).
-// Matches RTL rv32_plic.sv:
+// Matches RTL kv32_plic.sv:
 //   priority[i] at PLIC_BASE + 4*i          (i = 1..7)
 //   pending     at PLIC_BASE + 0x001000      (bits [7:1])
 //   enable      at PLIC_BASE + 0x002000      (bits [7:1], context 0)

@@ -1,4 +1,4 @@
-# Makefile for rv32 Synthesis and Place & Route
+# Makefile for kv32 Synthesis and Place & Route
 # Uses oss-cad-suite (Yosys + OpenROAD) with ASAP7 7nm PDK
 
 # Force bash shell for consistent behavior
@@ -16,7 +16,7 @@ endif
 YOSYS ?= yosys
 
 # Design configuration
-DESIGN = rv32_soc
+DESIGN = kv32_soc
 CONFIG = config.tcl
 
 # Directories
@@ -42,14 +42,14 @@ FORMAL_RPT = $(REPORTS_DIR)/formal_equiv.rpt
 
 # RTL source files
 RTL_SOURCES = \
-    $(RTL_DIR)/core/rv32_pkg.sv \
-    $(RTL_DIR)/core/rv32_ib.sv \
-    $(RTL_DIR)/core/rv32_regfile.sv \
-    $(RTL_DIR)/core/rv32_csr.sv \
-    $(RTL_DIR)/core/rv32_alu.sv \
-    $(RTL_DIR)/core/rv32_decoder.sv \
-    $(RTL_DIR)/core/rv32_sb.sv \
-    $(RTL_DIR)/core/rv32_core.sv \
+    $(RTL_DIR)/core/kv32_pkg.sv \
+    $(RTL_DIR)/core/kv32_ib.sv \
+    $(RTL_DIR)/core/kv32_regfile.sv \
+    $(RTL_DIR)/core/kv32_csr.sv \
+    $(RTL_DIR)/core/kv32_alu.sv \
+    $(RTL_DIR)/core/kv32_decoder.sv \
+    $(RTL_DIR)/core/kv32_sb.sv \
+    $(RTL_DIR)/core/kv32_core.sv \
     $(RTL_DIR)/axi_pkg.sv \
     $(RTL_DIR)/axi_arbiter.sv \
     $(RTL_DIR)/axi_xbar.sv \
@@ -60,7 +60,7 @@ RTL_SOURCES = \
     $(RTL_DIR)/axi_i2c.sv \
     $(RTL_DIR)/axi_uart.sv \
     $(RTL_DIR)/axi_spi.sv \
-    $(RTL_DIR)/rv32_soc.sv
+    $(RTL_DIR)/kv32_soc.sv
 
 # Timestamp files for dependency tracking
 SYNTH_DONE = $(RESULTS_DIR)/.synth_done
@@ -255,7 +255,7 @@ cleanall: clean
 # Help
 help:
 	@echo "========================================"
-	@echo "rv32 Synthesis Makefile"
+	@echo "kv32 Synthesis Makefile"
 	@echo "========================================"
 	@echo ""
 	@echo "Targets:"

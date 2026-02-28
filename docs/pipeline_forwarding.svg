@@ -36,7 +36,7 @@
      text-anchor="middle"
      fill="#333"
      id="text1">
-    RV32 5-Stage Pipeline with Data Forwarding
+    KV32 5-Stage Pipeline with Data Forwarding
   </text>
   <!-- Define styles -->
   <defs

@@ -1,6 +1,6 @@
 // ============================================================================
-// File: tb_rv32_soc.cpp
-// Project: RV32 RISC-V Processor
+// File: tb_kv32_soc.cpp
+// Project: KV32 RISC-V Processor
 // Description: Verilator C++ Testbench Driver
 //
 // Main testbench driver that controls simulation, loads ELF files,
@@ -15,8 +15,8 @@
 #if VM_COVERAGE
 #include <verilated_cov.h>
 #endif
-#include "Vtb_rv32_soc.h"
-#include "Vtb_rv32_soc__Dpi.h"
+#include "Vtb_kv32_soc.h"
+#include "Vtb_kv32_soc__Dpi.h"
 #include "elfloader.h"
 #include "../sim/riscv-dis.h"
 #include <iostream>
@@ -105,9 +105,9 @@ static std::string get_reg_name(uint32_t reg) {
 }
 
 static void dump_registers() {
-    svScope scope = svGetScopeFromName("TOP.tb_rv32_soc");
+    svScope scope = svGetScopeFromName("TOP.tb_kv32_soc");
     if (!scope) {
-        scope = svGetScopeFromName("tb_rv32_soc");
+        scope = svGetScopeFromName("tb_kv32_soc");
     }
     if (scope) {
         svSetScope(scope);
@@ -155,7 +155,7 @@ extern "C" int get_tohost_addr() {
 
 // Trace dumping function
 static void dump_instruction_trace(
-    Vtb_rv32_soc* dut,
+    Vtb_kv32_soc* dut,
     std::ofstream& trace_file,
     RiscvDisassembler* disasm,
     uint64_t& instr_count,
@@ -163,10 +163,10 @@ static void dump_instruction_trace(
     bool& debug_printed
 ) {
     // Set DPI scope - use the actual instance path
-    svScope scope = svGetScopeFromName("TOP.tb_rv32_soc");
+    svScope scope = svGetScopeFromName("TOP.tb_kv32_soc");
     if (!scope) {
         // Try alternate scope name
-        scope = svGetScopeFromName("tb_rv32_soc");
+        scope = svGetScopeFromName("tb_kv32_soc");
     }
     if (scope) {
         svSetScope(scope);
@@ -422,7 +422,7 @@ int main(int argc, char** argv) {
     #endif
 
     // Create instance
-    Vtb_rv32_soc* dut = new Vtb_rv32_soc;
+    Vtb_kv32_soc* dut = new Vtb_kv32_soc;
 
     // Create FST/VCD waveform trace (conditional on --wave)
     VerilatedFstC* tfp_fst = nullptr;
@@ -434,21 +434,21 @@ int main(int argc, char** argv) {
 #if VM_TRACE_VCD
             tfp_vcd = new VerilatedVcdC;
             dut->trace(tfp_vcd, 99);
-            tfp_vcd->open("rv32soc.vcd");
-            std::cout << "VCD waveform dump enabled: rv32soc.vcd" << std::endl;
+            tfp_vcd->open("kv32soc.vcd");
+            std::cout << "VCD waveform dump enabled: kv32soc.vcd" << std::endl;
 #else
             std::cerr << "WARNING: VCD trace not compiled in (rebuild with --trace instead of --trace-fst). Falling back to FST." << std::endl;
             enable_wave_vcd = false;
             tfp_fst = new VerilatedFstC;
             dut->trace(tfp_fst, 99);
-            tfp_fst->open("rv32soc.fst");
-            std::cout << "FST waveform dump enabled: rv32soc.fst" << std::endl;
+            tfp_fst->open("kv32soc.fst");
+            std::cout << "FST waveform dump enabled: kv32soc.fst" << std::endl;
 #endif
         } else {
             tfp_fst = new VerilatedFstC;
             dut->trace(tfp_fst, 99);
-            tfp_fst->open("rv32soc.fst");
-            std::cout << "FST waveform dump enabled: rv32soc.fst" << std::endl;
+            tfp_fst->open("kv32soc.fst");
+            std::cout << "FST waveform dump enabled: kv32soc.fst" << std::endl;
         }
     }
 
@@ -551,9 +551,9 @@ int main(int argc, char** argv) {
 
     // Debug: Check if DPI scope is available
     if (enable_trace) {
-        svScope scope = svGetScopeFromName("TOP.tb_rv32_soc");
+        svScope scope = svGetScopeFromName("TOP.tb_kv32_soc");
         if (!scope) {
-            scope = svGetScopeFromName("tb_rv32_soc");
+            scope = svGetScopeFromName("tb_kv32_soc");
         }
         if (scope) {
             std::cout << "DPI scope found and set successfully" << std::endl;
@@ -659,9 +659,9 @@ int main(int argc, char** argv) {
 
     // Print AXI Memory Statistics
     // Set DPI scope to ext_mem instance where statistics functions are exported
-    svScope mem_scope = svGetScopeFromName("TOP.tb_rv32_soc.ext_mem");
+    svScope mem_scope = svGetScopeFromName("TOP.tb_kv32_soc.ext_mem");
     if (!mem_scope) {
-        mem_scope = svGetScopeFromName("tb_rv32_soc.ext_mem");
+        mem_scope = svGetScopeFromName("tb_kv32_soc.ext_mem");
     }
     if (mem_scope) {
         svSetScope(mem_scope);
@@ -750,8 +750,8 @@ int main(int argc, char** argv) {
                       << "signature file not written" << std::endl;
         } else {
             // Re-use the ext_mem DPI scope to read back memory bytes
-            svScope sig_scope = svGetScopeFromName("TOP.tb_rv32_soc.ext_mem");
-            if (!sig_scope) sig_scope = svGetScopeFromName("tb_rv32_soc.ext_mem");
+            svScope sig_scope = svGetScopeFromName("TOP.tb_kv32_soc.ext_mem");
+            if (!sig_scope) sig_scope = svGetScopeFromName("tb_kv32_soc.ext_mem");
             if (sig_scope) svSetScope(sig_scope);
 
             uint32_t begin_addr = it_begin->second.addr;

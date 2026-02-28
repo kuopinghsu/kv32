@@ -1,11 +1,11 @@
 // UART Hardware Test
-// Refactored to use rv_uart.h / rv_platform.h HAL APIs.
+// Refactored to use kv_uart.h / kv_platform.h HAL APIs.
 
 #include <stdint.h>
-#include "rv_uart.h"
-#include "rv_irq.h"
-#include "rv_plic.h"
-#include "rv_clint.h"
+#include "kv_uart.h"
+#include "kv_irq.h"
+#include "kv_plic.h"
+#include "kv_clint.h"
 
 /* Statistics */
 static volatile uint32_t status_checks = 0;
@@ -16,8 +16,8 @@ static volatile uint32_t tx_count      = 0;
 /* Wrappers that collect statistics while using the HAL */
 static void uputc(char c)
 {
-    while (rv_uart_tx_busy()) busy_waits++;
-    RV_UART_DATA = (uint32_t)(uint8_t)c;
+    while (kv_uart_tx_busy()) busy_waits++;
+    KV_UART_DATA = (uint32_t)(uint8_t)c;
     status_checks++;
     tx_count++;
 }
@@ -25,9 +25,9 @@ static void uputc(char c)
 static int ugetc(void)
 {
     status_checks++;
-    if (!rv_uart_rx_ready()) return -1;
+    if (!kv_uart_rx_ready()) return -1;
     rx_count++;
-    return (int)(RV_UART_DATA & 0xFFu);
+    return (int)(KV_UART_DATA & 0xFFu);
 }
 
 static void print(const char *s)   { while (*s) uputc(*s++); }
@@ -61,34 +61,34 @@ static int test7_loopback(void)
     print("[TEST 7] Internal Hardware Loopback\n");
     print("  Enabling RTL TX->RX loopback (CTRL[0]=1)\n");
     /* drain any residual bytes echoed by the external loopback testbench */
-    while (rv_uart_rx_ready()) (void)RV_UART_DATA;
+    while (kv_uart_rx_ready()) (void)KV_UART_DATA;
     /* brief settling wait so last echoed byte in flight can arrive */
     for (volatile int i = 0; i < 500; i++) asm volatile("nop");
-    while (rv_uart_rx_ready()) (void)RV_UART_DATA;
+    while (kv_uart_rx_ready()) (void)KV_UART_DATA;
 
     /* switch to internal loopback: TX is now fed back to RX inside the RTL */
-    rv_uart_loopback_enable();
+    kv_uart_loopback_enable();
 
     uint32_t errors   = 0;
     uint32_t ok_count = 0;
     for (uint32_t i = 0; i < 16u; i++) {
         uint8_t tx = (uint8_t)(0x41u + i);   /* 'A'..'P' */
         /* wait for TX FIFO slot, then send */
-        while (rv_uart_tx_busy()) {}
-        RV_UART_DATA = (uint32_t)tx;
+        while (kv_uart_tx_busy()) {}
+        KV_UART_DATA = (uint32_t)tx;
         /* poll for the loopback echo in the RX FIFO */
         uint32_t timeout = 500000u;
-        while (!rv_uart_rx_ready() && timeout-- > 0u) asm volatile("nop");
+        while (!kv_uart_rx_ready() && timeout-- > 0u) asm volatile("nop");
         if (timeout == 0u) {
             errors++;
         } else {
-            uint8_t rx = (uint8_t)(RV_UART_DATA & 0xFFu);
+            uint8_t rx = (uint8_t)(KV_UART_DATA & 0xFFu);
             if (rx != tx) errors++;
             else          ok_count++;
         }
     }
 
-    rv_uart_loopback_disable();
+    kv_uart_loopback_disable();
     print("  Sent/expected: "); print_dec(16u);      print(" bytes\n");
     print("  Matched:       "); print_dec(ok_count);  print("\n");
     print("  Errors:        "); print_dec(errors);    print("\n");
@@ -106,22 +106,22 @@ static volatile uint8_t  t8_rx_buf[T8_SIZE];
 static volatile uint32_t t8_rx_count    = 0;
 static volatile uint32_t t8_rx_overflow = 0;
 
-/* PLIC machine-external interrupt handler: called via rv_irq_dispatch */
+/* PLIC machine-external interrupt handler: called via kv_irq_dispatch */
 static void t8_mei_handler(uint32_t cause)
 {
     (void)cause;
-    uint32_t src = rv_plic_claim();
-    if (src == (uint32_t)RV_PLIC_SRC_UART) {
+    uint32_t src = kv_plic_claim();
+    if (src == (uint32_t)KV_PLIC_SRC_UART) {
         /* drain the entire RX FIFO in one handler invocation */
-        while (rv_uart_rx_ready()) {
-            uint8_t b = (uint8_t)(RV_UART_DATA & 0xFFu);
+        while (kv_uart_rx_ready()) {
+            uint8_t b = (uint8_t)(KV_UART_DATA & 0xFFu);
             if (t8_rx_count < T8_SIZE)
                 t8_rx_buf[t8_rx_count++] = b;
             else
                 t8_rx_overflow++;
         }
     }
-    rv_plic_complete(src);
+    kv_plic_complete(src);
 }
 
 /* Wait for TX FIFO to drain, let the loopback finish, then flush RX FIFO.
@@ -131,17 +131,17 @@ static void t8_flush_uart(void)
 {
     /* 1. Spin until TX FIFO is empty (LEVEL[13:9] == 0) */
     uint32_t lvl;
-    do { lvl = RV_UART_LEVEL; } while ((lvl >> 9) & 0x1Fu);
+    do { lvl = KV_UART_LEVEL; } while ((lvl >> 9) & 0x1Fu);
     /* 2. Extra wait: ~1000 cycles covers last-byte serialisation + one
      *    full loopback round-trip (10 bits * 4 clks * 2 directions = 80 clks) */
     for (volatile int i = 0; i < 1000; i++) asm volatile("nop");
     /* 3. Drain everything the loopback echoed back so far */
-    while (rv_uart_rx_ready())
-        (void)RV_UART_DATA;
+    while (kv_uart_rx_ready())
+        (void)KV_UART_DATA;
     /* 4. A second short wait catches any byte still in the loopback pipeline */
     for (volatile int i = 0; i < 200; i++) asm volatile("nop");
-    while (rv_uart_rx_ready())
-        (void)RV_UART_DATA;
+    while (kv_uart_rx_ready())
+        (void)KV_UART_DATA;
 }
 
 static int test8_fifo_irq_transfer(void)
@@ -157,22 +157,22 @@ static int test8_fifo_irq_transfer(void)
     /* ── interrupt setup ─────────────────────────────────────────── */
     t8_rx_count = 0;
     t8_rx_overflow = 0;
-    rv_irq_register(RV_CAUSE_MEI, t8_mei_handler);
-    rv_plic_init_source(RV_PLIC_SRC_UART, 1);  /* priority=1, enable src, threshold=0, MEIE */
-    rv_uart_irq_enable(RV_UART_IE_RX_READY);   /* bit 0: assert IRQ while RX FIFO non-empty */
-    rv_irq_enable();
+    kv_irq_register(KV_CAUSE_MEI, t8_mei_handler);
+    kv_plic_init_source(KV_PLIC_SRC_UART, 1);  /* priority=1, enable src, threshold=0, MEIE */
+    kv_uart_irq_enable(KV_UART_IE_RX_READY);   /* bit 0: assert IRQ while RX FIFO non-empty */
+    kv_irq_enable();
 
     /* ── TX: push 512 bytes in 16-byte FIFO bursts ───────────────── */
     uint32_t tx_sent   = 0;
     uint32_t tx_bursts = 0;
-    uint32_t t_start   = (uint32_t)rv_clint_mtime();
+    uint32_t t_start   = (uint32_t)kv_clint_mtime();
 
     while (tx_sent < T8_SIZE) {
         uint32_t burst = 0;
         /* pack up to 16 bytes into the TX FIFO back-to-back */
         while (burst < 16u && tx_sent < T8_SIZE) {
-            if (!rv_uart_tx_busy()) {
-                RV_UART_DATA = (uint32_t)(tx_sent & 0xFFu);
+            if (!kv_uart_tx_busy()) {
+                KV_UART_DATA = (uint32_t)(tx_sent & 0xFFu);
                 tx_sent++;
                 burst++;
             }
@@ -185,12 +185,12 @@ static int test8_fifo_irq_transfer(void)
     while (t8_rx_count < T8_SIZE && timeout-- > 0u)
         asm volatile("nop");
 
-    uint32_t t_end = (uint32_t)rv_clint_mtime();
+    uint32_t t_end = (uint32_t)kv_clint_mtime();
 
     /* ── cleanup ─────────────────────────────────────────────────── */
-    rv_uart_irq_disable(RV_UART_IE_RX_READY);
-    rv_irq_disable();
-    rv_plic_disable_source(RV_PLIC_SRC_UART);
+    kv_uart_irq_disable(KV_UART_IE_RX_READY);
+    kv_irq_disable();
+    kv_plic_disable_source(KV_PLIC_SRC_UART);
 
     /* ── verify received data ────────────────────────────────────── */
     uint32_t errors = 0;
@@ -200,7 +200,7 @@ static int test8_fifo_irq_transfer(void)
     }
 
     /* LEVEL register: bits[13:9]=txf_count, bits[4:0]=rxf_count */
-    uint32_t lvl = RV_UART_LEVEL;
+    uint32_t lvl = KV_UART_LEVEL;
     uint32_t txf = (lvl >> 9) & 0x1Fu;
     uint32_t rxf =  lvl        & 0x1Fu;
 
@@ -221,22 +221,22 @@ static int test8_fifo_irq_transfer(void)
 int main(void)
 {
     /* Initialise UART – baud_div=4 gives 12.5 Mbaud at 100 MHz */
-    rv_uart_init(4);
+    kv_uart_init(4);
 
     print("\n========================================\n");
     print("  UART Hardware Test (TX + RX)\n");
-    print("  Base Address: "); print_hex(RV_UART_BASE); print("\n");
+    print("  Base Address: "); print_hex(KV_UART_BASE); print("\n");
     print("  Baud Rate: 12.5 Mbaud (BAUD_DIV=4)\n");
     print("========================================\n\n");
 
     /* Test 1: Status register read */
     print("[TEST 1] UART Status Register\n");
-    uint32_t status = RV_UART_STATUS;
+    uint32_t status = KV_UART_STATUS;
     print("  Initial status: ");     print_hex(status); print("\n");
-    print("  BUSY flag: ");          print_dec((status & RV_UART_ST_TX_BUSY)  ? 1u : 0u); print("\n");
-    print("  FULL flag: ");          print_dec((status & RV_UART_ST_TX_FULL)  ? 1u : 0u); print("\n");
-    print("  RX_READY flag: ");      print_dec((status & RV_UART_ST_RX_READY) ? 1u : 0u); print("\n");
-    print("  RX_OVERRUN flag: ");    print_dec((status & RV_UART_ST_RX_FULL)  ? 1u : 0u); print("\n");
+    print("  BUSY flag: ");          print_dec((status & KV_UART_ST_TX_BUSY)  ? 1u : 0u); print("\n");
+    print("  FULL flag: ");          print_dec((status & KV_UART_ST_TX_FULL)  ? 1u : 0u); print("\n");
+    print("  RX_READY flag: ");      print_dec((status & KV_UART_ST_RX_READY) ? 1u : 0u); print("\n");
+    print("  RX_OVERRUN flag: ");    print_dec((status & KV_UART_ST_RX_FULL)  ? 1u : 0u); print("\n");
     print("  Result: PASS\n\n");
     int t1 = 1;
 
@@ -300,7 +300,7 @@ int main(void)
     print("  Busy waits: ");    print_dec(busy_waits);    print("\n");
     print("  TX count: ");      print_dec(tx_count);      print("\n");
     print("  RX count: ");      print_dec(rx_count);      print("\n");
-    status = RV_UART_STATUS;
+    status = KV_UART_STATUS;
     print("  Final status: "); print_hex(status); print("\n\n");
 
     /* Test 7: Internal hardware loopback (RTL TX->RX path) */

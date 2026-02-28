@@ -1,4 +1,4 @@
-// GDB Remote Serial Protocol Stub for RV32 Simulator
+// GDB Remote Serial Protocol Stub for KV32 Simulator
 // Provides debugging capabilities through GDB remote protocol
 
 #ifndef GDB_STUB_H

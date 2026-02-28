@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Trace Comparison Tool
-Compares execution traces from RTL, Spike, and rv32sim with all combinations
+Compares execution traces from RTL, Spike, and kv32sim with all combinations
 Supports:
   - RTL vs Spike
-  - RTL vs rv32sim
-  - Spike vs rv32sim
-  - RTL vs Spike vs rv32sim (three-way comparison)
+  - RTL vs kv32sim
+  - Spike vs kv32sim
+  - RTL vs Spike vs kv32sim (three-way comparison)
 
 Comparison features:
   - PC (Program Counter) and instruction matching
@@ -14,11 +14,11 @@ Comparison features:
   - Memory access (read/write) address and data comparison
   - CSR (Control and Status Register) access comparison
 
-CSR instruction format differences (spike vs rv32sim):
+CSR instruction format differences (spike vs kv32sim):
   For CSR read-modify-write instructions (csrrw/csrrs/csrrc/csrrwi/csrrsi/csrrci)
   the two simulators log different committed writes from the same instruction:
     spike --log-commits: logs the RD write  (rd  <- old_CSR_value)
-    rv32sim --rtl-trace: logs the CSR write (csr <- rs1_value)
+    kv32sim --rtl-trace: logs the CSR write (csr <- rs1_value)
   These are both correct but describe different sides of the instruction.
   trace_compare.py detects this cross-format case and skips the value
   comparison rather than reporting spurious mismatches.
@@ -51,13 +51,13 @@ def normalize_csr_name(csr_name):
         return csr_name.split('_', 1)[1]
     return csr_name
 
-# Pattern that matches rv32sim/RTL CSR register names: c<hex_digits>_<name>
+# Pattern that matches kv32sim/RTL CSR register names: c<hex_digits>_<name>
 # e.g. c300_mstatus, c340_mscratch, c305_mtvec
 _CSR_NAME_RE = re.compile(r'^c[0-9a-fA-F]+_')
 
 def is_csr_name(reg_name):
     """
-    Returns True if reg_name is a CSR-format name used by rv32sim RTL traces.
+    Returns True if reg_name is a CSR-format name used by kv32sim RTL traces.
     CSR names look like: c300_mstatus, c340_mscratch, c305_mtvec.
     Standard ABI register names (s0, t1, sp, a0, …) return False.
     """
@@ -69,7 +69,7 @@ def is_csr_rw_instr(instr_val):
       csrrw / csrrs / csrrc  (funct3 = 1/2/3)
       csrrwi / csrrsi / csrrci (funct3 = 5/6/7)
     These are the instructions where spike reports the rd write and
-    rv32sim RTL reports the CSR write, causing a cross-format difference.
+    kv32sim RTL reports the CSR write, causing a cross-format difference.
     """
     opcode = instr_val & 0x7f
     if opcode != 0x73:          # Not a SYSTEM instruction
@@ -81,9 +81,9 @@ def is_amo_instr(instr_val):
     """
     Returns True for RV32A atomic memory-operation instructions (opcode 0x2F).
     AMO instructions perform an atomic read-modify-write.  Spike logs the
-    memory read value (REF mem: ...) but rv32sim RTL trace does not emit a
+    memory read value (REF mem: ...) but kv32sim RTL trace does not emit a
     mem field for AMO, so the mem_access fields will never match in a
-    spike vs rv32sim comparison.
+    spike vs kv32sim comparison.
     """
     return (instr_val & 0x7f) == 0x2f
 
@@ -93,7 +93,7 @@ def get_store_data_mask(instr_val):
       sb  (funct3=0): 0x000000FF  – stores the low byte
       sh  (funct3=1): 0x0000FFFF  – stores the low halfword
       sw  (funct3=2): 0xFFFFFFFF  – stores the full word
-    Spike masks the logged mem data to the store width; rv32sim logs the
+    Spike masks the logged mem data to the store width; kv32sim logs the
     full 32-bit register value.  Applying this mask to both sides before
     comparison eliminates the spurious mismatch.
     Returns 0xFFFFFFFF for non-store instructions.
@@ -290,7 +290,7 @@ def parse_spike_trace(filename):
     return traces
 
 def detect_trace_type(filename):
-    """Detect if this is an RTL trace or Spike/rv32sim trace"""
+    """Detect if this is an RTL trace or Spike/kv32sim trace"""
     with open(filename, 'r') as f:
         for line in f:
             line = line.strip()
@@ -299,7 +299,7 @@ def detect_trace_type(filename):
             # RTL format starts with cycle count (number without 'core')
             if re.match(r'^\d+\s+0x[0-9a-fA-F]+\s+\(0x[0-9a-fA-F]+\)', line):
                 return 'rtl'
-            # Spike/rv32sim format starts with 'core'
+            # Spike/kv32sim format starts with 'core'
             if re.match(r'^core\s+\d+:', line):
                 return 'spike'
     return 'unknown'
@@ -323,7 +323,7 @@ def _reg_match_result(t1, t2):
 
     Handles two special cases:
       1. Cycle-counter CSRs: compare register name only (values differ by CPI).
-      2. CSR RMW cross-format: spike logs the rd write while rv32sim RTL logs
+      2. CSR RMW cross-format: spike logs the rd write while kv32sim RTL logs
          the CSR write.  When one side has a CSR-name and the other has a
          standard register name for the same csrrw/csrrs/csrrc instruction,
          treat it as a format difference and skip (not a bug).
@@ -344,7 +344,7 @@ def _reg_match_result(t1, t2):
             r2_is_csr = is_csr_name(r2[0])
             if r1_is_csr != r2_is_csr:
                 # Cross-format: one side reports rd write (spike), the other
-                # reports the CSR write (rv32sim RTL).  Both are correct — just
+                # reports the CSR write (kv32sim RTL).  Both are correct — just
                 # different aspects of the same instruction.  Skip.
                 return True, "csr-format"
             elif r1_is_csr and r2_is_csr:
@@ -371,13 +371,13 @@ def compare_traces(traces1, traces2, name1="Trace1", name2="Trace2"):
     print(f"REF ({name1}) entries: {len(traces1)}")
     print(f"TGT ({name2}) entries: {len(traces2)}")
 
-    # Detect spike vs rv32sim-RTL comparison so we can note it up front
+    # Detect spike vs kv32sim-RTL comparison so we can note it up front
     types1 = {e.get('trace_type') for e in traces1}
     types2 = {e.get('trace_type') for e in traces2}
     cross_format = ('spike' in types1 and 'rtl' in types2) or \
                    ('rtl' in types1 and 'spike' in types2)
     if cross_format:
-        print("Note: spike vs rv32sim comparison — CSR RMW instructions log"
+        print("Note: spike vs kv32sim comparison — CSR RMW instructions log"
               " different sides (rd-write vs CSR-write); those are skipped.")
 
     # Fail if either trace is empty
@@ -428,12 +428,12 @@ def compare_traces(traces1, traces2, name1="Trace1", name2="Trace2"):
         reg_match, reg_skip_reason = _reg_match_result(t1, t2)
 
         # For AMO instructions (RV32A), spike logs the memory read value but
-        # rv32sim RTL trace does not emit a mem field — skip the mem comparison
+        # kv32sim RTL trace does not emit a mem field — skip the mem comparison
         # when the two traces have different formats (cross_format mode).
         if (t1.get('is_amo') or t2.get('is_amo')) and cross_format:
             mem_match = True
         elif cross_format and (t1.get('is_store') or t2.get('is_store')):
-            # sb/sh: spike logs the byte/halfword-masked store data; rv32sim logs
+            # sb/sh: spike logs the byte/halfword-masked store data; kv32sim logs
             # the full 32-bit register value.  Apply the store-width mask to both
             # sides before comparing so the difference is not a false mismatch.
             m1 = t1.get('mem_access')
@@ -511,62 +511,62 @@ def compare_traces(traces1, traces2, name1="Trace1", name2="Trace2"):
             print(f"  Length mismatch: REF={effective_trace1_len} TGT={effective_trace2_len}")
         return 1
 
-def compare_three_way(rtl_traces, spike_traces, rv32sim_traces):
-    """Three-way comparison of RTL, Spike, and rv32sim traces"""
+def compare_three_way(rtl_traces, spike_traces, kv32sim_traces):
+    """Three-way comparison of RTL, Spike, and kv32sim traces"""
     print("=== Three-Way Trace Comparison ===\n")
     print(f"RTL entries:     {len(rtl_traces)}")
     print(f"Spike entries:   {len(spike_traces)}")
-    print(f"rv32sim entries: {len(rv32sim_traces)}\n")
+    print(f"kv32sim entries: {len(kv32sim_traces)}\n")
 
     # Align all three traces
     rtl_start = rtl_traces[0]['pc'] if rtl_traces else 0
     spike_offset = 0
-    rv32sim_offset = 0
+    kv32sim_offset = 0
 
     for i, entry in enumerate(spike_traces):
         if entry['pc'] == rtl_start:
             spike_offset = i
             break
 
-    for i, entry in enumerate(rv32sim_traces):
+    for i, entry in enumerate(kv32sim_traces):
         if entry['pc'] == rtl_start:
-            rv32sim_offset = i
+            kv32sim_offset = i
             break
 
     if spike_offset > 0:
         print(f"Spike alignment offset: {spike_offset}")
-    if rv32sim_offset > 0:
-        print(f"rv32sim alignment offset: {rv32sim_offset}")
+    if kv32sim_offset > 0:
+        print(f"kv32sim alignment offset: {kv32sim_offset}")
 
     mismatches = 0
     max_compare = min(
         len(rtl_traces),
         len(spike_traces) - spike_offset,
-        len(rv32sim_traces) - rv32sim_offset
+        len(kv32sim_traces) - kv32sim_offset
     )
 
     for i in range(max_compare):
         rtl = rtl_traces[i]
         spike = spike_traces[i + spike_offset]
-        rv32 = rv32sim_traces[i + rv32sim_offset]
+        kv32 = kv32sim_traces[i + kv32sim_offset]
 
-        pc_match = rtl['pc'] == spike['pc'] == rv32['pc']
-        instr_match = rtl['instr'] == spike['instr'] == rv32['instr']
+        pc_match = rtl['pc'] == spike['pc'] == kv32['pc']
+        instr_match = rtl['instr'] == spike['instr'] == kv32['instr']
 
         # For cycle counter CSR reads, only check register name matches, not value
-        if rtl.get('is_cycle_csr') and spike.get('is_cycle_csr') and rv32.get('is_cycle_csr'):
+        if rtl.get('is_cycle_csr') and spike.get('is_cycle_csr') and kv32.get('is_cycle_csr'):
             r_rtl = rtl.get('reg_write')
             r_spike = spike.get('reg_write')
-            r_rv32 = rv32.get('reg_write')
-            if r_rtl and r_spike and r_rv32:
-                reg_match = r_rtl[0] == r_spike[0] == r_rv32[0]  # Compare only register names
+            r_kv32 = kv32.get('reg_write')
+            if r_rtl and r_spike and r_kv32:
+                reg_match = r_rtl[0] == r_spike[0] == r_kv32[0]  # Compare only register names
             else:
-                reg_match = rtl.get('reg_write') == spike.get('reg_write') == rv32.get('reg_write')
+                reg_match = rtl.get('reg_write') == spike.get('reg_write') == kv32.get('reg_write')
         else:
-            reg_match = rtl.get('reg_write') == spike.get('reg_write') == rv32.get('reg_write')
+            reg_match = rtl.get('reg_write') == spike.get('reg_write') == kv32.get('reg_write')
 
-        mem_match = rtl.get('mem_access') == spike.get('mem_access') == rv32.get('mem_access')
-        csr_match = rtl.get('csr_access') == spike.get('csr_access') == rv32.get('csr_access')
+        mem_match = rtl.get('mem_access') == spike.get('mem_access') == kv32.get('mem_access')
+        csr_match = rtl.get('csr_access') == spike.get('csr_access') == kv32.get('csr_access')
 
         if not (pc_match and instr_match and reg_match and mem_match and csr_match):
             print(f"\nMismatch at entry {i+1}:")
@@ -574,10 +574,10 @@ def compare_three_way(rtl_traces, spike_traces, rv32sim_traces):
             # Always show PC/Instruction/disassembly for context
             disasm_rtl = f" ; {rtl['disasm']}" if rtl.get('disasm') else ""
             disasm_spike = f" ; {spike['disasm']}" if spike.get('disasm') else ""
-            disasm_rv32 = f" ; {rv32['disasm']}" if rv32.get('disasm') else ""
+            disasm_kv32 = f" ; {kv32['disasm']}" if kv32.get('disasm') else ""
             print(f"  RTL:     PC=0x{rtl['pc']:08x} INSTR=0x{rtl['instr']:08x}{disasm_rtl}")
             print(f"  Spike:   PC=0x{spike['pc']:08x} INSTR=0x{spike['instr']:08x}{disasm_spike}")
-            print(f"  rv32sim: PC=0x{rv32['pc']:08x} INSTR=0x{rv32['instr']:08x}{disasm_rv32}")
+            print(f"  kv32sim: PC=0x{kv32['pc']:08x} INSTR=0x{kv32['instr']:08x}{disasm_kv32}")
 
             # Highlight PC/Instruction difference if present
             if not pc_match or not instr_match:
@@ -587,16 +587,16 @@ def compare_three_way(rtl_traces, spike_traces, rv32sim_traces):
             if not reg_match:
                 r_rtl = rtl.get('reg_write')
                 r_spike = spike.get('reg_write')
-                r_rv32 = rv32.get('reg_write')
+                r_kv32 = kv32.get('reg_write')
                 print(f"  RTL reg:     {r_rtl[0] if r_rtl else 'none'}={hex(r_rtl[1]) if r_rtl else 'N/A'}")
                 print(f"  Spike reg:   {r_spike[0] if r_spike else 'none'}={hex(r_spike[1]) if r_spike else 'N/A'}")
-                print(f"  rv32sim reg: {r_rv32[0] if r_rv32 else 'none'}={hex(r_rv32[1]) if r_rv32 else 'N/A'}")
+                print(f"  kv32sim reg: {r_kv32[0] if r_kv32 else 'none'}={hex(r_kv32[1]) if r_kv32 else 'N/A'}")
 
             # Memory access mismatch
             if not mem_match:
                 m_rtl = rtl.get('mem_access')
                 m_spike = spike.get('mem_access')
-                m_rv32 = rv32.get('mem_access')
+                m_kv32 = kv32.get('mem_access')
                 if m_rtl:
                     print(f"  RTL mem:     {m_rtl[2]} addr=0x{m_rtl[0]:08x} data=0x{m_rtl[1]:08x}")
                 else:
@@ -605,16 +605,16 @@ def compare_three_way(rtl_traces, spike_traces, rv32sim_traces):
                     print(f"  Spike mem:   {m_spike[2]} addr=0x{m_spike[0]:08x} data=0x{m_spike[1]:08x}")
                 else:
                     print(f"  Spike mem:   none")
-                if m_rv32:
-                    print(f"  rv32sim mem: {m_rv32[2]} addr=0x{m_rv32[0]:08x} data=0x{m_rv32[1]:08x}")
+                if m_kv32:
+                    print(f"  kv32sim mem: {m_kv32[2]} addr=0x{m_kv32[0]:08x} data=0x{m_kv32[1]:08x}")
                 else:
-                    print(f"  rv32sim mem: none")
+                    print(f"  kv32sim mem: none")
 
             # CSR access mismatch
             if not csr_match:
                 c_rtl = rtl.get('csr_access')
                 c_spike = spike.get('csr_access')
-                c_rv32 = rv32.get('csr_access')
+                c_kv32 = kv32.get('csr_access')
                 if c_rtl:
                     print(f"  RTL csr:     {c_rtl[0]}=0x{c_rtl[1]:08x}")
                 else:
@@ -623,10 +623,10 @@ def compare_three_way(rtl_traces, spike_traces, rv32sim_traces):
                     print(f"  Spike csr:   {c_spike[0]}=0x{c_spike[1]:08x}")
                 else:
                     print(f"  Spike csr:   none")
-                if c_rv32:
-                    print(f"  rv32sim csr: {c_rv32[0]}=0x{c_rv32[1]:08x}")
+                if c_kv32:
+                    print(f"  kv32sim csr: {c_kv32[0]}=0x{c_kv32[1]:08x}")
                 else:
-                    print(f"  rv32sim csr: none")
+                    print(f"  kv32sim csr: none")
 
             mismatches += 1
             if mismatches >= 10:
@@ -641,7 +641,7 @@ def compare_three_way(rtl_traces, spike_traces, rv32sim_traces):
         return 1
 def main():
     parser = argparse.ArgumentParser(
-        description='Compare execution traces from RTL, Spike, and rv32sim (first file is reference, second is target)',
+        description='Compare execution traces from RTL, Spike, and kv32sim (first file is reference, second is target)',
         epilog='''
 Examples:
   # Two-way comparisons (first=REF, second=TGT)
@@ -650,7 +650,7 @@ Examples:
   %(prog)s spike_trace1.txt spike_trace2.txt
 
   # Three-way comparison
-  %(prog)s --rtl build/rtl_trace.txt --spike spike.txt --rv32sim sim.txt
+  %(prog)s --rtl build/rtl_trace.txt --spike spike.txt --kv32sim sim.txt
         ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -660,23 +660,23 @@ Examples:
     parser.add_argument('trace2', nargs='?', help='Target trace file (TGT)')
     parser.add_argument('--rtl', help='RTL trace file (for three-way comparison)')
     parser.add_argument('--spike', help='Spike trace file (for three-way comparison)')
-    parser.add_argument('--rv32sim', help='rv32sim trace file (for three-way comparison)')
+    parser.add_argument('--kv32sim', help='kv32sim trace file (for three-way comparison)')
 
     args = parser.parse_args()
 
     try:
         # Three-way comparison mode
-        if args.rtl and args.spike and args.rv32sim:
+        if args.rtl and args.spike and args.kv32sim:
             print(f"Comparing three traces:")
             print(f"  RTL:     {args.rtl}")
             print(f"  Spike:   {args.spike}")
-            print(f"  rv32sim: {args.rv32sim}\n")
+            print(f"  kv32sim: {args.kv32sim}\n")
 
             rtl_traces = normalize_rtl_trace(parse_rtl_trace(args.rtl))
             spike_traces = parse_spike_trace(args.spike)
-            rv32sim_traces = parse_spike_trace(args.rv32sim)
+            kv32sim_traces = parse_spike_trace(args.kv32sim)
 
-            result = compare_three_way(rtl_traces, spike_traces, rv32sim_traces)
+            result = compare_three_way(rtl_traces, spike_traces, kv32sim_traces)
             sys.exit(result)
 
         # Two-way comparison mode
@@ -696,7 +696,7 @@ Examples:
                 name1 = "RTL"
             elif type1 == 'spike':
                 traces1 = parse_spike_trace(args.trace1)
-                name1 = "Spike/rv32sim"
+                name1 = "Spike/kv32sim"
             else:
                 print(f"Error: Unknown format for {args.trace1}")
                 sys.exit(1)
@@ -706,7 +706,7 @@ Examples:
                 name2 = "RTL"
             elif type2 == 'spike':
                 traces2 = parse_spike_trace(args.trace2)
-                name2 = "Spike/rv32sim"
+                name2 = "Spike/kv32sim"
             else:
                 print(f"Error: Unknown format for {args.trace2}")
                 sys.exit(1)

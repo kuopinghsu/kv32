@@ -1,6 +1,6 @@
 // ============================================================================
-// File: rv32_soc.sv
-// Project: RV32 RISC-V Processor
+// File: kv32_soc.sv
+// Project: KV32 RISC-V Processor
 // Description: RV32IMA System-on-Chip Top-Level Module
 //
 // Integrates all major components of the RISC-V SoC:
@@ -42,7 +42,7 @@
 //   - Division Mode: FAST_DIV=1 (combinatorial, single cycle)
 // ============================================================================
 
-module rv32_soc #(
+module kv32_soc #(
     parameter CLK_FREQ          = 100_000_000,      // System clock frequency in Hz
     parameter BAUD_RATE         = 25_000_000,       // UART baud rate (max = CLK_FREQ/4)
     parameter IB_DEPTH          = 4,                // Instruction buffer depth (outstanding fetches); must be power-of-2 >= effective_latency+1
@@ -471,7 +471,7 @@ module rv32_soc #(
     // 5-stage pipelined RISC-V core implementing RV32IMA ISA
     // Features: CSRs, interrupts, precise exceptions, performance counters
     // Configurable instruction buffer (IB_DEPTH) and store buffer (SB_DEPTH)
-    rv32_core #(
+    kv32_core #(
         .IB_DEPTH(IB_DEPTH),
         .SB_DEPTH(SB_DEPTH),
         .FAST_MUL(FAST_MUL),
@@ -542,7 +542,7 @@ module rv32_soc #(
     // ========================================================================
     // Instruction Memory Interface: I-Cache or Simple AXI Bridge
     // ========================================================================
-    // ICACHE_EN=1: rv32_icache (AXI4 burst master, WPL=LINE_SIZE/4 beats)
+    // ICACHE_EN=1: kv32_icache (AXI4 burst master, WPL=LINE_SIZE/4 beats)
     // ICACHE_EN=0: mem_axi_ro  (single-beat AXI4-Lite bridge, legacy path)
     generate
         if (ICACHE_EN) begin : g_icache
@@ -552,7 +552,7 @@ module rv32_soc #(
 
             assign core_cmo_ready = icache_cmo_ready_w;
 
-            rv32_icache #(
+            kv32_icache #(
                 .CACHE_SIZE     (ICACHE_SIZE),
                 .CACHE_LINE_SIZE(ICACHE_LINE_SIZE),
                 .CACHE_WAYS     (ICACHE_WAYS)

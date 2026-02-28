@@ -5,7 +5,7 @@ With pipeline stalls for loads, how can we have 7 outstanding writes when the br
 
 ## Key Architectural Components
 
-1. **Store Buffer (rv32_sb)**: SB_DEPTH = 2
+1. **Store Buffer (kv32_sb)**: SB_DEPTH = 2
    - Decouples CPU from memory write latency
    - CPU doesn't stall for stores (unless buffer full)
    - Entries: INVALID → VALID → INFLIGHT → INVALID

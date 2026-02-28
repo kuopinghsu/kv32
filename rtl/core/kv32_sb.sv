@@ -1,6 +1,7 @@
 // ============================================================================
-// RISC-V Store Buffer (SB)
-// ============================================================================
+// File: kv32_sb.sv
+// Project: KV32 RISC-V Processor
+// Description: Store Buffer (SB)
 //
 // Purpose:
 //   Buffers store operations to decouple the CPU from memory system latency.
@@ -42,9 +43,9 @@
 // ============================================================================
 
 `ifdef SYNTHESIS
-import rv32_pkg::*;
+import kv32_pkg::*;
 `endif
-module rv32_sb #(
+module kv32_sb #(
     parameter int DEPTH = 2,      // Number of stores that can be buffered
     parameter int ADDR_WIDTH = 32,
     parameter int DATA_WIDTH = 32,
@@ -87,7 +88,7 @@ module rv32_sb #(
     output logic                  store_pending
 );
 `ifndef SYNTHESIS
-    import rv32_pkg::*;
+    import kv32_pkg::*;
 `endif
 
     localparam int PTR_WIDTH = $clog2(DEPTH);

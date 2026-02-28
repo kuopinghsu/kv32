@@ -2,7 +2,7 @@
 // Software simulator with UART, console magic address, and exit support
 // Implements basic RV32IMAC instruction set with special device handling
 
-#include "rv32sim.h"
+#include "kv32sim.h"
 #include "riscv-dis.h"
 #include "gdb_stub.h"
 #include "device.h"
@@ -24,7 +24,7 @@
 
 // SIGINT handler support
 static volatile sig_atomic_t sigint_received = 0;
-static RV32Simulator* g_sim_instance = nullptr;
+static KV32Simulator* g_sim_instance = nullptr;
 
 static void handle_sigint(int) {
     sigint_received = 1;
@@ -42,7 +42,7 @@ static const char* get_reg_name(uint32_t reg) {
     return "unknown";
 }
 
-static void dump_registers(RV32Simulator* sim) {
+static void dump_registers(KV32Simulator* sim) {
     std::cout << "\n=== Register Dump (SIGINT) ===" << std::endl;
     std::cout << "PC  : 0x" << std::hex << std::setfill('0') << std::setw(8) << sim->pc << std::dec << std::endl;
 
@@ -68,7 +68,7 @@ static void dump_registers(RV32Simulator* sim) {
 
 // GDB stub callback functions
 static uint32_t gdb_read_reg(void* user_data, int regno) {
-    RV32Simulator* sim = (RV32Simulator*)user_data;
+    KV32Simulator* sim = (KV32Simulator*)user_data;
     if (regno >= 0 && regno < 32) {
         return sim->regs[regno];
     } else if (regno == 32) { // PC
@@ -78,7 +78,7 @@ static uint32_t gdb_read_reg(void* user_data, int regno) {
 }
 
 static void gdb_write_reg(void* user_data, int regno, uint32_t value) {
-    RV32Simulator* sim = (RV32Simulator*)user_data;
+    KV32Simulator* sim = (KV32Simulator*)user_data;
     if (regno >= 0 && regno < 32) {
         sim->regs[regno] = value;
         if (regno == 0) sim->regs[0] = 0; // x0 is always 0
@@ -88,40 +88,40 @@ static void gdb_write_reg(void* user_data, int regno, uint32_t value) {
 }
 
 static uint32_t gdb_read_mem(void* user_data, uint32_t addr, int size) {
-    RV32Simulator* sim = (RV32Simulator*)user_data;
+    KV32Simulator* sim = (KV32Simulator*)user_data;
     bool handled = false;
     return sim->bus_read(addr, size, &handled);
 }
 
 static void gdb_write_mem(void* user_data, uint32_t addr, uint32_t value, int size) {
-    RV32Simulator* sim = (RV32Simulator*)user_data;
+    KV32Simulator* sim = (KV32Simulator*)user_data;
     sim->bus_write(addr, value, size);
 }
 
 static uint32_t gdb_get_pc(void* user_data) {
-    RV32Simulator* sim = (RV32Simulator*)user_data;
+    KV32Simulator* sim = (KV32Simulator*)user_data;
     return sim->pc;
 }
 
 static void gdb_set_pc(void* user_data, uint32_t pc) {
-    RV32Simulator* sim = (RV32Simulator*)user_data;
+    KV32Simulator* sim = (KV32Simulator*)user_data;
     sim->pc = pc;
 }
 
 static void gdb_single_step(void* user_data) {
-    RV32Simulator* sim = (RV32Simulator*)user_data;
+    KV32Simulator* sim = (KV32Simulator*)user_data;
     sim->gdb_stepping = true;
     sim->step();
     sim->gdb_stepping = false;
 }
 
 static bool gdb_is_running(void* user_data) {
-    RV32Simulator* sim = (RV32Simulator*)user_data;
+    KV32Simulator* sim = (KV32Simulator*)user_data;
     return sim->running;
 }
 
 // RV32IMAC CPU simulator implementation
-RV32Simulator::RV32Simulator(uint32_t base, uint32_t size)
+KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
     : pc(0), running(true), exit_code(0), inst_count(0), tohost_addr(0),
       trace_enabled(false), mem_base(base), mem_size(size), gdb_ctx(nullptr),
       gdb_enabled(false), gdb_stepping(false), max_instructions(0),
@@ -177,10 +177,10 @@ RV32Simulator::RV32Simulator(uint32_t base, uint32_t size)
     register_device_slave(SPI_BASE, SPI_SIZE, spi, "SPI");
     register_device_slave(I2C_BASE, I2C_SIZE, i2c, "I2C");
     register_device_slave(MAGIC_BASE, MAGIC_SIZE, magic, "MAGIC");
-    register_device_slave(RV_DMA_BASE, RV_DMA_SIZE, dma, "DMA");
+    register_device_slave(KV_DMA_BASE, KV_DMA_SIZE, dma, "DMA");
 }
 
-RV32Simulator::~RV32Simulator() {
+KV32Simulator::~KV32Simulator() {
     // Clean up devices
     delete magic;
     delete uart;
@@ -197,7 +197,7 @@ RV32Simulator::~RV32Simulator() {
     }
 }
 
-void RV32Simulator::enable_trace(const char *filename, bool rtl_format) {
+void KV32Simulator::enable_trace(const char *filename, bool rtl_format) {
     trace_enabled = true;
     rtl_trace_format = rtl_format;
     trace_file.open(filename);
@@ -208,13 +208,13 @@ void RV32Simulator::enable_trace(const char *filename, bool rtl_format) {
     }
 }
 
-void RV32Simulator::enable_signature(const char *filename, uint32_t granularity) {
+void KV32Simulator::enable_signature(const char *filename, uint32_t granularity) {
     signature_file = filename;
     signature_granularity = granularity;
     signature_enabled = true;
 }
 
-void RV32Simulator::write_signature() {
+void KV32Simulator::write_signature() {
     if (!signature_enabled || signature_start == 0 || signature_end == 0) {
         return;
     }
@@ -237,7 +237,7 @@ void RV32Simulator::write_signature() {
     sig_file.close();
 }
 
-void RV32Simulator::log_commit(uint32_t pc, uint32_t inst, int rd_num,
+void KV32Simulator::log_commit(uint32_t pc, uint32_t inst, int rd_num,
                                uint32_t rd_val, bool has_mem,
                                uint32_t mem_addr, uint32_t mem_val,
                                bool is_store, bool is_csr,
@@ -363,7 +363,7 @@ void RV32Simulator::log_commit(uint32_t pc, uint32_t inst, int rd_num,
 }
 
 // CSR operations
-uint32_t RV32Simulator::read_csr(uint32_t csr) {
+uint32_t KV32Simulator::read_csr(uint32_t csr) {
     switch (csr) {
     case CSR_MSTATUS:
         return csr_mstatus;
@@ -443,7 +443,7 @@ uint32_t RV32Simulator::read_csr(uint32_t csr) {
     }
 }
 
-void RV32Simulator::write_csr(uint32_t csr, uint32_t value) {
+void KV32Simulator::write_csr(uint32_t csr, uint32_t value) {
     switch (csr) {
     case CSR_MSTATUS:
         csr_mstatus = value & 0x00001888;
@@ -509,7 +509,7 @@ void RV32Simulator::write_csr(uint32_t csr, uint32_t value) {
 }
 
 // Take trap (exception or interrupt)
-void RV32Simulator::take_trap(uint32_t cause, uint32_t tval) {
+void KV32Simulator::take_trap(uint32_t cause, uint32_t tval) {
     // Save current PC to MEPC
     csr_mepc = pc;
 
@@ -527,14 +527,14 @@ void RV32Simulator::take_trap(uint32_t cause, uint32_t tval) {
 }
 
 // Check for pending interrupts
-void RV32Simulator::check_interrupts() {
+void KV32Simulator::check_interrupts() {
     // ── PLIC: update IRQ sources from peripherals ──────────────────────────
-    // Sources: [1]=UART, [2]=SPI, [3]=I2C, [4]=DMA  (matches rv32_soc.sv wiring)
+    // Sources: [1]=UART, [2]=SPI, [3]=I2C, [4]=DMA  (matches kv32_soc.sv wiring)
     uint32_t plic_src = 0;
     if (uart->get_irq()) plic_src |= (1u << 1);
     if (spi->get_irq())  plic_src |= (1u << 2);
     if (i2c->get_irq())  plic_src |= (1u << 3);
-    if (dma->get_irq())  plic_src |= (1u << RV_PLIC_SRC_DMA);
+    if (dma->get_irq())  plic_src |= (1u << KV_PLIC_SRC_DMA);
     plic->update_irq_sources(plic_src);
 
     // ── Update MIP bits ───────────────────────────────────────────────────
@@ -576,7 +576,7 @@ void RV32Simulator::check_interrupts() {
     }
 }
 
-void RV32Simulator::register_device_slave(uint32_t base, uint32_t size, Device* device, const char* name) {
+void KV32Simulator::register_device_slave(uint32_t base, uint32_t size, Device* device, const char* name) {
     if (!device) {
         return;
     }
@@ -589,7 +589,7 @@ void RV32Simulator::register_device_slave(uint32_t base, uint32_t size, Device* 
     slaves.push_back(region);
 }
 
-const RV32Simulator::SlaveRegion* RV32Simulator::find_slave(uint32_t addr) const {
+const KV32Simulator::SlaveRegion* KV32Simulator::find_slave(uint32_t addr) const {
     for (const auto& slave : slaves) {
         if (addr >= slave.base && addr <= slave.base + (slave.size - 1)) {
             return &slave;
@@ -598,7 +598,7 @@ const RV32Simulator::SlaveRegion* RV32Simulator::find_slave(uint32_t addr) const
     return nullptr;
 }
 
-uint32_t RV32Simulator::bus_read(uint32_t addr, int size, bool* handled) {
+uint32_t KV32Simulator::bus_read(uint32_t addr, int size, bool* handled) {
     const SlaveRegion* slave = find_slave(addr);
     if (!slave) {
         if (handled) {
@@ -615,7 +615,7 @@ uint32_t RV32Simulator::bus_read(uint32_t addr, int size, bool* handled) {
     return slave->device->read(offset, size);
 }
 
-bool RV32Simulator::bus_write(uint32_t addr, uint32_t value, int size) {
+bool KV32Simulator::bus_write(uint32_t addr, uint32_t value, int size) {
     const SlaveRegion* slave = find_slave(addr);
     if (!slave) {
         return false;
@@ -626,7 +626,7 @@ bool RV32Simulator::bus_write(uint32_t addr, uint32_t value, int size) {
     return true;
 }
 
-void RV32Simulator::tick_slaves() {
+void KV32Simulator::tick_slaves() {
     for (const auto& slave : slaves) {
         if (slave.device != nullptr) {
             slave.device->tick();
@@ -634,7 +634,7 @@ void RV32Simulator::tick_slaves() {
     }
 }
 
-void RV32Simulator::untick_slaves() {
+void KV32Simulator::untick_slaves() {
     for (const auto& slave : slaves) {
         if (slave.device != nullptr) {
             slave.device->untick();
@@ -643,7 +643,7 @@ void RV32Simulator::untick_slaves() {
 }
 
 // Memory access
-uint32_t RV32Simulator::read_mem(uint32_t addr, int size) {
+uint32_t KV32Simulator::read_mem(uint32_t addr, int size) {
     // Check for misaligned access
     if ((size == 2 && (addr & 0x1)) || (size == 4 && (addr & 0x3))) {
         // Misaligned access - raise exception
@@ -690,7 +690,7 @@ uint32_t RV32Simulator::read_mem(uint32_t addr, int size) {
     return value;
 }
 
-void RV32Simulator::write_mem(uint32_t addr, uint32_t value, int size) {
+void KV32Simulator::write_mem(uint32_t addr, uint32_t value, int size) {
     // Check for misaligned access
     if ((size == 2 && (addr & 0x1)) || (size == 4 && (addr & 0x3))) {
         // Misaligned access - raise exception
@@ -751,7 +751,7 @@ void RV32Simulator::write_mem(uint32_t addr, uint32_t value, int size) {
 }
 
 // Sign extend
-int32_t RV32Simulator::sign_extend(uint32_t value, int bits) {
+int32_t KV32Simulator::sign_extend(uint32_t value, int bits) {
     uint32_t sign_bit = 1U << (bits - 1);
     if (value & sign_bit) {
         return value | (~((1U << bits) - 1));
@@ -760,7 +760,7 @@ int32_t RV32Simulator::sign_extend(uint32_t value, int bits) {
 }
 
 // Execute one instruction
-void RV32Simulator::step() {
+void KV32Simulator::step() {
     if (!running)
         return;
 
@@ -790,7 +790,7 @@ void RV32Simulator::step() {
     // In the software simulator every instruction counts as exactly one "cycle".
     // Both counters are always equal here, which matches the RTL trace_mode=1
     // behaviour where cycle/time CSR reads return minstret (instruction count)
-    // rather than the real wall-clock mcycle (see read_csr() and rv32_csr.sv).
+    // rather than the real wall-clock mcycle (see read_csr() and kv32_csr.sv).
     csr_mcycle++;     // Increment machine cycle counter (== minstret in this sim)
     csr_minstret++;   // Increment machine instructions retired counter
 
@@ -1341,7 +1341,7 @@ void RV32Simulator::step() {
 }
 
 // Load ELF file
-bool RV32Simulator::load_elf(const char *filename) {
+bool KV32Simulator::load_elf(const char *filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
         std::cerr << "Failed to open ELF file: " << filename << std::endl;
@@ -1434,7 +1434,7 @@ bool RV32Simulator::load_elf(const char *filename) {
     return true;
 }
 
-void RV32Simulator::run() {
+void KV32Simulator::run() {
     std::cout << "\n=== Starting RV32IMAC Simulation ===" << std::endl;
 
     if (gdb_enabled) {
@@ -1729,7 +1729,7 @@ int main(int argc, char *argv[]) {
     }
     std::cout << std::endl;
 
-    RV32Simulator sim(mem_base, mem_size);
+    KV32Simulator sim(mem_base, mem_size);
     g_sim_instance = &sim;
 
     if (trace_enabled) {
