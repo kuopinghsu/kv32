@@ -1,0 +1,261 @@
+PIN MULTIPLEXING ARCHITECTURE
+==============================
+
+Overview
+--------
+The jtag_top module now multiplexes JTAG and cJTAG onto the same 4 physical pins,
+selected at compile-time via the USE_CJTAG parameter.
+
+Physical Pin Assignment
+-----------------------
+
+    Pin 0: TCK (JTAG) / TCKC (cJTAG)
+           ├── Direction: Input
+           ├── JTAG:  Test Clock (up to 50 MHz)
+           └── cJTAG: Clock for OScan1 protocol (up to sys_clk/6)
+
+    Pin 1: TMS (JTAG) / TMSC (cJTAG)
+           ├── Direction: Input (JTAG) / Bidirectional (cJTAG)
+           ├── JTAG:  Test Mode Select (input only)
+           └── cJTAG: Mode Select and Data (bidirectional)
+
+    Pin 2: TDI (JTAG) / Unused (cJTAG)
+           ├── Direction: Input
+           ├── JTAG:  Test Data In
+           └── cJTAG: Not connected (can be left floating or tied off)
+
+    Pin 3: TDO (JTAG) / Unused (cJTAG)
+           ├── Direction: Output
+           ├── JTAG:  Test Data Out
+           └── cJTAG: Not connected (tristated)
+
+Signal Flow Diagram
+-------------------
+
+JTAG Mode (USE_CJTAG = 0):
+--------------------------
+
+    External Pins                   jtag_top Module
+
+    Pin 0 (TCK) ────────────────> pin0_tck_i ──────> tap_tck
+                                                         │
+    Pin 1 (TMS) ────────────────> pin1_tms_i ──────> tap_tms
+                                                         │
+    Pin 2 (TDI) ────────────────> pin2_tdi_i ──────> tap_tdi
+                                                         │
+    Pin 3 (TDO) <──────────────── pin3_tdo_o <────── tap_tdo
+                   (pin3_tdo_oe=0)
+
+    Pin 1 OE = 1 (tristate, input mode)
+    Pin 3 OE = 0 (drive output)
+
+cJTAG Mode (USE_CJTAG = 1):
+---------------------------
+
+    External Pins                   jtag_top Module
+
+    Pin 0 (TCKC) ───────────────> pin0_tck_i ──────> cjtag_bridge
+                                                         │
+    Pin 1 (TMSC) <───────────────> pin1_tms_i/o ────> cjtag_bridge
+                   (bidirectional)     │                  │
+                   pin1_tms_oe         │              generates
+                                       │                  │
+    Pin 2 (unused) ──────x             │              4-wire JTAG
+                                       v                  │
+    Pin 3 (unused) ──────x        [tristated]            v
+                   pin3_tdo_oe=1                      jtag_tap
+
+Internal Block Diagram
+----------------------
+
+                        ┌─────────────────────────────────────┐
+  Pin 0 (TCK/TCKC) ────>│ pin0_tck_i                          │
+                        │                                     │
+  Pin 1 (TMS/TMSC) <───>│ pin1_tms_i                          │
+                   ───> │ pin1_tms_o   ┌──────────────────┐   │
+                   <─── │ pin1_tms_oe  │  Pin Demux/Mux   │   │
+  Pin 2 (TDI)      ────>│ pin2_tdi_i   │  (based on       │   │
+                        │              │   USE_CJTAG)     │   │
+  Pin 3 (TDO)      <────│ pin3_tdo_o   │                  │   │
+                   <─── │ pin3_tdo_oe  └────────┬─────────┘   │
+                        │                       │             │
+                        │              ┌────────v─────────┐   │
+                        │              │  cjtag_bridge    │   │
+                        │   (cJTAG)    │  (USE_CJTAG=1)   │   │
+                        │              │  2→4 wire conv   │   │
+                        │              └────────┬─────────┘   │
+                        │                       │             │
+                        │              ┌────────v─────────┐   │
+                        │              │    jtag_tap      │   │
+                        │   (Both)     │  TAP Controller  │   │
+                        │              │  IEEE 1149.1     │   │
+                        │              └────────┬─────────┘   │
+                        │                       │             │
+                        │              ┌────────v─────────┐   │
+                        │              │    rv32_dtm      │   │
+                        │   (Both)     │  Debug Transport │   │
+                        │              │  Module          │   │
+                        │              └──────────────────┘   │
+                        │                                     │
+                        └─────────────────────────────────────┘
+                               jtag_top.sv
+
+Pin Mux Control Logic
+---------------------
+
+Input Demultiplexing (always connected):
+    jtag_tck     = pin0_tck_i
+    jtag_tms     = pin1_tms_i
+    jtag_tdi     = pin2_tdi_i
+    cjtag_tckc   = pin0_tck_i
+    cjtag_tmsc_in = pin1_tms_i
+
+Output Multiplexing:
+    if (USE_CJTAG == 1) {
+        // cJTAG mode
+        pin1_tms_o   = cjtag_tmsc_out
+        pin1_tms_oe  = cjtag_tmsc_oen  // 0=drive, 1=tristate
+        pin3_tdo_o   = 0
+        pin3_tdo_oe  = 1                // Tristate (unused)
+    } else {
+        // JTAG mode
+        pin1_tms_o   = 0
+        pin1_tms_oe  = 1                // Tristate (input mode)
+        pin3_tdo_o   = jtag_tdo
+        pin3_tdo_oe  = 0                // Drive output
+    }
+
+Bidirectional Pin Handling (for Pin 1)
+---------------------------------------
+
+At the top level of your design, implement:
+
+    logic pin1_in, pin1_out, pin1_oe;
+
+    // Connect to module
+    assign pin1_in = physical_pin1;
+    assign physical_pin1 = pin1_oe ? 1'bz : pin1_out;
+
+    jtag_top u_jtag (
+        .pin1_tms_i  (pin1_in),
+        .pin1_tms_o  (pin1_out),
+        .pin1_tms_oe (pin1_oe),
+        ...
+    );
+
+JTAG mode:  pin1_oe = 1 → physical_pin1 = high-Z (input)
+cJTAG mode: pin1_oe alternates between 0 (output) and 1 (input)
+
+Output Enable Signal Timing
+----------------------------
+
+JTAG Mode:
+    pin1_tms_oe = 1 (always tristate, acts as input)
+    pin3_tdo_oe = 0 (always drive, acts as output)
+
+cJTAG Mode:
+    pin1_tms_oe changes dynamically:
+        - During bit 0 (nTDI) and bit 1 (TMS) of OScan1: oe=1 (input)
+        - During bit 2 (TDO) of OScan1: oe=0 (output, drive TDO)
+
+    pin3_tdo_oe = 1 (always tristate, unused)
+
+Benefits of Pin Multiplexing
+-----------------------------
+
+1. Reduced Pin Count:
+   - Saves 2 I/O pins compared to separate JTAG and cJTAG interfaces
+   - Only 4 pins needed instead of 6 (4 JTAG + 2 cJTAG)
+
+2. Flexible Debug Options:
+   - Use standard JTAG probes in JTAG mode
+   - Use cJTAG probes in cJTAG mode (saves 2 wires)
+   - Selection at compile time via parameter
+
+3. Backward Compatibility:
+   - JTAG mode fully compatible with standard IEEE 1149.1
+   - Can use existing OpenOCD, SEGGER J-Link, etc.
+
+4. Pin Reuse:
+   - Pins 2 and 3 unused in cJTAG mode
+   - Could potentially be reused for other functions with additional muxing
+   - (Not recommended due to debug signal integrity concerns)
+
+Limitations & Considerations
+-----------------------------
+
+1. Compile-Time Selection:
+   - Mode is selected via parameter at synthesis time
+   - Cannot switch between JTAG and cJTAG at runtime
+   - Would require additional logic and safe mode switching
+
+2. Shared Clock Domain:
+   - Pin 0 used as clock in both modes
+   - Ensure proper clock domain crossing in cJTAG mode
+   - System clock (clk_i) must be ≥6× TCKC frequency
+
+3. Bidirectional Pin Requirements:
+   - Pin 1 must support bidirectional I/O for cJTAG mode
+   - Some FPGAs have restrictions on bidirectional pins
+   - Check FPGA I/O bank capabilities
+
+4. Signal Integrity:
+   - Keep debug traces short (<6 inches recommended)
+   - Use ground plane and proper termination
+   - Avoid routing near noisy signals (clocks, power rails)
+
+5. Probe Compatibility:
+   - JTAG probes: Standard 4-wire or 6-wire (with NTRST)
+   - cJTAG probes: 2-wire (TCKC, TMSC) - less common
+
+Recommended Connector Pinout
+-----------------------------
+
+Option A: 4-pin header (minimal)
+    1. GND
+    2. Pin 0 (TCK/TCKC)
+    3. Pin 1 (TMS/TMSC)
+    4. Pin 2 (TDI)
+    5. Pin 3 (TDO)
+    6. VCC (optional)
+
+Option B: 6-pin header (standard JTAG compatible)
+    1. VCC (3.3V)
+    2. Pin 0 (TCK/TCKC)
+    3. Pin 1 (TMS/TMSC)
+    4. Pin 2 (TDI)
+    5. Pin 3 (TDO)
+    6. GND
+
+Option C: 10-pin ARM Cortex Debug Connector (industry standard)
+    1. VCC          2. Pin 1 (TMS/TMSC)
+    3. GND          4. Pin 0 (TCK/TCKC)
+    5. GND          6. Pin 3 (TDO)
+    7. NC/Key       8. Pin 2 (TDI)
+    9. GND         10. NTRST
+
+Testing the Pin Mux
+--------------------
+
+JTAG Mode Test:
+    1. Set USE_CJTAG = 0
+    2. Connect JTAG probe to pins 0-3
+    3. Verify IDCODE scan returns correct value
+    4. Test IR/DR scan operations
+    5. Confirm pin1_tms_oe = 1, pin3_tdo_oe = 0
+
+cJTAG Mode Test:
+    1. Set USE_CJTAG = 1
+    2. Connect cJTAG probe to pins 0-1 only
+    3. Send selection escape sequence
+    4. Verify online status goes high
+    5. Test OScan1 packet transmission
+    6. Confirm pin1_tms_oe toggles, pin3_tdo_oe = 1
+    7. Verify pins 2-3 have no effect when driven
+
+Summary
+-------
+The pin multiplexing implementation allows sharing 4 physical pins between
+JTAG and cJTAG debug interfaces, reducing I/O requirements while maintaining
+full functionality in both modes. The design uses compile-time selection
+to ensure clean, predictable behavior without runtime mode switching complexity.
