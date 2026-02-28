@@ -27,7 +27,16 @@ module rv32_regfile (
     // Write port
     input  logic        we,
     input  logic [4:0]  rd_addr,
-    input  logic [31:0] rd_data
+    input  logic [31:0] rd_data,
+
+    // Debug read port (for debugger access)
+    input  logic [4:0]  dbg_addr,
+    output logic [31:0] dbg_data,
+
+    // Debug write port (for debugger access)
+    input  logic        dbg_we,
+    input  logic [4:0]  dbg_waddr,
+    input  logic [31:0] dbg_wdata
 );
 
     logic [31:0] regs [31:1];  // x0 is hardwired to 0
@@ -39,14 +48,24 @@ module rv32_regfile (
     assign rs2_data = (we && (rs2_addr == rd_addr) && (rd_addr != 5'd0)) ? rd_data :
                       (rs2_addr == 5'd0) ? 32'd0 : regs[rs2_addr];
 
+    // Debug read port (combinational)
+    assign dbg_data = (dbg_addr == 5'd0) ? 32'd0 : regs[dbg_addr];
+
     // Write port (sequential)
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 1; i < 32; i++) begin
                 regs[i] <= 32'd0;
             end
-        end else if (we && rd_addr != 5'd0) begin
-            regs[rd_addr] <= rd_data;
+        end else begin
+            // Normal write from pipeline
+            if (we && rd_addr != 5'd0) begin
+                regs[rd_addr] <= rd_data;
+            end
+            // Debug write (has priority when CPU is halted)
+            if (dbg_we && dbg_waddr != 5'd0) begin
+                regs[dbg_waddr] <= dbg_wdata;
+            end
         end
     end
 

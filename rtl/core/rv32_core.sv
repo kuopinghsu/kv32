@@ -94,6 +94,19 @@ module rv32_core #(
     output logic [31:0] icache_cmo_addr,    // CMO target address (cbo.inval) or 0 (fence.i)
     input  logic        icache_cmo_ready,   // Icache ready to accept CMO
 
+    // Debug Interface
+    input  logic        dbg_halt_req_i,      // Debug halt request
+    output logic        dbg_halted_o,        // CPU is halted
+    input  logic        dbg_resume_req_i,    // Debug resume request
+    output logic        dbg_resumeack_o,     // CPU has resumed
+    input  logic [4:0]  dbg_reg_addr_i,      // GPR address for debug access
+    input  logic [31:0] dbg_reg_wdata_i,     // GPR write data from debugger
+    input  logic        dbg_reg_we_i,        // GPR write enable from debugger
+    output logic [31:0] dbg_reg_rdata_o,     // GPR read data to debugger
+    output logic [31:0] dbg_pc_o,            // Current PC to debugger
+    input  logic [31:0] dbg_pc_i,            // PC write data from debugger
+    input  logic        dbg_pc_we_i,         // PC write enable from debugger
+
 `ifndef SYNTHESIS
     // Timeout detection (simulation only)
     output logic        timeout_error,
@@ -434,6 +447,98 @@ module rv32_core #(
     assign wb_store_strb_out   = 4'b1111; // Stores are always full-word writes for MMIO
 `endif
 
+    // ====== Debug Control Logic ======
+    // Debug halt/resume state machine
+    typedef enum logic [1:0] {
+        DBG_RUNNING,     // CPU running normally
+        DBG_HALTING,     // Halt request received, waiting for pipeline to drain
+        DBG_HALTED,      // CPU halted, debugger has control
+        DBG_RESUMING     // Resume request received, restarting execution
+    } dbg_state_t;
+
+    dbg_state_t dbg_state, dbg_state_next;
+    logic       dbg_halt;            // Internal halt signal (freezes pipeline)
+    logic       dbg_resumeack_r;     // Registered resume acknowledge
+
+    // Debug state machine
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            dbg_state <= DBG_RUNNING;
+            dbg_halt <= 1'b0;
+            dbg_resumeack_r <= 1'b0;
+        end else begin
+            dbg_state <= dbg_state_next;
+
+            case (dbg_state)
+                DBG_RUNNING: begin
+                    if (dbg_halt_req_i) begin
+                        dbg_halt <= 1'b1;  // Start halting
+                        `DEBUG1(("[DEBUG] Halt request received, entering HALTING state"));
+                    end
+                end
+
+                DBG_HALTING: begin
+                    // Wait for pipeline to drain (all stages invalid)
+                    if (!if_valid && !id_valid && !ex_valid && !mem_valid && !wb_valid) begin
+                        `DEBUG1(("[DEBUG] Pipeline drained, entered HALTED state"));
+                    end
+                end
+
+                DBG_HALTED: begin
+                    // CPU is halted, wait for resume request
+                    if (dbg_resume_req_i) begin
+                        dbg_halt <= 1'b0;  // Release halt
+                        dbg_resumeack_r <= 1'b1;
+                        `DEBUG1(("[DEBUG] Resume request received, entering RESUMING state"));
+                    end
+                end
+
+                DBG_RESUMING: begin
+                    dbg_resumeack_r <= 1'b0;  // Clear resume ack after one cycle
+                end
+            endcase
+        end
+    end
+
+    // Next state logic
+    always_comb begin
+        dbg_state_next = dbg_state;
+        case (dbg_state)
+            DBG_RUNNING: begin
+                if (dbg_halt_req_i) begin
+                    dbg_state_next = DBG_HALTING;
+                end
+            end
+
+            DBG_HALTING: begin
+                // Transition to HALTED when pipeline is drained
+                if (!if_valid && !id_valid && !ex_valid && !mem_valid && !wb_valid) begin
+                    dbg_state_next = DBG_HALTED;
+                end
+            end
+
+            DBG_HALTED: begin
+                if (dbg_resume_req_i) begin
+                    dbg_state_next = DBG_RESUMING;
+                end
+            end
+
+            DBG_RESUMING: begin
+                dbg_state_next = DBG_RUNNING;
+            end
+        endcase
+    end
+
+    // Debug status outputs
+    assign dbg_halted_o = (dbg_state == DBG_HALTED);
+    assign dbg_resumeack_o = dbg_resumeack_r;
+    assign dbg_pc_o = pc_if;  // Expose current PC to debugger
+
+    // Debug register read: Direct access to register file
+    // The register file provides the read data directly
+    logic [31:0] dbg_regfile_rdata;
+    assign dbg_reg_rdata_o = dbg_regfile_rdata;
+
     // ====== Hazard Detection and Data Forwarding ======
     // Resolve Read-After-Write (RAW) hazards by forwarding data from later
     // pipeline stages back to the execute stage.
@@ -667,15 +772,20 @@ module rv32_core #(
 
     // Program Counter (PC) Update Logic
     // Priority (highest to lowest):
-    //   1. Exception/Interrupt -> mtvec
-    //   2. MRET instruction -> mepc
-    //   3. Branch taken -> branch_target
-    //   4. Sequential -> pc_if + 4
+    //   1. Debug PC write (when halted)
+    //   2. Exception/Interrupt -> mtvec
+    //   3. MRET instruction -> mepc
+    //   4. Branch taken -> branch_target
+    //   5. Sequential -> pc_if + 4
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             pc_if <= 32'h8000_0000;  // Reset vector (RISC-V standard)
         end else begin
-            if (wb_exception || exception || irq_pending) begin
+            if (dbg_pc_we_i && dbg_halted_o) begin
+                // Debug PC write: debugger sets PC while CPU is halted
+                pc_if <= dbg_pc_i;
+                `DEBUG1(("[DEBUG] PC write: pc=0x%h -> 0x%h", pc_if, dbg_pc_i));
+            end else if (wb_exception || exception || irq_pending) begin
                 // Exception or interrupt: jump to trap handler
                 pc_if <= mtvec;
                 `DEBUG2(("[FETCH_PC] EXCEPTION/IRQ: pc=0x%h -> mtvec=0x%h (exc=%b wb_exc=%b irq=%b), outstanding=%0d",
@@ -846,7 +956,13 @@ module rv32_core #(
         .rs2_data(rs2_data),
         .we(reg_we_wb && retire_instr),
         .rd_addr(rd_addr_wb),
-        .rd_data(wb_write_data)
+        .rd_data(wb_write_data),
+        // Debug interface
+        .dbg_addr(dbg_reg_addr_i),
+        .dbg_data(dbg_regfile_rdata),
+        .dbg_we(dbg_reg_we_i && dbg_halted_o),  // Only write when halted
+        .dbg_waddr(dbg_reg_addr_i),
+        .dbg_wdata(dbg_reg_wdata_i)
     );
 
     `ifdef DEBUG
@@ -1014,7 +1130,7 @@ module rv32_core #(
                               ((rd_addr_ex == rs1_addr) || (rd_addr_ex == rs2_addr)));
     assign downstream_stall = id_ex_stall || ex_mem_stall || mem_wb_stall;
 
-    assign if_id_stall = load_use_hazard || downstream_stall;
+    assign if_id_stall = load_use_hazard || downstream_stall || dbg_halt;
 
     // Debug stall signals
     always @(posedge clk) begin

@@ -179,6 +179,7 @@ RTL_SOURCES = \
 	$(RTL_DIR)/axi_pkg.sv \
 	$(filter-out $(CORE_DIR)/rv32_pkg.sv, $(wildcard $(CORE_DIR)/*.sv)) \
 	$(filter-out $(RTL_DIR)/axi_pkg.sv, $(wildcard $(RTL_DIR)/*.sv)) \
+	$(filter-out $(RTL_DIR)/jtag/PINMUX_EXAMPLES.sv, $(wildcard $(RTL_DIR)/jtag/*.sv)) \
 	$(wildcard $(MEM_DIR)/*.sv) \
 	$(TB_DIR)/axi_memory.sv \
 	$(TB_DIR)/axi_monitor.sv \

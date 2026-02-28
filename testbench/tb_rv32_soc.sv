@@ -15,7 +15,9 @@ module tb_rv32_soc #(
     parameter int ICACHE_EN        = 1,     // I-cache: 1=enabled, 0=bypass
     parameter int ICACHE_SIZE      = 4096,  // I-cache total bytes
     parameter int ICACHE_LINE_SIZE = 32,    // Cache line size in bytes
-    parameter int ICACHE_WAYS      = 2      // Cache associativity
+    parameter int ICACHE_WAYS      = 2,     // Cache associativity
+    parameter int USE_CJTAG        = 1,     // JTAG mode: 0=JTAG, 1=cJTAG
+    parameter int JTAG_IDCODE      = 32'h1DEAD3FF  // JTAG device ID
 ) (
     input wire clk,
     input wire rst_n,
@@ -31,6 +33,16 @@ module tb_rv32_soc #(
     output wire i2c_sda_i,
     output wire i2c_sda_o,
     output wire i2c_sda_oe,
+    // JTAG/cJTAG Debug interface
+    input  wire jtag_tck,
+    input  wire jtag_tms,
+    output wire jtag_tms_out,
+    output wire jtag_tms_oe,
+    input  wire jtag_tdi,
+    output wire jtag_tdo,
+    output wire jtag_tdo_oe,
+    output wire cjtag_online,
+    // Performance counters
     output logic [63:0] cycle_count,
     output logic [63:0] instret_count,
     output logic [63:0] stall_count,
@@ -96,7 +108,9 @@ module tb_rv32_soc #(
         .ICACHE_EN      (ICACHE_EN),
         .ICACHE_SIZE    (ICACHE_SIZE),
         .ICACHE_LINE_SIZE(ICACHE_LINE_SIZE),
-        .ICACHE_WAYS    (ICACHE_WAYS)
+        .ICACHE_WAYS    (ICACHE_WAYS),
+        .USE_CJTAG      (USE_CJTAG),
+        .JTAG_IDCODE    (JTAG_IDCODE)
     ) dut (
         .clk(clk),
         .rst_n(rst_n),
@@ -114,6 +128,15 @@ module tb_rv32_soc #(
         .i2c_sda_o(i2c_sda_o_internal),
         .i2c_sda_i(i2c_sda_wire),
         .i2c_sda_oe(i2c_sda_oe_internal),
+        // JTAG/cJTAG pins
+        .jtag_tck_i(jtag_tck),
+        .jtag_tms_i(jtag_tms),
+        .jtag_tms_o(jtag_tms_out),
+        .jtag_tms_oe(jtag_tms_oe),
+        .jtag_tdi_i(jtag_tdi),
+        .jtag_tdo_o(jtag_tdo),
+        .jtag_tdo_oe(jtag_tdo_oe),
+        .cjtag_online_o(cjtag_online),
         // External AXI master port
         .m_axi_awaddr(axi_awaddr),
         .m_axi_awlen (axi_awlen),

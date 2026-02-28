@@ -67,9 +67,18 @@ module fpga_top (
     inout  wire        i2c_sda,
 
     // ========================================================================
+    // JTAG/cJTAG Debug Interface (4-pin, muxed)
+    // ========================================================================
+    input  wire        dbg_tck,            // Pin 0: TCK/TCKC
+    inout  wire        dbg_tms,            // Pin 1: TMS/TMSC (bidirectional)
+    input  wire        dbg_tdi,            // Pin 2: TDI
+    output wire        dbg_tdo,            // Pin 3: TDO
+
+    // ========================================================================
     // Status LEDs
     // ========================================================================
-    output wire        led0                // DDR4 init calibration complete
+    output wire        led0,               // DDR4 init calibration complete
+    output wire        led1                // JTAG debug status
 );
 
     // ========================================================================
@@ -77,6 +86,8 @@ module fpga_top (
     // ========================================================================
     localparam CPU_CLK_FREQ = 50_000_000;   // 50 MHz CPU clock
     localparam BAUD_RATE    = 115200;        // UART baud rate
+    localparam USE_CJTAG    = 1;             // 0=JTAG, 1=cJTAG (default: cJTAG)
+    localparam JTAG_IDCODE  = 32'h1DEAD3FF;  // JTAG device ID
 
     // ========================================================================
     // Internal Signals
@@ -101,6 +112,11 @@ module fpga_top (
     // I2C internal signals
     wire        i2c_scl_o, i2c_scl_i, i2c_scl_oe;
     wire        i2c_sda_o, i2c_sda_i, i2c_sda_oe;
+
+    // JTAG debug interface signals (pin mux)
+    wire        dbg_tms_in, dbg_tms_out, dbg_tms_oe;
+    wire        dbg_tdo_out, dbg_tdo_oe;
+    wire        cjtag_online;
 
     // rv32_soc AXI master signals (cpu_clk domain, 32-bit data)
     wire [31:0] soc_axi_awaddr;
@@ -214,6 +230,7 @@ module fpga_top (
     // LED Status
     // ========================================================================
     assign led0 = c0_init_calib_complete;
+    assign led1 = USE_CJTAG ? cjtag_online : 1'b1;  // LED on when JTAG mode or cJTAG online
 
     // ========================================================================
     // I2C Tri-State Buffers (Open-Drain)
@@ -230,6 +247,24 @@ module fpga_top (
         .I  (i2c_sda_o),
         .O  (i2c_sda_i),
         .T  (~i2c_sda_oe)
+    );
+
+    // ========================================================================
+    // JTAG Debug Tri-State Buffers
+    // ========================================================================
+    // Pin 1 (TMS/TMSC): Bidirectional in cJTAG mode, input in JTAG mode
+    IOBUF u_dbg_tms_iobuf (
+        .IO (dbg_tms),
+        .I  (dbg_tms_out),
+        .O  (dbg_tms_in),
+        .T  (dbg_tms_oe)        // 1=tristate (input), 0=drive output
+    );
+
+    // Pin 3 (TDO): Output in JTAG mode, tristated in cJTAG mode
+    OBUFT u_dbg_tdo_obuft (
+        .O  (dbg_tdo),
+        .I  (dbg_tdo_out),
+        .T  (dbg_tdo_oe)        // 1=tristate, 0=drive output
     );
 
     // ========================================================================
@@ -419,7 +454,9 @@ module fpga_top (
         .ICACHE_EN  (1),
         .ICACHE_SIZE(4096),
         .ICACHE_LINE_SIZE(32),
-        .ICACHE_WAYS(2)
+        .ICACHE_WAYS(2),
+        .USE_CJTAG  (USE_CJTAG),
+        .JTAG_IDCODE(JTAG_IDCODE)
     ) u_rv32_soc (
         .clk                (cpu_clk),
         .rst_n              (cpu_rst_n),
@@ -441,6 +478,16 @@ module fpga_top (
         .i2c_sda_o          (i2c_sda_o),
         .i2c_sda_i          (i2c_sda_i),
         .i2c_sda_oe         (i2c_sda_oe),
+
+        // JTAG/cJTAG Debug Interface
+        .jtag_tck_i         (dbg_tck),
+        .jtag_tms_i         (dbg_tms_in),
+        .jtag_tms_o         (dbg_tms_out),
+        .jtag_tms_oe        (dbg_tms_oe),
+        .jtag_tdi_i         (dbg_tdi),
+        .jtag_tdo_o         (dbg_tdo_out),
+        .jtag_tdo_oe        (dbg_tdo_oe),
+        .cjtag_online_o     (cjtag_online),
 
         // External AXI master (to DDR4 via CDC + dwidth converter)
         .m_axi_awaddr       (soc_axi_awaddr),

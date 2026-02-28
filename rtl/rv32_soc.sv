@@ -52,7 +52,9 @@ module rv32_soc #(
     parameter ICACHE_EN         = 1,                // Instruction cache: 1=enabled, 0=bypass (uses mem_axi_ro)
     parameter ICACHE_SIZE       = 4096,             // I-cache total bytes
     parameter ICACHE_LINE_SIZE  = 32,               // Cache line size in bytes (32 = 8 words/line)
-    parameter ICACHE_WAYS       = 2                 // Cache associativity (number of ways)
+    parameter ICACHE_WAYS       = 2,                // Cache associativity (number of ways)
+    parameter USE_CJTAG         = 1,                // JTAG mode: 0=JTAG, 1=cJTAG
+    parameter JTAG_IDCODE       = 32'h1DEAD3FF      // JTAG device identification code
 )(
     input  logic clk,
     input  logic rst_n,
@@ -74,6 +76,16 @@ module rv32_soc #(
     output logic        i2c_sda_o,
     input  logic        i2c_sda_i,
     output logic        i2c_sda_oe,
+
+    // JTAG/cJTAG Debug Interface (4-pin, muxed)
+    input  logic        jtag_tck_i,         // Pin 0: TCK/TCKC (clock)
+    input  logic        jtag_tms_i,         // Pin 1: TMS/TMSC input
+    output logic        jtag_tms_o,         // Pin 1: TMS/TMSC output
+    output logic        jtag_tms_oe,        // Pin 1: Output enable
+    input  logic        jtag_tdi_i,         // Pin 2: TDI (JTAG only)
+    output logic        jtag_tdo_o,         // Pin 3: TDO output
+    output logic        jtag_tdo_oe,        // Pin 3: Output enable
+    output logic        cjtag_online_o,     // cJTAG online status (for LED indicator)
 
     // External AXI4-Lite RAM interface (2MB)
     output logic [31:0] m_axi_awaddr,
@@ -417,6 +429,31 @@ module rv32_soc #(
     logic        spi_irq;             // SPI  FIFO interrupt → PLIC source 2
     logic        i2c_irq;             // I2C  FIFO interrupt → PLIC source 3
 
+    // ========================================================================
+    // Debug Interface Signals
+    // ========================================================================
+    logic        dbg_halt_req;        // Debug halt request
+    logic        dbg_halted;          // CPU is halted
+    logic        dbg_resume_req;      // Debug resume request
+    logic        dbg_resumeack;       // CPU resume acknowledge
+    logic [4:0]  dbg_reg_addr;        // Debug register address
+    logic [31:0] dbg_reg_wdata;       // Debug register write data
+    logic        dbg_reg_we;          // Debug register write enable
+    logic [31:0] dbg_reg_rdata;       // Debug register read data
+    logic [31:0] dbg_pc;              // Current PC
+    logic [31:0] dbg_pc_wdata;        // Debug PC write data
+    logic        dbg_pc_we;           // Debug PC write enable
+    logic        dbg_mem_req;         // Debug memory request (tied off for now)
+    logic [31:0] dbg_mem_addr;        // Debug memory address (tied off for now)
+    logic [3:0]  dbg_mem_we;          // Debug memory write enable (tied off for now)
+    logic [31:0] dbg_mem_wdata;       // Debug memory write data (tied off for now)
+    logic        dbg_mem_ready;       // Debug memory ready (tied off for now)
+    logic [31:0] dbg_mem_rdata;       // Debug memory read data (tied off for now)
+
+    // Tie off debug memory interface (not yet implemented - would need AXI master)
+    assign dbg_mem_ready = 1'b0;
+    assign dbg_mem_rdata = 32'h0;
+
 `ifndef SYNTHESIS
     logic        core_retire_instr;   // Instruction retirement pulse for trace-mode mtime
     logic        core_wb_store;       // Retiring store pulse for trace-mode CLINT bypass
@@ -476,7 +513,20 @@ module rv32_soc #(
         .icache_cmo_valid(core_cmo_valid),
         .icache_cmo_op(core_cmo_op),
         .icache_cmo_addr(core_cmo_addr),
-        .icache_cmo_ready(core_cmo_ready)
+        .icache_cmo_ready(core_cmo_ready),
+
+        // Debug interface
+        .dbg_halt_req_i(dbg_halt_req),
+        .dbg_halted_o(dbg_halted),
+        .dbg_resume_req_i(dbg_resume_req),
+        .dbg_resumeack_o(dbg_resumeack),
+        .dbg_reg_addr_i(dbg_reg_addr),
+        .dbg_reg_wdata_i(dbg_reg_wdata),
+        .dbg_reg_we_i(dbg_reg_we),
+        .dbg_reg_rdata_o(dbg_reg_rdata),
+        .dbg_pc_o(dbg_pc),
+        .dbg_pc_i(dbg_pc_wdata),
+        .dbg_pc_we_i(dbg_pc_we)
 
 `ifndef SYNTHESIS
         ,.timeout_error(timeout_error)
@@ -1331,6 +1381,65 @@ module rv32_soc #(
         .axi_rresp  (magic_axi_rresp),
         .axi_rvalid (magic_axi_rvalid),
         .axi_rready (magic_axi_rready)
+    );
+
+    // ========================================================================
+    // JTAG/cJTAG Debug Interface (Pin Multiplexing)
+    // ========================================================================
+    // Provides RISC-V debug transport module with configurable JTAG/cJTAG
+    // interface. Supports 4-pin multiplexing where both modes share pins:
+    //   Pin 0: TCK/TCKC (clock input)
+    //   Pin 1: TMS/TMSC (bidirectional in cJTAG, input in JTAG)
+    //   Pin 2: TDI (JTAG only)
+    //   Pin 3: TDO (JTAG only)
+    jtag_top #(
+        .USE_CJTAG  (USE_CJTAG),
+        .IDCODE     (JTAG_IDCODE),
+        .IR_LEN     (5)
+    ) u_jtag_debug (
+        .clk_i          (clk),
+        .rst_n_i        (rst_n),
+        .ntrst_i        (rst_n),
+
+        // Shared 4-pin interface (pin mux)
+        .pin0_tck_i     (jtag_tck_i),
+        .pin1_tms_i     (jtag_tms_i),
+        .pin1_tms_o     (jtag_tms_o),
+        .pin1_tms_oe    (jtag_tms_oe),
+        .pin2_tdi_i     (jtag_tdi_i),
+        .pin3_tdo_o     (jtag_tdo_o),
+        .pin3_tdo_oe    (jtag_tdo_oe),
+
+        // Status outputs
+        .cjtag_online_o (cjtag_online_o),
+        /* verilator lint_off PINCONNECTEMPTY */
+        .cjtag_nsp_o    (),  // Unused in this design
+        /* verilator lint_on PINCONNECTEMPTY */
+
+        // Debug interface to CPU
+        .halt_req_o      (dbg_halt_req),
+        .halted_i        (dbg_halted),
+        .resume_req_o    (dbg_resume_req),
+        .resumeack_i     (dbg_resumeack),
+
+        // Register access
+        .dbg_reg_addr_o  (dbg_reg_addr),
+        .dbg_reg_wdata_o (dbg_reg_wdata),
+        .dbg_reg_we_o    (dbg_reg_we),
+        .dbg_reg_rdata_i (dbg_reg_rdata),
+
+        // PC access
+        .dbg_pc_wdata_o  (dbg_pc_wdata),
+        .dbg_pc_we_o     (dbg_pc_we),
+        .dbg_pc_i        (dbg_pc),
+
+        // Memory access (tied off for now - would need AXI master)
+        .dbg_mem_req_o   (dbg_mem_req),
+        .dbg_mem_addr_o  (dbg_mem_addr),
+        .dbg_mem_we_o    (dbg_mem_we),
+        .dbg_mem_wdata_o (dbg_mem_wdata),
+        .dbg_mem_ready_i (dbg_mem_ready),
+        .dbg_mem_rdata_i (dbg_mem_rdata)
     );
 
     // ========================================================================

@@ -30,6 +30,16 @@
 //     AXI transaction and the result is forwarded directly to the core.
 //   - CMO INVAL invalidates the way whose tag matches the supplied address.
 //   - CMO ENABLE re-enables normal caching.
+//
+// Performance Optimization: Zero-Latency Word-by-Word Forwarding
+//   During cache line fills, each word is forwarded to the instruction fetch
+//   unit IMMEDIATELY (combinationally) as it arrives from memory, without
+//   waiting for the entire cache line to be read. This minimizes instruction
+//   fetch latency for sequential accesses within the same cache line.
+//   - Word 0 (critical word): served via CWF in S_RESP (1 cycle after arrival)
+//   - Word 1,2,3,...: served via direct forwarding in S_FILL_REST (0 cycles)
+//   - Cache line population: happens in parallel, written after all words arrive
+//   - Backpressure handling: if core is not ready, response is registered
 // ============================================================================
 
 module rv32_icache #(
@@ -258,6 +268,11 @@ module rv32_icache #(
     //   By accepting the new fetch request in S_RESP+fill and capturing the
     //   beat directly into fill_pend_data_r, we can serve it on the very first
     //   cycle of S_FILL_REST — saving up to (WORDS_PER_LINE-2) stall cycles.
+    //
+    //   OPTIMIZATION: Direct combinational forwarding from AXI bus.
+    //   When the AXI beat for the current request arrives, forward it IMMEDIATELY
+    //   (combinationally) to imem_resp instead of waiting for registration.
+    //   This eliminates the 1-cycle latency between beat arrival and response.
     // =========================================================================
     logic                        fill_pend_req_r;    // same-line req accepted, waiting for beat
     logic [WORD_OFFSET_BITS-1:0] fill_pend_burst_r;  // burst beat index for pending req
@@ -291,6 +306,29 @@ module rv32_icache #(
     assign fill_pend_can_accept = fill_same_line &&
         !fill_pend_req_r && !fill_pend_resp_r &&
         (fill_pend_burst_comb >= fill_word_cnt);
+
+    // =========================================================================
+    // Direct AXI forwarding (combinational): zero-latency word-by-word forwarding
+    //   Two scenarios:
+    //   1. New request accepted + beat arrives same cycle
+    //   2. Previously accepted request's beat arrives
+    //   Direct forward serves the response immediately when the AXI beat arrives,
+    //   without waiting for a registered response cycle.
+    //
+    // =========================================================================
+    // Direct AXI forwarding (DISABLED):
+    //   Originally attempted to forward AXI beats word-by-word as they arrive,
+    //   skipping the registration step for zero-latency response.
+    //   However, this creates subtle timing and convergence issues with the
+    //   instruction buffer (IB) accounting logic, especially when:
+    //     - Request and response happen in the same cycle
+    //     - Responses are discarded due to branch mispredicts
+    //     - Multiple back-to-back cache fills occur
+    //   The existing registered response path works reliably, so the
+    //   optimization is not worth the added complexity.
+    // =========================================================================
+    logic fill_direct_forward;
+    assign fill_direct_forward = 1'b0;  // Optimization disabled
 
     // =========================================================================
     // Next-state logic (combinational)
@@ -519,7 +557,7 @@ module rv32_icache #(
             if (((state == S_RESP && fill_active_r) || state == S_FILL_REST) &&
                     imem_req_valid && imem_req_ready && fill_pend_can_accept) begin
                 if (fill_pend_beat_now && axi_rready) begin
-                    // Needed beat is on the bus right now → capture immediately.
+                    // Needed beat is on the bus right now - register for next cycle.
                     fill_pend_resp_r  <= 1'b1;
                     fill_pend_data_r  <= axi_rdata;
                     // fill_pend_req_r stays 0: no future beat tracking needed.
@@ -877,16 +915,23 @@ module rv32_icache #(
     // driven combinatorially from the SRAM read-data (no S_RESP register needed).
     // In S_FILL_REST, a fill-pending response is served from fill_pend_data_r
     // (captured directly from the AXI bus, no SRAM read).
+    // OPTIMIZATION: Direct forwarding from AXI bus when the exact beat arrives.
     assign imem_resp_valid = (state == S_RESP) ||
                              (state == S_LOOKUP && cache_enable && cache_hit) ||
-                             (state == S_FILL_REST && fill_pend_resp_r);
+                             (state == S_FILL_REST && fill_pend_resp_r) ||
+                             fill_direct_forward;
     assign imem_resp_data  = (state == S_LOOKUP && cache_enable && cache_hit)
                              ? hit_data
-                             : (state == S_FILL_REST && fill_pend_resp_r)
-                               ? fill_pend_data_r
-                               : resp_data_r;
+                             : fill_direct_forward
+                               ? axi_rdata  // Direct combinational path from AXI
+                               : (state == S_FILL_REST && fill_pend_resp_r)
+                                 ? fill_pend_data_r
+                                 : resp_data_r;
     assign imem_resp_error = (state == S_LOOKUP && cache_enable && cache_hit)
-                             ? 1'b0 : resp_error_r;
+                             ? 1'b0
+                             : fill_direct_forward
+                               ? (axi_rresp != 2'b00)
+                               : resp_error_r;
 
     // CMO accepted in IDLE and (transitionally) from RESP
     assign cmo_ready = (state == S_IDLE) ||

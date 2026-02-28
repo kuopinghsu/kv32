@@ -12,11 +12,41 @@ module jtag_tap #(
     parameter IDCODE = 32'h1DEAD3FF,  // JTAG ID code
     parameter IR_LEN = 5              // Instruction register length
 )(
+    // JTAG interface
     input  logic        tck_i,         // JTAG clock
     input  logic        tms_i,         // JTAG mode select
     input  logic        tdi_i,         // JTAG data in
     output logic        tdo_o,         // JTAG data out
-    input  logic        ntrst_i        // JTAG reset (active low)
+    input  logic        ntrst_i,       // JTAG reset (active low)
+
+    // System clock and reset (for debug module)
+    input  logic        clk,           // System clock
+    input  logic        rst_n,         // System reset (active low)
+
+    // Debug interface to CPU
+    output logic        halt_req_o,    // Request CPU to halt
+    input  logic        halted_i,      // CPU is halted
+    output logic        resume_req_o,  // Request CPU to resume
+    input  logic        resumeack_i,   // CPU acknowledged resume
+
+    // Register access
+    output logic [4:0]  dbg_reg_addr_o,    // Register address
+    output logic [31:0] dbg_reg_wdata_o,   // Register write data
+    output logic        dbg_reg_we_o,      // Register write enable
+    input  logic [31:0] dbg_reg_rdata_i,   // Register read data
+
+    // PC access
+    output logic [31:0] dbg_pc_wdata_o,    // PC write data
+    output logic        dbg_pc_we_o,       // PC write enable
+    input  logic [31:0] dbg_pc_i,          // Current PC
+
+    // Memory access
+    output logic        dbg_mem_req_o,      // Memory request
+    output logic [31:0] dbg_mem_addr_o,    // Memory address
+    output logic [3:0]  dbg_mem_we_o,      // Memory write enable (byte mask)
+    output logic [31:0] dbg_mem_wdata_o,   // Memory write data
+    input  logic        dbg_mem_ready_i,   // Memory ready
+    input  logic [31:0] dbg_mem_rdata_i    // Memory read data
 );
 
     // =========================================================================
@@ -158,9 +188,10 @@ module jtag_tap #(
     assign update_dr_pulse = (state == UPDATE_DR);
 
     // Instantiate RISC-V Debug Transport Module
-    riscv_dtm #(
+    rv32_dtm #(
         .IDCODE(IDCODE)
     ) u_dtm (
+        // JTAG interface
         .tck_i(tck_i),
         .tdi_i(tdi_i),
         .tdo_o(dtm_tdo),
@@ -168,7 +199,36 @@ module jtag_tap #(
         .shift_dr_i(shift_dr_pulse),
         .update_dr_i(update_dr_pulse),
         .ir_i(ir_reg),
-        .ntrst_i(ntrst_i)
+        .ntrst_i(ntrst_i),
+
+        // System clock and reset
+        .clk(clk),
+        .rst_n(rst_n),
+
+        // Debug interface to CPU
+        .dbg_halt_req_o(halt_req_o),
+        .dbg_halted_i(halted_i),
+        .dbg_resume_req_o(resume_req_o),
+        .dbg_resumeack_i(resumeack_i),
+
+        // Register access
+        .dbg_reg_addr_o(dbg_reg_addr_o),
+        .dbg_reg_wdata_o(dbg_reg_wdata_o),
+        .dbg_reg_we_o(dbg_reg_we_o),
+        .dbg_reg_rdata_i(dbg_reg_rdata_i),
+
+        // PC access
+        .dbg_pc_wdata_o(dbg_pc_wdata_o),
+        .dbg_pc_we_o(dbg_pc_we_o),
+        .dbg_pc_i(dbg_pc_i),
+
+        // Memory access
+        .dbg_mem_req_o(dbg_mem_req_o),
+        .dbg_mem_addr_o(dbg_mem_addr_o),
+        .dbg_mem_we_o(dbg_mem_we_o),
+        .dbg_mem_wdata_o(dbg_mem_wdata_o),
+        .dbg_mem_ready_i(dbg_mem_ready_i),
+        .dbg_mem_rdata_i(dbg_mem_rdata_i)
     );
 
     // Bypass register for non-DTM operations

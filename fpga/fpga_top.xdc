@@ -154,10 +154,35 @@ set_property -quiet PULLUP true [get_ports i2c_scl]
 set_property -quiet PULLUP true [get_ports i2c_sda]
 
 # ============================================================================
-# Status LED
+# JTAG/cJTAG Debug Interface (4-pin, muxed)
+# Pin 0: TCK/TCKC   - Clock input
+# Pin 1: TMS/TMSC   - Input/Bidirectional
+# Pin 2: TDI        - Input (JTAG only)
+# Pin 3: TDO        - Output (JTAG only)
+# ============================================================================
+# set_property PACKAGE_PIN <PIN> [get_ports dbg_tck]
+# set_property PACKAGE_PIN <PIN> [get_ports dbg_tms]
+# set_property PACKAGE_PIN <PIN> [get_ports dbg_tdi]
+# set_property PACKAGE_PIN <PIN> [get_ports dbg_tdo]
+set_property -quiet IOSTANDARD LVCMOS33 [get_ports dbg_tck]
+set_property -quiet IOSTANDARD LVCMOS33 [get_ports dbg_tms]
+set_property -quiet IOSTANDARD LVCMOS33 [get_ports dbg_tdi]
+set_property -quiet IOSTANDARD LVCMOS33 [get_ports dbg_tdo]
+
+# JTAG clock constraints (for JTAG mode)
+# TCK is asynchronous to system clocks, max 50MHz
+set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets dbg_tck_IBUF]
+create_clock -period 20.000 -name jtag_tck [get_ports dbg_tck]
+set_clock_groups -asynchronous -group [get_clocks jtag_tck] \
+                                -group [get_clocks -of_objects [get_pins u_mmcm/CLKOUT0]]
+
+# ============================================================================
+# Status LEDs
 # ============================================================================
 # set_property PACKAGE_PIN <PIN> [get_ports led0]
+# set_property PACKAGE_PIN <PIN> [get_ports led1]
 set_property -quiet IOSTANDARD LVCMOS33 [get_ports led0]
+set_property -quiet IOSTANDARD LVCMOS33 [get_ports led1]
 
 # ============================================================================
 # Timing Constraints
@@ -189,5 +214,10 @@ set_false_path -to [get_ports i2c_sda]
 set_false_path -from [get_ports i2c_scl]
 set_false_path -from [get_ports i2c_sda]
 
-# LED output (async)
+# JTAG debug interface (handled by async clock groups above)
+set_false_path -from [get_ports dbg_tdi]
+set_false_path -to [get_ports dbg_tdo]
+
+# LED outputs (async)
 set_false_path -to [get_ports led0]
+set_false_path -to [get_ports led1]

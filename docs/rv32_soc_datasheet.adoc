@@ -964,8 +964,6 @@ Write: ignored
 |Mode |CPOL |CPHA |Description
 
 |0
-|0
-|0
 |Clock idle low, sample on leading (rising) edge
 
 |1
@@ -979,7 +977,6 @@ Write: ignored
 |Clock idle high, sample on leading (falling) edge
 
 |3
-|1
 |1
 |Clock idle high, sample on trailing (rising) edge
 |===
@@ -1966,7 +1963,6 @@ Typical AXI transaction latencies:
 
 |I-Cache Lookup Latency
 |1 cycle
-|1 cycle
 |Hit latency (registered output)
 
 |I-Cache Miss Penalty
@@ -1976,11 +1972,9 @@ Typical AXI transaction latencies:
 
 |Load-to-Use Latency
 |2 cycles
-|2 cycles
 |Pipeline load latency
 
 |Branch Mispredict Penalty
-|2 cycles
 |2 cycles
 |Flush IF and ID stages (2 bubbles)
 
@@ -2077,18 +2071,18 @@ For simulation, the ELF loader (`elfloader.cpp`) loads program sections into RAM
 void setup_interrupts(void) {
     // Set trap vector (must be 4-byte aligned)
     write_csr(mtvec, (uint32_t)trap_entry);
-    
+
     // Enable M-mode interrupts in mstatus
     set_csr(mstatus, MSTATUS_MIE);
-    
+
     // Enable specific interrupt types in mie
     set_csr(mie, MIE_MEIE | MIE_MTIE | MIE_MSIE);
-    
+
     // Configure PLIC
     rv_plic_set_priority(RV_PLIC_SRC_UART, 5);
     rv_plic_enable_interrupt(RV_PLIC_SRC_UART);
     rv_plic_set_threshold(0);
-    
+
     // Configure CLINT timer for periodic interrupt (1ms)
     uint64_t mtime = rv_clint_read_mtime();
     rv_clint_write_mtimecmp(mtime + 100000);  // +1ms @ 100MHz
@@ -2102,7 +2096,7 @@ void setup_interrupts(void) {
 void trap_handler(void) {
     uint32_t mcause = read_csr(mcause);
     uint32_t mepc = read_csr(mepc);
-    
+
     if (mcause & 0x80000000) {
         // Interrupt
         uint32_t irq_code = mcause & 0x1F;
@@ -2132,7 +2126,7 @@ void handle_timer_interrupt(void) {
 void handle_external_interrupt(void) {
     // Claim interrupt from PLIC
     uint32_t source = rv_plic_claim_interrupt();
-    
+
     switch (source) {
     case RV_PLIC_SRC_UART:
         uart_isr();
@@ -2142,7 +2136,7 @@ void handle_external_interrupt(void) {
         break;
     // ... handle other sources ...
     }
-    
+
     // Complete interrupt
     rv_plic_complete_interrupt(source);
 }
@@ -2158,7 +2152,7 @@ void handle_external_interrupt(void) {
 
 void uart_echo(void) {
     rv_uart_init(115200);  // Configure baud rate
-    
+
     while (1) {
         if (rv_uart_rx_ready()) {
             uint8_t c = rv_uart_getc();
@@ -2178,20 +2172,20 @@ void uart_echo(void) {
 
 void spi_read_flash(uint32_t addr, uint8_t *buf, size_t len) {
     rv_spi_init(1000000, RV_SPI_MODE0);  // 1 MHz, Mode 0
-    
+
     rv_spi_select(0);  // Assert CS[0]
-    
+
     // Send READ command + 24-bit address
     rv_spi_transfer(SPI_CMD_READ);
     rv_spi_transfer((addr >> 16) & 0xFF);
     rv_spi_transfer((addr >> 8) & 0xFF);
     rv_spi_transfer(addr & 0xFF);
-    
+
     // Read data
     for (size_t i = 0; i < len; i++) {
         buf[i] = rv_spi_transfer(0x00);
     }
-    
+
     rv_spi_deselect(0);  // De-assert CS[0]
 }
 ----
@@ -2206,13 +2200,13 @@ void spi_read_flash(uint32_t addr, uint8_t *buf, size_t len) {
 
 void i2c_eeprom_write(uint8_t mem_addr, uint8_t data) {
     rv_i2c_init(100000);  // 100 kHz
-    
+
     rv_i2c_start();
     rv_i2c_write(EEPROM_ADDR << 1);  // Address + W bit
     rv_i2c_write(mem_addr);           // Memory address
     rv_i2c_write(data);               // Data byte
     rv_i2c_stop();
-    
+
     // Wait for write cycle to complete (typical 5ms)
     for (volatile int i = 0; i < 500000; i++);
 }
@@ -2227,19 +2221,19 @@ void i2c_eeprom_write(uint8_t mem_addr, uint8_t data) {
 void dma_memcpy(void *dst, const void *src, size_t len) {
     // Configure channel 0 for 1D transfer
     rv_dma_channel_config(0, (uint32_t)src, (uint32_t)dst, len,
-                          RV_DMA_CTRL_MODE_1D | 
-                          RV_DMA_CTRL_SRC_INC | 
+                          RV_DMA_CTRL_MODE_1D |
+                          RV_DMA_CTRL_SRC_INC |
                           RV_DMA_CTRL_DST_INC);
-    
+
     // Enable interrupt
     rv_dma_channel_enable_interrupt(0);
-    
+
     // Start transfer
     rv_dma_channel_start(0);
-    
+
     // Wait for completion (or use interrupt)
     while (rv_dma_channel_busy(0));
-    
+
     // Check for errors
     if (rv_dma_channel_error(0)) {
         // Handle error
