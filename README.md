@@ -1,7 +1,7 @@
 RISC-V 32-bit IMA Processor
 ============================
 
-A complete RISC-V 32-bit processor implementation with RV32IMA support, featuring a 5-stage pipeline, AXI4-Lite interconnect, and both RTL and functional simulators.
+K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMA support, featuring a 5-stage pipeline, AXI4-Lite interconnect, and both RTL and functional simulators.
 
 ## Features
 
