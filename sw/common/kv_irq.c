@@ -1,12 +1,12 @@
-/*
- * kv_irq.c – Machine-mode IRQ / exception dispatch table
- *
- * Implements the dispatch table that the default trap_handler fills in
- * and calls into.  Each entry is a weak pointer; user code overrides it
- * by calling kv_irq_register() / kv_exc_register().
- *
- * This file is compiled as part of COMMON_SRCS (see top-level Makefile).
- */
+// ============================================================================
+// File: kv_irq.c
+// Project: KV32 RISC-V Processor
+// Description: Machine-mode IRQ / exception dispatch table implementation
+//
+// Implements the per-cause handler registration table used by the
+// default trap_handler() in trap.c.  Handlers are registered with
+// kv_irq_register() / kv_exc_register() (see kv_irq.h).
+// ============================================================================
 
 #include <stdint.h>
 #include "kv_irq.h"

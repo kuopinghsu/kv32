@@ -1,17 +1,13 @@
-/*
- * kv_cap.h – Expected capability register values for all KV32 peripherals
- *
- * These constants mirror the RTL localparam CAPABILITY_REG definitions and
- * can be used in test code to verify that the hardware matches the SDK's
- * expectations.  Each value is derived directly from the RTL parameters:
- *
- *  UART  (axi_uart.sv):  {VERSION[31:16], RX_FIFO_DEPTH[15:8], TX_FIFO_DEPTH[7:0]}
- *  I2C   (axi_i2c.sv):  {VERSION[31:16], RX_FIFO_DEPTH[15:8], TX_FIFO_DEPTH[7:0]}
- *  SPI   (axi_spi.sv):  {VERSION[31:16], NUM_CS[23:20], RX_FIFO[19:16], TX_FIFO_DEPTH[7:0]}
- *  DMA   (axi_dma.sv):  {VERSION[31:16], NUM_CHANNELS[15:8], MAX_BURST_LEN[7:0]}
- *  GPIO  (axi_gpio.sv): {VERSION[31:16], NUM_BANKS[15:8], NUM_PINS[7:0]}
- *  TIMER (axi_timer.sv):{VERSION[31:16], NUM_CHANNELS[15:8], COUNTER_WIDTH[7:0]}
- */
+// ============================================================================
+// File: kv_cap.h
+// Project: KV32 RISC-V Processor
+// Description: Expected capability register values for all KV32 AXI peripherals
+//
+// Constants mirror the RTL localparam CAPABILITY_REG definitions;
+// test code compares these against the actual register reads to
+// verify hardware matches the SDK version expectations.
+// ============================================================================
+
 #ifndef KV_CAP_H
 #define KV_CAP_H
 

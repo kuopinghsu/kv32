@@ -1,7 +1,8 @@
-/*
- * puts() implementation for embedded systems
- * Outputs a string followed by newline to stdout
- */
+// ============================================================================
+// File: puts.c
+// Project: KV32 RISC-V Processor
+// Description: puts() stub for embedded systems: routes string + newline to stdout
+// ============================================================================
 
 #include <stdio.h>
 #include <string.h>

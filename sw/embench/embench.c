@@ -1,15 +1,11 @@
-/*
- * Embench IoT Benchmark Suite - Simplified Baremetal RISC-V Version
- *
- * Adapted from Embench IoT (https://github.com/embench/embench-iot)
- *
- * This is a subset of Embench tests adapted for baremetal:
- * - crc32: CRC-32 calculation
- * - cubic: Cubic equation solver
- * - matmult: Integer matrix multiplication
- * - minver: Matrix inversion
- * - nsichneu: Neural network
- */
+// ============================================================================
+// File: embench.c
+// Project: KV32 RISC-V Processor
+// Description: Embench IoT benchmark subset: CRC-32, cubic solver, matmult, minver, neural net
+//
+// Adapted from Embench IoT (https://github.com/embench/embench-iot)
+// for bare-metal RISC-V without OS or libc float support.
+// ============================================================================
 
 #include <stdint.h>
 #include <csr.h>

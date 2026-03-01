@@ -143,6 +143,12 @@ module axi_dma #(
     localparam logic [15:0] DMA_VERSION     = 16'h0001;
     localparam logic [31:0] CAPABILITY_REG  = {DMA_VERSION, 8'(NUM_CHANNELS), 8'(MAX_BURST_LEN)};
 
+    // Config bus address range bounds
+    // Per-channel space: 0x000 .. (NUM_CHANNELS * CH_STRIDE - 1)
+    // Global reg space:  GLBL_OFF .. GLBL_OFF + 0x01C  (last: PERF_WR_BYTES)
+    localparam logic [11:0] CH_ADDR_MAX   = 12'(NUM_CHANNELS * CH_STRIDE) - 12'h001;
+    localparam logic [11:0] GLBL_ADDR_MAX = GLBL_OFF + 12'h01C;
+
     // ========================================================================
     // Per-channel register arrays
     // ========================================================================
@@ -186,6 +192,13 @@ module axi_dma #(
     assign cfg_wready  = 1'b1;
     assign cfg_arready = 1'b1;
 
+    // AXI config address range checks
+    // Accesses outside channel regs or global regs respond with SLVERR (2'b10)
+    wire cfg_wr_valid = (cfg_awaddr[11:0] <= CH_ADDR_MAX) ||
+                        (cfg_awaddr[11:0] >= GLBL_OFF && cfg_awaddr[11:0] <= GLBL_ADDR_MAX);
+    wire cfg_rd_valid = (cfg_araddr[11:0] <= CH_ADDR_MAX) ||
+                        (cfg_araddr[11:0] >= GLBL_OFF && cfg_araddr[11:0] <= GLBL_ADDR_MAX);
+
     // wlast is purely combinatorial: high on the last beat of a write burst
     assign dma_wlast = dma_wvalid && (beat_cnt == e_beats - 8'h1);
     // wdata/wstrb combinatorial from FIFO head; fifo_pop is a wire so rd_ptr
@@ -228,7 +241,7 @@ module axi_dma #(
                 automatic logic [3:0]  reg_idx = addr12[5:2];        // word index
 
                 cfg_bvalid <= 1'b1;
-                cfg_bresp  <= 2'b00;   // OKAY
+                cfg_bresp  <= cfg_wr_valid ? 2'b00 : 2'b10;   // OKAY or SLVERR
 
                 if (addr12 < GLBL_OFF) begin
                     // Per-channel register write
@@ -360,7 +373,7 @@ module axi_dma #(
                 automatic logic [3:0]  reg_idx = addr12[5:2];
 
                 cfg_rvalid <= 1'b1;
-                cfg_rresp  <= 2'b00;
+                cfg_rresp  <= cfg_rd_valid ? 2'b00 : 2'b10;   // OKAY or SLVERR
                 cfg_rdata  <= '0;
 
                 if (addr12 < GLBL_OFF) begin

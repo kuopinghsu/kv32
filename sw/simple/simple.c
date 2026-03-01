@@ -1,14 +1,8 @@
-// Simple test program - executes NOP and returns
-// Used for basic smoke testing of the CPU core
-//
-// This program:
-// 1. Executes a NOP instruction in main()
-// 2. Returns from main
-// 3. start.S writes to exit address (0xFFFFFFF0)
-// 4. Enters infinite hang loop
-//
-// Expected behavior: Simulation detects stuck PC after ~20 cycles
-// and terminates with timeout (this is normal operation)
+// ============================================================================
+// File: simple.c
+// Project: KV32 RISC-V Processor
+// Description: Minimal smoke test: NOP execution + exit to verify basic CPU bring-up
+// ============================================================================
 
 #include <stdint.h>
 

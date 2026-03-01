@@ -1,5 +1,8 @@
-// Comprehensive RISC-V Test Program
-// Tests UART, CLINT, compressed instructions, and various ISA features
+// ============================================================================
+// File: full.c
+// Project: KV32 RISC-V Processor
+// Description: Comprehensive RISC-V test: UART, CLINT, compressed instructions, ISA features
+// ============================================================================
 
 #include <stdint.h>
 

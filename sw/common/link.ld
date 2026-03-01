@@ -1,4 +1,11 @@
-/* Linker script for RISC-V SoC */
+/* ============================================================================
+ * File: link.ld
+ * Project: KV32 RISC-V Processor
+ * Description: Linker script: places .text/.data in 2 MB SRAM at 0x8000_0000
+ *
+ * Defines MEMORY regions, section layout, and symbol exports consumed
+ * by start.S (__stack_top, __bss_start, __bss_end, __global_pointer$).
+ * ============================================================================ */
 
 OUTPUT_ARCH("riscv")
 ENTRY(_start)

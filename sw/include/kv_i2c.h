@@ -1,18 +1,13 @@
-/*
- * kv_i2c.h – I2C master driver (polling + interrupt-mode helpers)
- *
- * Hardware: axi_i2c.sv at KV_I2C_BASE
- *   Register map – see kv_platform.h (KV_I2C_*)
- *
- * All functions are inlined.  For interrupt-driven use, pair with
- * kv_plic.h (source KV_PLIC_SRC_I2C).
- *
- * Return values:
- *   0   – success
- *  -1   – device did not ACK the address
- *  -2   – device did not ACK a data byte
- *  -3   – other error / NACK
- */
+// ============================================================================
+// File: kv_i2c.h
+// Project: KV32 RISC-V Processor
+// Description: I2C master driver: byte/burst transfers, polling and IRQ modes
+//
+// Hardware: axi_i2c.sv at KV_I2C_BASE.
+// Header-only inline driver; pair with kv_plic.h for IRQ-driven use.
+// Returns 0 on success, -1 if the device does not ACK the address.
+// ============================================================================
+
 #ifndef KV_I2C_H
 #define KV_I2C_H
 

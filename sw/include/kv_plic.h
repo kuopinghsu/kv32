@@ -1,9 +1,13 @@
-/*
- * kv_plic.h – Platform-Level Interrupt Controller (PLIC) driver
- *
- * Supports a single hart (hart 0, machine-mode context 0).
- * IRQ source IDs are defined in kv_platform.h (KV_PLIC_SRC_*).
- */
+// ============================================================================
+// File: kv_plic.h
+// Project: KV32 RISC-V Processor
+// Description: PLIC driver: interrupt enable, threshold, claim/complete for hart 0
+//
+// Hardware: axi_plic.sv at KV_PLIC_BASE.
+// Supports a single hart (hart 0, machine-mode context 0).
+// IRQ source IDs are defined in kv_platform.h (KV_PLIC_SRC_*).
+// ============================================================================
+
 #ifndef KV_PLIC_H
 #define KV_PLIC_H
 
@@ -34,7 +38,7 @@
 
 /* ─── source-level control ────────────────────────────────────────── */
 
-/* Set the priority for a PLIC source (1..7; 0 = effectively disabled). */
+/* Set the priority for a PLIC source (1..15; 0 = effectively disabled). */
 static inline void kv_plic_set_priority(uint32_t src, uint32_t priority)
 {
     KV_PLIC_PRIORITY(src) = priority;
@@ -88,7 +92,7 @@ static inline void kv_plic_complete(uint32_t src)
  * PLIC external interrupt in mie.
  *
  *   src      – KV_PLIC_SRC_UART / _SPI / _I2C (or any 1-based ID)
- *   priority – 1..7  (higher = more urgent)
+ *   priority – 1..15  (higher = more urgent; 0 = effectively disabled)
  */
 static inline void kv_plic_init_source(uint32_t src, uint32_t priority)
 {

@@ -96,6 +96,11 @@ module axi_i2c #(
     localparam IS_OFFSET    = 16'h0018;
     localparam CAP_OFFSET   = 16'h001C;
 
+    // Register address space: offsets 0x0000–0x001C (8 word-aligned registers)
+    // Accesses with byte-offset > CAP_OFFSET are out-of-range → AXI SLVERR (2'b10)
+    wire wr_addr_valid = (axi_awaddr[15:0] <= CAP_OFFSET); // write address in range
+    wire rd_addr_valid = (axi_araddr[15:0] <= CAP_OFFSET); // read address in range
+
     // Capability register
     localparam logic [15:0] I2C_VERSION     = 16'h0001;
     localparam logic [31:0] CAPABILITY_REG  = {I2C_VERSION, 8'(FIFO_DEPTH), 8'(FIFO_DEPTH)};
@@ -272,7 +277,7 @@ module axi_i2c #(
                     default: ;
                 endcase
                 axi_bvalid <= 1'b1;
-                axi_bresp  <= 2'b00;
+                axi_bresp  <= wr_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
             end
         end
     end
@@ -290,7 +295,7 @@ module axi_i2c #(
         end else begin
             if (axi_arvalid && !axi_rvalid) begin
                 axi_rvalid <= 1'b1;
-                axi_rresp  <= 2'b00;
+                axi_rresp  <= rd_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
                 case (axi_araddr[15:0])
                     CTRL_OFFSET: axi_rdata <= {27'h0, ack_cmd, read_cmd, stop_cmd, start_cmd, i2c_enable};
                     DIV_OFFSET:  axi_rdata <= {16'h0, clk_div};

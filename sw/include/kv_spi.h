@@ -1,12 +1,12 @@
-/*
- * kv_spi.h – SPI master driver (polling + interrupt-mode helpers)
- *
- * Hardware: axi_spi.sv at KV_SPI_BASE
- *   Register map – see kv_platform.h (KV_SPI_*)
- *
- * All functions are inlined.  For interrupt-driven use, pair with
- * kv_plic.h (source KV_PLIC_SRC_SPI).
- */
+// ============================================================================
+// File: kv_spi.h
+// Project: KV32 RISC-V Processor
+// Description: SPI master driver: single-byte and burst transfers, polling and IRQ modes
+//
+// Hardware: axi_spi.sv at KV_SPI_BASE.
+// Header-only inline driver; pair with kv_plic.h for IRQ-driven use.
+// ============================================================================
+
 #ifndef KV_SPI_H
 #define KV_SPI_H
 

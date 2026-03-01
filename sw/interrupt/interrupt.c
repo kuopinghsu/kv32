@@ -1,5 +1,8 @@
-// RISC-V Interrupt and Exception Test
-// Refactored to use kv_irq.h / kv_clint.h HAL APIs.
+// ============================================================================
+// File: interrupt.c
+// Project: KV32 RISC-V Processor
+// Description: RISC-V interrupt/exception test: timer IRQ, software IRQ, illegal instruction
+// ============================================================================
 
 #include <stdint.h>
 #include "kv_irq.h"

@@ -1,6 +1,10 @@
 # RISC-V SoC Project Makefile
 # Main build system for the RV32IMA processor
 
+# On macOS the system make is 3.81 which has jobserver deadlock bugs with nested
+# recursive makes.  Prefer gmake (4.x) if available for all $(MAKE) invocations.
+MAKE := $(shell command -v gmake 2>/dev/null || command -v make)
+
 # Load environment configuration
 -include env.config
 
@@ -10,8 +14,6 @@ export VERILATOR
 export SPIKE
 export SPIKE_INCLUDE
 export ZEPHYR_BASE
-export NUTTX_BASE
-export NUTTX_APPS
 
 # Append additional paths if specified
 ifdef PATH_APPEND
@@ -64,7 +66,7 @@ TEST_DIRS = $(shell find $(SW_DIR) -mindepth 1 -maxdepth 1 -type d ! -name commo
 TEST_NAMES = $(notdir $(TEST_DIRS))
 
 # Tests to compare (exclude I/O-dependent tests that require external peripherals)
-COMPARE_EXCLUDE = full i2c uart spi dma gpio timer
+COMPARE_EXCLUDE = full i2c uart spi dma gpio timer bus_err
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
 # Software simulator selection (kv32sim or spike)
@@ -72,23 +74,28 @@ SIM ?= kv32sim
 
 # Spike MMIO plugin support
 SPIKE_DIR     = spike
+# CLINT (0x02000000) and PLIC (0x0C000000) are handled by Spike's built-in
+# implementations (which match KV32's memory map).  Only load plugins for the
+# KV32-specific peripherals that Spike has no built-in knowledge of.
 SPIKE_PLUGINS = \
 	$(BUILD_DIR)/spike_plugin_magic.so  \
-	$(BUILD_DIR)/spike_plugin_plic.so   \
-	$(BUILD_DIR)/spike_plugin_clint.so  \
 	$(BUILD_DIR)/spike_plugin_uart.so   \
-	$(BUILD_DIR)/spike_plugin_spi.so    \
 	$(BUILD_DIR)/spike_plugin_i2c.so    \
-	$(BUILD_DIR)/spike_plugin_dma.so
+	$(BUILD_DIR)/spike_plugin_spi.so    \
+	$(BUILD_DIR)/spike_plugin_dma.so    \
+	$(BUILD_DIR)/spike_plugin_gpio.so   \
+	$(BUILD_DIR)/spike_plugin_timer.so
+
 SPIKE_EXTLIBS  = $(patsubst %,--extlib=%,$(SPIKE_PLUGINS))
 SPIKE_DEVICES  = \
-	--device=kv32_magic,0xFFFF0000 \
-	--device=kv32_plic,0x0C000000  \
-	--device=kv32_clint,0x02000000 \
-	--device=kv32_uart,0x20000000  \
-	--device=kv32_spi,0x20020000   \
-	--device=kv32_i2c,0x20010000   \
-	--device=kv32_dma,0x20030000
+	-m2047 \
+	--device=plugin_magic,0xFFFF0000    \
+	--device=plugin_uart,0x20000000     \
+	--device=plugin_i2c,0x20010000      \
+	--device=plugin_spi,0x20020000      \
+	--device=plugin_dma,0x20030000      \
+	--device=plugin_gpio,0x20040000     \
+	--device=plugin_timer,0x20050000
 
 # Verilator settings
 VERILATOR ?= verilator
@@ -194,7 +201,7 @@ TB_SOURCES = $(TB_DIR)/tb_kv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-
 # Output executable
 BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
-.PHONY: all build-rtl build-sim rtl-build sim-build build-spike-plugins clean clean-tests clean-spike-plugins run waves help info rtl-% sim-% spike-% plugin-spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
+.PHONY: all build-rtl build-sim rtl-build sim-build build-spike-plugins clean clean-tests clean-spike-plugins run waves help info rtl-% sim-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
 # Default target - run all tests
 all: rtl-all sim-all compare-all freertos-compare-simple
@@ -347,53 +354,34 @@ endif
 # Target to run test with software simulator (e.g., make sim-hello)
 # Use TRACE=1 to enable instruction trace
 # Use SIM=spike to use Spike instead of kv32sim (default)
-# Note: Spike polls tohost periodically (not every cycle), so programs loop after
-#       writing tohost to give Spike time to detect the exit. This causes Spike
-#       traces to be longer than RTL traces. Use timeout to limit trace capture.
-sim-%: build-sim
+# When SIM=spike, builds the Spike MMIO plugins and runs with --extlib + --device.
+SPIKE_EXTLIBS_LOCAL = $(patsubst $(BUILD_DIR)/%,--extlib=./%,$(SPIKE_PLUGINS))
+
+ifeq ($(SIM),spike)
+_SIM_PREREQ = build-spike-plugins
+define _SIM_RUN
+cd $(BUILD_DIR) && $(SPIKE) --isa=rv32ima $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $(1).elf 2>&1 || true
+endef
+else
+_SIM_PREREQ =
+define _SIM_RUN
+cd $(BUILD_DIR) && ./$(SIM) $(if $(filter 1,$(TRACE)),--rtl-trace --log=sim_trace.txt) $(1).elf
+endef
+endif
+
+sim-%: build-sim $(_SIM_PREREQ)
 	@$(MAKE) $(BUILD_DIR)/$*.elf
 	@echo "=========================================="
 	@echo "Running test '$*' with software simulator ($(SIM))"
 	@echo "=========================================="
-	@if [ "$(SIM)" = "spike" ]; then \
-		if [ "$(TRACE)" = "1" ]; then \
-			cd $(BUILD_DIR) && timeout 30 spike --isa=rv32ima --log-commits --log=sim_trace.txt $*.elf 2>&1 || true; \
-			echo "Note: Spike polls tohost periodically - trace captured includes polling loop"; \
-		else \
-			cd $(BUILD_DIR) && timeout 10 spike --isa=rv32ima $*.elf 2>&1 || true; \
-		fi; \
-	else \
-		cd $(BUILD_DIR) && ./$(SIM) $(if $(TRACE),--rtl-trace --log=sim_trace.txt) $*.elf; \
-	fi
+	$(call _SIM_RUN,$*)
 	@echo ""
-	@if [ "$(TRACE)" = "1" ]; then \
-		echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"; \
-	else \
-		echo "Use TRACE=1 to enable instruction trace"; \
-	fi
-	@echo "=========================================="
-
-# Target to run test with Spike (e.g., make spike-hello)
-# Builds program with HTIF support for proper console I/O with Spike
-# Use TRACE=1 to enable instruction trace
-spike-%:
-	@$(MAKE) $(BUILD_DIR)/$*-spike.elf
-	@echo "=========================================="
-	@echo "Running test '$*' with Spike (HTIF-enabled)"
-	@echo "=========================================="
-	@if [ "$(TRACE)" = "1" ]; then \
-		cd $(BUILD_DIR) && timeout 30 spike --isa=rv32ima --log-commits --log=spike_trace.txt $*-spike.elf 2>&1 || true; \
-		echo "Note: Spike polls tohost periodically - trace includes polling loop"; \
-	else \
-		cd $(BUILD_DIR) && timeout 10 spike --isa=rv32ima $*-spike.elf 2>&1 || true; \
-	fi
-	@echo ""
-	@if [ "$(TRACE)" = "1" ]; then \
-		echo "Trace saved to: $(BUILD_DIR)/spike_trace.txt"; \
-	else \
-		echo "Use TRACE=1 to enable instruction trace"; \
-	fi
-	@echo "=========================================="
+ifeq ($(TRACE),1)
+	@echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"
+else
+	@echo "Use TRACE=1 to enable instruction trace"
+endif
+	@echo "==========================================" 
 
 # Build all Spike MMIO plugins
 build-spike-plugins:
@@ -402,48 +390,6 @@ build-spike-plugins:
 	@echo "=========================================="
 	@$(MAKE) -C $(SPIKE_DIR) BUILD_DIR=../$(BUILD_DIR) SPIKE_INCLUDE=$(SPIKE_INCLUDE)
 	@echo ""
-
-# Run test with Spike using MMIO plugins (native binary, no HTIF)
-# Peripherals are emulated by the .so plugins; use magic addresses as in RTL.
-# Example:  make plugin-spike-uart
-# NOTE: On macOS, Spike plugin support may be limited due to symbol visibility
-plugin-spike-%: build-spike-plugins
-	@$(MAKE) $(BUILD_DIR)/$*.elf
-	@echo "=========================================="
-	@echo "Running test '$*' with Spike + MMIO plugins"
-	@echo "=========================================="
-	@SPIKE_PLUGINS_LOCAL="$(patsubst $(BUILD_DIR)/%,--extlib=%,$(SPIKE_PLUGINS))"; \
-	if [ "$$(uname -s)" = "Darwin" ]; then \
-		if ! nm -gU $(SPIKE) 2>/dev/null | grep -q register_mmio_plugin; then \
-			echo "WARNING: Spike plugins not supported on this macOS installation."; \
-			echo "         The Spike binary does not export required symbols."; \
-			echo ""; \
-			echo "Alternative options:"; \
-			echo "  • Use RTL simulation:  make rtl-$*"; \
-			echo "  • Use SW simulator:    make sim-$*"; \
-			echo ""; \
-			echo "To enable Spike plugins (advanced):"; \
-			echo "  Rebuild Spike with: LDFLAGS=\"-Wl,-export_dynamic\" make"; \
-			echo "  Note: May require modifying Spike's build system for macOS."; \
-			echo ""; \
-			echo "Attempting to run anyway (will fail)..."; \
-			echo ""; \
-		fi; \
-	fi; \
-	if [ "$(TRACE)" = "1" ]; then \
-		cd $(BUILD_DIR) && timeout 30 $(SPIKE) --isa=rv32ima \
-			$$SPIKE_PLUGINS_LOCAL $(SPIKE_DEVICES) \
-			--log-commits --log=spike_plugin_trace.txt $*.elf 2>&1 || true; \
-		echo "Trace saved to: $(BUILD_DIR)/spike_plugin_trace.txt"; \
-	else \
-		cd $(BUILD_DIR) && timeout 30 $(SPIKE) --isa=rv32ima \
-			$$SPIKE_PLUGINS_LOCAL $(SPIKE_DEVICES) $*.elf 2>&1 || true; \
-	fi
-	@echo ""
-	@if [ "$(TRACE)" != "1" ]; then \
-		echo "Use TRACE=1 to enable instruction trace"; \
-	fi
-	@echo "=========================================="
 
 # Target to compare RTL and software simulator traces (e.g., make compare-hello)
 # Runs both RTL and sim with TRACE=1 and compares the traces
@@ -540,7 +486,7 @@ endif
 	if [ $$failed -gt 0 ]; then exit 1; fi
 
 # Target to run all software simulator tests
-sim-all: build-sim
+sim-all: build-sim $(_SIM_PREREQ)
 	@echo "=========================================="
 	@echo "Running all software simulator tests ($(SIM))"
 	@echo "=========================================="
@@ -548,15 +494,7 @@ sim-all: build-sim
 	@echo ""
 	@passed=0; failed=0; \
 	for test in $(TEST_NAMES); do \
-		echo "==========================================";\
-		echo "Running sim test: $$test";\
-		echo "==========================================";\
-		if $(MAKE) -s $(BUILD_DIR)/$$test.elf && \
-		   if [ "$(SIM)" = "spike" ]; then \
-			   (cd $(BUILD_DIR) && timeout 10 spike --isa=rv32ima $$test.elf 2>&1 || true); \
-		   else \
-			   (cd $(BUILD_DIR) && ./$(SIM) $$test.elf); \
-		   fi; then \
+		if $(MAKE) -s _SIM_PREREQ= sim-$$test; then \
 			echo "✓ $$test PASSED"; \
 			passed=$$((passed + 1)); \
 		else \
@@ -816,8 +754,6 @@ help:
 	@echo "  rtl-all       - Build and run ALL tests with RTL simulator"
 	@echo "  sim-<test>    - Build and run test with software simulator"
 	@echo "  sim-all       - Build and run ALL tests with software simulator"
-	@echo "  spike-<test>        - Build with HTIF and run with Spike"
-	@echo "  plugin-spike-<test> - Run with Spike + MMIO plugins (native binary)"
 	@echo "  build-spike-plugins - Build all Spike MMIO plugin .so files"
 	@echo "  compare-<test>      - Run both RTL and sim, compare traces"
 	@echo "  compare-all   - Compare traces for ALL tests"
@@ -840,8 +776,7 @@ help:
 	@echo "  make rtl-all         # Run all tests with RTL"
 	@echo "  make sim-uart        # Run uart test with software sim (kv32sim)"
 	@echo "  make sim-all         # Run all tests with software sim"
-	@echo "  make spike-hello           # Run hello test with Spike (HTIF-enabled)"
-	@echo "  make plugin-spike-uart     # Run uart test with Spike MMIO plugins"
+	@echo "  make SIM=spike sim-hello   # Run hello test with Spike + MMIO plugins"
 	@echo "  make build-spike-plugins   # Build all Spike MMIO plugin .so files"
 	@echo "  make compare-simple  # Compare RTL vs sim traces"
 	@echo "  make compare-all     # Compare traces for all tests"
@@ -855,11 +790,7 @@ help:
 	@echo "  make DEBUG=1 rtl-simple  # Run with debug messages (rebuilds RTL)"
 	@echo "  make TRACE=1 rtl-simple  # Enable instruction trace"
 	@echo "  make WAVE=1 rtl-simple   # Enable FST waveform dump"
-	@echo "  make SIM=spike sim-hello # Use Spike with magic addresses (no console)"
-	@echo "  make spike-hello         # Use Spike with HTIF (proper console output)"
-	@echo ""
-	@echo "Note: spike-<test> builds with HTIF support for proper console I/O,"
-	@echo "      while SIM=spike sim-<test> uses magic addresses (RTL-compatible binary)"
+	@echo "  make SIM=spike sim-hello # Use Spike with MMIO plugins (RTL-compatible binary)"
 	@echo ""
 	@echo "Output Structure:"
 	@echo "  build/firmware.elf          - Executable"

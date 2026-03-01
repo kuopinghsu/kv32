@@ -1,17 +1,12 @@
-// CSR Read-Only Exception Test
+// ============================================================================
+// File: csr.c
+// Project: KV32 RISC-V Processor
+// Description: CSR read-only exception test: illegal-instruction traps on RO CSR writes
 //
-// Exercises the concerning illegal-instruction exceptions (mcause=2) on read-only
-// CSR accesses:
-//
-//   Testcase 1 – csrrsi with uimm≠0 on cycle  (0xC00) must trap    (write to RO)
-//   Testcase 2 – csrrc  with rs1≠x0 on instret (0xC02) must trap   (write to RO)
-//   Testcase 3 – csrrci with uimm=0  on time   (0xC01) must NOT trap (pure read)
-//   Testcase 4 – csrrs  with rs1≠x0 on machine info CSRs (0xF11-0xF14) must trap
-//
-// RISC-V privileged spec rule (Zicsr):
-//   A write is attempted only if rs1 ≠ x0 (CSRRS/CSRRC) or uimm ≠ 0 (CSRRSI/CSRRCI).
-//   Writing a CSR whose address bits[11:10] = 0b11 (read-only) raises
-//   an Illegal Instruction exception (mcause = 2).
+// Verifies RISC-V Zicsr rule: a write is only attempted when
+// rs1 != x0 (CSRRS/CSRRC) or uimm != 0 (CSRRSI/CSRRCI);
+// otherwise it is a pure read and must not raise an exception.
+// ============================================================================
 
 #include <stdint.h>
 

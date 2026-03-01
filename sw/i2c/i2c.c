@@ -1,5 +1,8 @@
-// I2C Hardware Test
-// Refactored to use kv_i2c.h / kv_platform.h HAL APIs.
+// ============================================================================
+// File: i2c.c
+// Project: KV32 RISC-V Processor
+// Description: I2C master test: EEPROM byte/page read-write, polling and IRQ modes
+// ============================================================================
 
 #include <stdint.h>
 #include <stdio.h>

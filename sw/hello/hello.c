@@ -1,5 +1,8 @@
-// Hello World test - Tests console output using _write() and standard C library
-// Demonstrates the use of syscall.c _write() implementation and C library functions
+// ============================================================================
+// File: hello.c
+// Project: KV32 RISC-V Processor
+// Description: Hello World smoke test: console output via _write() syscall
+// ============================================================================
 
 #include <stdio.h>
 

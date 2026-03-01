@@ -1,5 +1,8 @@
-// SPI Hardware Test
-// Refactored to use kv_spi.h / kv_platform.h HAL APIs.
+// ============================================================================
+// File: spi.c
+// Project: KV32 RISC-V Processor
+// Description: SPI master test: Flash ID read, byte transfer, page write/read, IRQ mode
+// ============================================================================
 
 #include <stdint.h>
 #include <stdio.h>

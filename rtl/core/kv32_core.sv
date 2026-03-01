@@ -600,7 +600,7 @@ module kv32_core #(
     // deliver its response and the icache accept the CMO in the same cycle.
     assign cbo_flush          = is_cbo_mem && mem_valid;
     assign cbo_committing     = is_cbo_mem && mem_valid && !mem_wb_stall;
-    assign non_branch_flush = exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush;
+    assign non_branch_flush = exception || wb_exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush;
 
     // dedup_consumed: pc_if is already in-flight and its response is being
     // consumed this cycle.  Used to advance pc_if to pc_next *regardless* of
@@ -1529,8 +1529,8 @@ module kv32_core #(
     // MEM flush: Only on interrupts and WB-stage exceptions (see note below).
     //   Synchronous EX exceptions must NOT flush MEM because the MEM instruction
     //   is older in program order and must be allowed to retire.
-    assign if_flush = (branch_taken && !branch_flushed) || exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush;
-    assign id_flush = (branch_taken && !branch_flushed) || exception || irq_pending || is_mret_ex;
+    assign if_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush;
+    assign id_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex;
     assign ex_flush = irq_pending || wb_exception;
     // MEM flush: Only on interrupts (must drain for re-execution after MRET) and
     //   WB-stage exceptions (load/store access faults — WB is the oldest stage, so
@@ -1734,15 +1734,12 @@ module kv32_core #(
                     `DEBUG2(("Cycle %0t: EX->MEM pc=0x%h instr=0x%h ex_valid=%b mem_valid_next=%b",
                            $time, pc_ex, instr_ex, ex_valid, ex_valid && !exception && !irq_pending && !wb_exception));
                 end
-                // Capture data access error from buffered response for memory operations only
-                // Set fault only if the instruction entering MEM is a mem op to prevent
-                // non-memory instructions from incorrectly triggering exceptions
-                if (dmem_resp_valid_buf && dmem_resp_error_buf && (mem_read_ex || mem_write_ex)) begin
-                    data_access_fault_mem <= 1'b1;
-                end else begin
-                    // Clear fault when pipeline advances (new instruction enters MEM)
-                    data_access_fault_mem <= 1'b0;
-                end
+                // data_access_fault_mem is cleared each time a new instruction enters MEM.
+                // Load-access faults are detected directly in the MEM->WB transition via the
+                // live R-response (load_fault_direct), not via the buffered path here.
+                // Store-access faults are detected via store_error_pending when a FENCE
+                // drains the store buffer and the B-channel SLVERR has been latched.
+                data_access_fault_mem <= 1'b0;
             end else begin
                 // EX stage is stalled (e.g. serial divider FAST_DIV=0 computing).
                 // MEM is free to drain to WB, but we must NOT push the stalled EX
@@ -2348,6 +2345,17 @@ module kv32_core #(
     assign mem_wb_stall = load_stall || store_stall || (is_amo_mem && amo_in_progress) || fence_stall ||
                           fence_i_drain_stall || fence_i_cmo_stall || cbo_cmo_stall;
 
+    // ── Precise load-access fault: detected directly from the live R response.
+    // Fires in the same cycle that load_stall drops (dmem_resp_valid && !is_write).
+    logic load_fault_direct;
+    assign load_fault_direct = mem_read_mem && mem_valid &&
+                               dmem_resp_valid && !dmem_resp_is_write && dmem_resp_error;
+
+    // ── Store-access fault via FENCE: fires when FENCE exits MEM stage carrying
+    // a latched B-channel SLVERR (store_error_pending).
+    logic store_fault_via_fence;
+    assign store_fault_via_fence = is_fence_mem && mem_valid && store_error_pending;
+
     // ====== I-Cache CMO Outputs ======
     // CMO opcodes (must match localparams in kv32_icache.sv)
     localparam logic [1:0] ICACHE_CMO_INVAL     = 2'b00;  // Invalidate specific cache line
@@ -2432,6 +2440,25 @@ module kv32_core #(
             dmem_resp_data_buf <= 32'd0;  // Clear data to prevent stale value reuse
             dmem_resp_valid_buf <= 1'b0;
             dmem_resp_error_buf <= 1'b0;
+        end
+    end
+
+    // ── Store access fault latch ─────────────────────────────────────────────
+    // When the store buffer drains an entry and the B-channel returns SLVERR,
+    // latch the error here.  The fault is consumed when the next FENCE instruction
+    // exits the MEM stage (store_fault_via_fence), raising EXC_STORE_ACCESS_FAULT.
+    logic store_error_pending;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            store_error_pending <= 1'b0;
+        end else if (exception || wb_exception || irq_pending) begin
+            // Clear on any trap entry so the flag doesn't carry over
+            store_error_pending <= 1'b0;
+        end else if (dmem_resp_valid && dmem_resp_is_write && dmem_resp_error) begin
+            store_error_pending <= 1'b1;
+        end else if (!mem_wb_stall && store_fault_via_fence) begin
+            // Consumed when FENCE advances from MEM to WB with the fault
+            store_error_pending <= 1'b0;
         end
     end
 
@@ -2572,7 +2599,8 @@ module kv32_core #(
             rd_addr_wb    <= rd_addr_mem;
             // Clear reg_we for loads with data access faults, or when flushing
             // the WB stage due to an interrupt or WB-stage exception.
-            reg_we_wb     <= reg_we_mem && !(mem_read_mem && data_access_fault_mem)
+            // Also suppress write for load_fault_direct (detected this cycle).
+            reg_we_wb     <= reg_we_mem && !(mem_read_mem && (data_access_fault_mem || load_fault_direct))
                                         && !irq_pending && !wb_exception;
             if (reg_we_mem && (mem_read_mem && data_access_fault_mem)) begin
                 `DEBUG2(("[WB_REG_WE_CLEAR] PC=0x%h instr=0x%h rd=%0d: Clearing reg_we due to faulting load",
@@ -2593,7 +2621,11 @@ module kv32_core #(
             is_amo_wb     <= is_amo_mem;
             amo_op_wb     <= amo_op_mem;
             wb_valid      <= mem_valid && !irq_pending && !wb_exception;
-            data_access_fault_wb <= data_access_fault_mem;
+            // Combine all sources of data-access faults:
+            //   data_access_fault_mem : set by legacy path (currently always 0 after fix)
+            //   load_fault_direct     : R-channel SLVERR detected this cycle for MEM load
+            //   store_fault_via_fence : B-channel SLVERR latched and consumed by FENCE
+            data_access_fault_wb <= data_access_fault_mem || load_fault_direct || store_fault_via_fence;
             if (mem_valid) begin
                 `DEBUG2(("Cycle %0t: MEM->WB pc=0x%h instr=0x%h mem_valid=%b wb_valid_next=%b",
                        $time, pc_mem, instr_mem, mem_valid, mem_valid));
@@ -2605,6 +2637,14 @@ module kv32_core #(
         end else if (mem_valid) begin
             `DEBUG2(("Cycle %0t: MEM->WB STALLED pc=0x%h mem_wb_stall=%b mem_read=%b mem_write=%b dmem_resp_valid_buf=%b dmem_req_ready=%b",
                    $time, pc_mem, mem_wb_stall, mem_read_mem, mem_write_mem, dmem_resp_valid_buf, dmem_req_ready));
+            // When a WB exception fires while MEM is stalled, WB would keep
+            // data_access_fault_wb=1 across cycles (the stall prevents the normal
+            // MEM->WB advance that would clear it).  Clear the fault flag and wb_valid
+            // here so the exception fires exactly once, not on every stall cycle.
+            if (wb_exception) begin
+                wb_valid             <= 1'b0;
+                data_access_fault_wb <= 1'b0;
+            end
             // Clear reg_we after instruction retires to prevent stale forwarding
             if (retire_instr && reg_we_wb) begin
                 reg_we_wb <= 1'b0;

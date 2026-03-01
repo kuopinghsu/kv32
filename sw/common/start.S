@@ -1,5 +1,12 @@
-// Startup code for RISC-V processor
-// Initializes stack, BSS, and calls main()
+// ============================================================================
+// File: start.S
+// Project: KV32 RISC-V Processor
+// Description: Startup code: initialises GP, SP, clears BSS, then calls main()
+//
+// On return from main() the exit code is written to KV_MAGIC_EXIT
+// and the hart spins in an infinite loop so the simulator can detect
+// program termination.
+// ============================================================================
 
     .section .text.init
     .global _start
@@ -44,7 +51,21 @@ _start:
     la t0, trap_vector
     csrw mtvec, t0
 
-    // Enable timer interrupt
+    // Initialise mtimecmp to the maximum value (0xFFFF_FFFF_FFFF_FFFF) so
+    // no spurious machine-timer interrupt fires when mstatus.MIE is first
+    // set.  Spike initialises mtimecmp=0, which makes MTIP asserted from
+    // the very first cycle; without this guard every program that enables
+    // interrupts would immediately take cause-7 with no registered handler.
+    // Write HI = 0xFFFFFFFF first (matching kv_clint_set_mtimecmp order)
+    // to prevent a glitch if mtime_lo is also near max.
+    li   t1, 0x02004004    // KV_CLINT_MTIMECMP_HI (CLINT_BASE + 0x4004)
+    li   t0, -1            // 0xFFFFFFFF
+    sw   t0, 0(t1)
+    li   t1, 0x02004000    // KV_CLINT_MTIMECMP_LO (CLINT_BASE + 0x4000)
+    sw   t0, 0(t1)
+    // HI is already 0xFFFFFFFF → full 64-bit mtimecmp = UINT64_MAX
+
+    // Enable timer interrupt in mie (MTIE = bit 7)
     li t0, 0x80
     csrs mie, t0
 

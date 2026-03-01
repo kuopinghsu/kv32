@@ -45,6 +45,11 @@
 // Abstract base class for all peripheral devices
 class Device {
 public:
+    // Set to true by read()/write() when the requested offset is out-of-range
+    // for this peripheral (mirrors AXI SLVERR).  Cleared by the bus bridge
+    // (bus_read / bus_write) before each call so devices need only set it.
+    bool last_bus_error{false};
+
     virtual ~Device() {}
 
     // Read from device register (offset relative to device base)
@@ -310,11 +315,11 @@ private:
 // PLIC Device Driver
 // Base address: 0x0C000000
 // Implements standard SiFive PLIC register layout (7 sources, 1 context = hart 0 M-mode).
-// Matches RTL kv32_plic.sv:
-//   priority[i] at PLIC_BASE + 4*i          (i = 1..7)
+// Matches RTL axi_plic.sv:
+//   priority[i] at PLIC_BASE + 4*i          (i = 1..7, 4-bit: 0=disabled, 1-15=priority)
 //   pending     at PLIC_BASE + 0x001000      (bits [7:1])
 //   enable      at PLIC_BASE + 0x002000      (bits [7:1], context 0)
-//   threshold   at PLIC_BASE + 0x200000      (context 0)
+//   threshold   at PLIC_BASE + 0x200000      (context 0, 4-bit)
 //   claim/cmplt at PLIC_BASE + 0x200004      (context 0)
 class PLICDevice : public Device {
 private:

@@ -198,6 +198,7 @@ public:
     // Exception handling
     bool exception_occurred;
     uint32_t exception_pc;
+    bool last_bus_error;  // Set by bus_read/bus_write when device signals SLVERR
 
     KV32Simulator(uint32_t base = MEM_BASE, uint32_t size = MEM_SIZE);
     ~KV32Simulator();

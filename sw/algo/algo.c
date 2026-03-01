@@ -1,8 +1,11 @@
-/*
- * Algorithm Test Program
- * Demonstrates complex data operations on various data types
- * Includes: QuickSort, FFT, Matrix operations, Statistics
- */
+// ============================================================================
+// File: algo.c
+// Project: KV32 RISC-V Processor
+// Description: Algorithm benchmark: QuickSort, FFT, matrix operations, statistics
+//
+// Exercises complex data operations on various C data types to stress
+// the integer pipeline and verify correct arithmetic results.
+// ============================================================================
 
 #include <stdio.h>
 #include <stdint.h>

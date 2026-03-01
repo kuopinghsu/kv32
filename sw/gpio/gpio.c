@@ -1,15 +1,12 @@
-/*
- * sw/gpio/gpio.c – GPIO test suite
- *
- * Tests:
- *  1. GPIO register access sanity (read/write data, direction, interrupt)
- *  2. GPIO output: write data, read back via loopback mode
- *  3. GPIO atomic set/clear operations
- *  4. GPIO input with loopback (output->input routing)
- *  5. GPIO edge-triggered interrupts (rising and falling edges)
- *  6. GPIO level-triggered interrupts (high and low levels)
- *  7. GPIO multi-bank operation (all 4 banks)
- */
+// ============================================================================
+// File: gpio.c
+// Project: KV32 RISC-V Processor
+// Description: GPIO test suite: output, loopback, set/clear, edge/level interrupts, multi-bank
+//
+// Tests: register sanity, output via loopback, atomic set/clear,
+// input loopback, rising/falling edge IRQ, high/low level IRQ,
+// and all 4 GPIO banks.
+// ============================================================================
 
 #include <stdint.h>
 #include <stdio.h>

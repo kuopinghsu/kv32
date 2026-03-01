@@ -126,7 +126,8 @@ KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
       trace_enabled(false), mem_base(base), mem_size(size), gdb_ctx(nullptr),
       gdb_enabled(false), gdb_stepping(false), max_instructions(0),
       signature_start(0), signature_end(0), signature_granularity(4),
-      signature_enabled(false), exception_occurred(false), exception_pc(0) {
+      signature_enabled(false), exception_occurred(false), exception_pc(0),
+      last_bus_error(false) {
         memory = new MemoryDevice(mem_size);
     memset(regs, 0, sizeof(regs));
     regs[0] = 0; // x0 is always 0
@@ -607,6 +608,7 @@ const KV32Simulator::SlaveRegion* KV32Simulator::find_slave(uint32_t addr) const
 }
 
 uint32_t KV32Simulator::bus_read(uint32_t addr, int size, bool* handled) {
+    last_bus_error = false;  // Clear before each bus access
     const SlaveRegion* slave = find_slave(addr);
     if (!slave) {
         if (handled) {
@@ -620,17 +622,23 @@ uint32_t KV32Simulator::bus_read(uint32_t addr, int size, bool* handled) {
     }
 
     uint32_t offset = addr - slave->base;
-    return slave->device->read(offset, size);
+    slave->device->last_bus_error = false;
+    uint32_t val = slave->device->read(offset, size);
+    last_bus_error = slave->device->last_bus_error;
+    return val;
 }
 
 bool KV32Simulator::bus_write(uint32_t addr, uint32_t value, int size) {
+    last_bus_error = false;  // Clear before each bus access
     const SlaveRegion* slave = find_slave(addr);
     if (!slave) {
         return false;
     }
 
     uint32_t offset = addr - slave->base;
+    slave->device->last_bus_error = false;
     slave->device->write(offset, value, size);
+    last_bus_error = slave->device->last_bus_error;
     return true;
 }
 
@@ -695,6 +703,17 @@ uint32_t KV32Simulator::read_mem(uint32_t addr, int size) {
         }
         return 0;
     }
+    // AXI SLVERR from peripheral → load access fault (cause 5)
+    if (last_bus_error) {
+        uint32_t mie_bit = (csr_mstatus >> 3) & 1;
+        csr_mstatus = (csr_mstatus & ~0x1888) | (mie_bit << 7) | (3 << 11);
+        write_csr(CSR_MCAUSE, CAUSE_LOAD_ACCESS);
+        write_csr(CSR_MTVAL,  addr);
+        write_csr(CSR_MEPC,   pc);
+        exception_occurred = true;
+        exception_pc = read_csr(CSR_MTVEC) & ~0x3;
+        return 0;
+    }
     return value;
 }
 
@@ -745,6 +764,17 @@ void KV32Simulator::write_mem(uint32_t addr, uint32_t value, int size) {
                   << std::setfill('0') << std::setw(8) << value << " pc=0x"
                   << std::hex << std::setfill('0') << std::setw(8) << pc
                   << std::endl;
+        return;
+    }
+    // AXI SLVERR from peripheral → store access fault (cause 7)
+    if (last_bus_error) {
+        uint32_t mie_bit = (csr_mstatus >> 3) & 1;
+        csr_mstatus = (csr_mstatus & ~0x1888) | (mie_bit << 7) | (3 << 11);
+        write_csr(CSR_MCAUSE, CAUSE_STORE_ACCESS);
+        write_csr(CSR_MTVAL,  addr);
+        write_csr(CSR_MEPC,   pc);
+        exception_occurred = true;
+        exception_pc = read_csr(CSR_MTVEC) & ~0x3;
         return;
     }
 

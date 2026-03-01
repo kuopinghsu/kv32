@@ -1,14 +1,12 @@
-/*
- * Whetstone Benchmark - Integer-Only Baremetal RISC-V Version
- *
- * Adapted from the original Whetstone benchmark (1972)
- *
- * NOTE: This is NOT a floating-point benchmark!
- * This version uses fixed-point arithmetic (scaled by 1000)
- * since the RISC-V core does not have FPU support.
- *
- * For true Whetstone scores, a processor with F/D extensions is required.
- */
+// ============================================================================
+// File: whetstone.c
+// Project: KV32 RISC-V Processor
+// Description: Whetstone benchmark: integer fixed-point version for cores without FPU
+//
+// Adapted from the original Whetstone benchmark (1972).
+// Uses fixed-point arithmetic (scaled by 1000) because this core
+// has no F/D extensions.
+// ============================================================================
 
 #include <stdint.h>
 #include <csr.h>

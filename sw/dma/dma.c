@@ -1,17 +1,12 @@
-/*
- * sw/dma/dma.c – AXI DMA controller test suite
- *
- * Tests:
- *  1. DMA_ID register sanity
- *  2. 1-D flat copy, 64 bytes, polling
- *  3. 1-D flat copy, 128 bytes, IRQ-driven (channel 1)
- *  4. 2-D strided copy (4 rows × 16 B, src_stride=32, dst_stride=16)
- *  5. 3-D planar copy (2 planes × 2 rows × 8 B, pstrides)
- *  6. Scatter-Gather, 3 descriptors
- *  7. Error IRQ (unmapped source address → DECERR → ch_err)
- *  8. Multi-channel: ch0 and ch1 started back-to-back, both verified
- *  9. Performance: 4 KB 1-D transfer, measures cycles / MB/s via PERF counters
- */
+// ============================================================================
+// File: dma.c
+// Project: KV32 RISC-V Processor
+// Description: AXI DMA controller test suite (1-D, 2-D, 3-D, scatter-gather, IRQ)
+//
+// Tests: ID register, flat copy (polling + IRQ), 2-D strided copy,
+// 3-D planar copy, scatter-gather chain, error IRQ on unmapped source,
+// and multi-channel back-to-back operation.
+// ============================================================================
 
 #include <stdint.h>
 #include <stdio.h>

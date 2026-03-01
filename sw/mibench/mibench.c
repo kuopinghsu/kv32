@@ -1,15 +1,11 @@
-/*
- * MiBench Benchmark Suite - Simplified Baremetal RISC-V Version
- *
- * Adapted from MiBench (http://vhosts.eecs.umich.edu/mibench/)
- *
- * Selected benchmarks:
- * - qsort: Quicksort algorithm
- * - dijkstra: Shortest path
- * - blowfish: Encryption
- * - crc: CRC calculation
- * - fft: Fast Fourier Transform (integer version)
- */
+// ============================================================================
+// File: mibench.c
+// Project: KV32 RISC-V Processor
+// Description: MiBench subset: qsort, Dijkstra, Blowfish encryption, CRC, integer FFT
+//
+// Adapted from MiBench (http://vhosts.eecs.umich.edu/mibench/)
+// for bare-metal RISC-V without OS or libc float support.
+// ============================================================================
 
 #include <stdint.h>
 #include <csr.h>

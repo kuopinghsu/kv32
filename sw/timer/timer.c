@@ -1,16 +1,11 @@
-/*
- * sw/timer/timer.c – Timer/PWM test suite
- *
- * Tests:
- *  1. Timer register access sanity
- *  2. Timer basic counting (single compare)
- *  3. Timer dual-compare mode (both COMPARE1 and COMPARE2)
- *  4. PWM mode with duty cycle control
- *  5. Timer interrupts (COMPARE1 match)
- *  6. Dual-compare interrupts (both COMPARE1 and COMPARE2)
- *  7. Timer reload on COMPARE2
- *  8. PWM with different duty cycles
- */
+// ============================================================================
+// File: timer.c
+// Project: KV32 RISC-V Processor
+// Description: Timer/PWM test suite: counting, dual-compare, PWM, reload, interrupts
+//
+// Tests: register sanity, basic counting, dual-compare mode, PWM duty
+// cycle, COMPARE1/2 interrupts, timer reload, and variable PWM cycles.
+// ============================================================================
 
 #include <stdint.h>
 #include <stdio.h>

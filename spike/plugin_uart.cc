@@ -17,11 +17,21 @@
 //   TX always succeeds immediately (STATUS never shows tx_full).
 //   TX data is written to stdout.
 //   RX: non-blocking stdin poll via select(); returns 0 if no input available.
-//   With loopback enabled (CTRL[0]=1), each TX byte is also pushed to the RX
-//   FIFO so software loopback tests work correctly.
+//   With loopback (CTRL[0]=1), each TX byte is also pushed to the RX FIFO.
+//
+// Interrupt routing:
+//   When (IE & IS) != 0 this plugin asserts MIP.MEIP on hart 0 via
+//   mip_csr_t::backdoor_write_with_mask().  plugin_plic answers the
+//   subsequent claim read and deasserts MEIP; the next tick() re-asserts
+//   if the FIFO is still non-empty after the handler drains it.
 // ============================================================================
 
 #include <riscv/abstract_device.h>
+
+#ifdef SPIKE_INCLUDE
+#include <riscv/sim.h>          // sim_t + get_intctrl()
+#include <riscv/devices.h>     // abstract_interrupt_controller_t, plic_t
+#endif
 
 #include <cerrno>
 #include <cstdio>
@@ -39,7 +49,6 @@
 static constexpr uint32_t UART_FIFO_DEPTH = 16;
 static constexpr uint32_t UART_CAP_VAL =
     (0x0001u << 16) | (UART_FIFO_DEPTH << 8) | UART_FIFO_DEPTH;
-// Last valid register offset
 static constexpr reg_t UART_ADDR_MAX = KV_UART_CAP_OFF;
 
 // Non-blocking stdin: try to read one byte without blocking.
@@ -58,7 +67,8 @@ static bool stdin_try_read(uint8_t *ch)
 
 class plugin_uart_t : public abstract_device_t {
 public:
-    plugin_uart_t() : ie_(0), loopback_(false) {}
+    explicit plugin_uart_t(sim_t *sim)
+        : sim_(sim), ie_(0), loopback_(false) {}
 
     bool load(reg_t addr, size_t len, uint8_t *bytes) override
     {
@@ -67,6 +77,7 @@ public:
         memset(bytes, 0, len);
         if (len >= 4) memcpy(bytes, &val, 4);
         else           memcpy(bytes, &val, len);
+        // update_meip() not needed on load: reads don't change IRQ state
         return true;
     }
 
@@ -77,17 +88,48 @@ public:
         if (len >= 4) memcpy(&val, bytes, 4);
         else           memcpy(&val, bytes, len);
         reg_write(addr, val);
+        update_meip();  // IRQ state may have changed (IE written, RX popped, etc.)
         return true;
+    }
+
+    // Spike calls tick() every RTC period (typically every ~1000 instructions).
+    // Re-evaluate MEIP here so interrupts arrive even when the hart is spinning
+    // in a wait loop between instruction-boundary interrupt checks.
+    void tick(reg_t /*rtc_ticks*/) override
+    {
+        poll_stdin();
+        update_meip();
     }
 
     reg_t size() override { return (reg_t)KV_UART_SIZE; }
 
 private:
+    sim_t              *sim_;
     std::deque<uint8_t> rx_fifo_;
-    uint32_t ie_;
-    bool     loopback_;
+    uint32_t            ie_;
+    bool                loopback_;
 
-    // Poll stdin for any pending bytes and drain them into rx_fifo_.
+    // ── IRQ signal ───────────────────────────────────────────────────────────
+
+    uint32_t rx_is()  const { return rx_fifo_.empty() ? 0u : KV_UART_IE_RX_READY; }
+    // TX FIFO is always "empty" in simulation (instant transmit).
+    uint32_t is_val() const { return rx_is() | KV_UART_IE_TX_EMPTY; }
+    bool     irq_pending() const { return (ie_ & is_val()) != 0; }
+
+    // Tell Spike's built-in PLIC whether our IRQ source is asserted.
+    // Spike's PLIC then asserts/deasserts MIP.MEIP automatically and handles
+    // the software claim/complete handshake at 0x0C200000/0x0C200004.
+    void update_meip() const
+    {
+#ifdef SPIKE_INCLUDE
+        if (!sim_) return;
+        sim_->get_intctrl()->set_interrupt_level(
+            (uint32_t)KV_PLIC_SRC_UART, irq_pending() ? 1 : 0);
+#endif
+    }
+
+    // ── FIFO helpers ─────────────────────────────────────────────────────────
+
     void poll_stdin()
     {
         uint8_t ch;
@@ -95,8 +137,7 @@ private:
             rx_fifo_.push_back(ch);
     }
 
-    uint32_t rx_is()   const { return rx_fifo_.empty() ? 0u : KV_UART_IE_RX_READY; }
-    uint32_t is_val()  const { return rx_is() | KV_UART_IE_TX_EMPTY; } // tx always empty
+    // ── register access ──────────────────────────────────────────────────────
 
     uint32_t reg_read(reg_t addr)
     {
@@ -105,6 +146,7 @@ private:
             poll_stdin();
             if (!rx_fifo_.empty()) {
                 uint8_t b = rx_fifo_.front(); rx_fifo_.pop_front();
+                update_meip();  // RX FIFO shrank – recompute IRQ
                 return b;
             }
             return 0u;
@@ -112,17 +154,15 @@ private:
         case KV_UART_STATUS_OFF: {
             poll_stdin();
             uint32_t st = 0;
-            if (!rx_fifo_.empty())                     st |= KV_UART_ST_RX_READY;
-            if (rx_fifo_.size() >= UART_FIFO_DEPTH)    st |= KV_UART_ST_RX_FULL;
-            // TX never full in simulation
+            if (!rx_fifo_.empty())                  st |= KV_UART_ST_RX_READY;
+            if (rx_fifo_.size() >= UART_FIFO_DEPTH) st |= KV_UART_ST_RX_FULL;
             return st;
         }
         case KV_UART_IE_OFF:    return ie_;
         case KV_UART_IS_OFF:    poll_stdin(); return is_val();
-        case KV_UART_LEVEL_OFF: {
+        case KV_UART_LEVEL_OFF:
             poll_stdin();
-            return (uint32_t)rx_fifo_.size() & 0x1Fu; // tx_count=0, rx_count in [3:0]
-        }
+            return (uint32_t)rx_fifo_.size() & 0x1Fu;
         case KV_UART_CTRL_OFF:  return loopback_ ? KV_UART_CTRL_LOOPBACK : 0u;
         case KV_UART_CAP_OFF:   return UART_CAP_VAL;
         default:                return 0u;
@@ -140,22 +180,22 @@ private:
                 rx_fifo_.push_back((uint8_t)ch);
             break;
         }
-        case KV_UART_IE_OFF:   ie_      = val & 0x3u; break;
-        case KV_UART_IS_OFF:   break;  // IS is read-only (W1C in RTL, no-op here)
-        case KV_UART_LEVEL_OFF: break; // LEVEL is read-only
-        case KV_UART_CTRL_OFF: loopback_ = (val & KV_UART_CTRL_LOOPBACK) != 0; break;
-        case KV_UART_CAP_OFF:  break;  // CAP is read-only
+        case KV_UART_IE_OFF:    ie_       = val & 0x3u;                          break;
+        case KV_UART_IS_OFF:    /* IS is read-only (W1C in RTL) */               break;
+        case KV_UART_LEVEL_OFF: /* LEVEL is read-only */                         break;
+        case KV_UART_CTRL_OFF:  loopback_ = (val & KV_UART_CTRL_LOOPBACK) != 0; break;
+        case KV_UART_CAP_OFF:   /* CAP is read-only */                           break;
         default: break;
         }
     }
 };
 
 static plugin_uart_t *
-plugin_uart_parse(const void *, const sim_t *, reg_t *base,
+plugin_uart_parse(const void *, const sim_t *sim, reg_t *base,
                   const std::vector<std::string> &sargs)
 {
     if (!sargs.empty()) *base = strtoull(sargs[0].c_str(), nullptr, 0);
-    return new plugin_uart_t();
+    return new plugin_uart_t(const_cast<sim_t *>(sim));
 }
 
 static std::string

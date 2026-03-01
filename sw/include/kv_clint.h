@@ -1,11 +1,12 @@
-/*
- * kv_clint.h – Core-Local Interrupt Controller (CLINT) driver
- *
- * Provides inline helpers for:
- *   - Reading/writing 64-bit mtime safely
- *   - Setting mtimecmp to schedule timer interrupts
- *   - Triggering/clearing software interrupts via MSIP
- */
+// ============================================================================
+// File: kv_clint.h
+// Project: KV32 RISC-V Processor
+// Description: CLINT driver: mtime read/write, mtimecmp, MSIP software interrupt
+//
+// Hardware: axi_clint.sv at KV_CLINT_BASE (0x0200_0000).
+// All functions are header-only inline; no separate .c required.
+// ============================================================================
+
 #ifndef KV_CLINT_H
 #define KV_CLINT_H
 

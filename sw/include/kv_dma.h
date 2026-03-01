@@ -1,13 +1,12 @@
-/*
- * kv_dma.h – DMA controller driver (polling + interrupt-mode helpers)
- *
- * Hardware: axi_dma.sv at KV_DMA_BASE
- *   Register map – see kv_platform.h (KV_DMA_*)
- *
- * The driver is intentionally header-only (all inline) so that it adds
- * zero code when not called.  For interrupt-driven use, pair with
- * kv_plic.h (source KV_PLIC_SRC_DMA).
- */
+// ============================================================================
+// File: kv_dma.h
+// Project: KV32 RISC-V Processor
+// Description: DMA controller driver: descriptor setup, channel start/poll, IRQ helpers
+//
+// Hardware: axi_dma.sv at KV_DMA_BASE.
+// Header-only inline driver; pair with kv_plic.h for IRQ-driven use.
+// ============================================================================
+
 #ifndef KV_DMA_H
 #define KV_DMA_H
 

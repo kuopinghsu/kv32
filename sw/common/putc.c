@@ -1,7 +1,8 @@
-/*
- * putc() implementation for embedded systems
- * Outputs a single character to stdout
- */
+// ============================================================================
+// File: putc.c
+// Project: KV32 RISC-V Processor
+// Description: putc() stub for embedded systems: routes single character to stdout
+// ============================================================================
 
 #include <stdio.h>
 

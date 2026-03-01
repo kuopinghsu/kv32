@@ -1,13 +1,12 @@
-/*
- * kv_timer.h – Timer/PWM driver (polling + interrupt-mode helpers)
- *
- * Hardware: axi_timer.sv at KV_TIMER_BASE
- *   Register map – see kv_platform.h (KV_TIMER_*)
- *
- * The driver is intentionally header-only (all inline) so that it adds
- * zero code when not called.  For interrupted-driven use, pair with
- * kv_plic.h (source KV_PLIC_SRC_TIMER).
- */
+// ============================================================================
+// File: kv_timer.h
+// Project: KV32 RISC-V Processor
+// Description: Timer/PWM driver: compare, PWM duty cycle, and interrupt helpers
+//
+// Hardware: axi_timer.sv at KV_TIMER_BASE.
+// Header-only inline driver; pair with kv_plic.h for IRQ-driven use.
+// ============================================================================
+
 #ifndef KV_TIMER_H
 #define KV_TIMER_H
 

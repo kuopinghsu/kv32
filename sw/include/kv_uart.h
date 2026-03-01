@@ -1,13 +1,12 @@
-/*
- * kv_uart.h – UART driver (polling + interrupt-mode helpers)
- *
- * Hardware: axi_uart.sv at KV_UART_BASE
- *   Register map – see kv_platform.h (KV_UART_*)
- *
- * The driver is intentionally header-only (all inline) so that it adds
- * zero code when not called.  For interrupt-driven use, pair with
- * kv_plic.h (source KV_PLIC_SRC_UART).
- */
+// ============================================================================
+// File: kv_uart.h
+// Project: KV32 RISC-V Processor
+// Description: UART driver: transmit/receive, polling and interrupt-driven modes
+//
+// Hardware: axi_uart.sv at KV_UART_BASE.
+// Header-only inline driver; pair with kv_plic.h for IRQ-driven use.
+// ============================================================================
+
 #ifndef KV_UART_H
 #define KV_UART_H
 

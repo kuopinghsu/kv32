@@ -111,6 +111,17 @@ module axi_gpio #(
     localparam logic [15:0] GPIO_VERSION = 16'h0001;       // Version 0.1
     localparam logic [31:0] CAPABILITY_REG = {GPIO_VERSION, 8'(NUM_REG_BANKS), 8'(NUM_PINS)};
 
+    // AXI address range checks
+    // addr[7:4] = register-type select (0-9 per-bank, 0xA capability)
+    // addr[3:2] = bank select (0..NUM_REG_BANKS-1)
+    // Write: reg_sel 0-9, valid bank only (capability 0xA is read-only → SLVERR on write)
+    // Read:  reg_sel 0-9 with valid bank, OR reg_sel 0xA (capability, bank-independent)
+    wire wr_addr_valid = (axi_awaddr[7:4] <= 4'h9) &&
+                         (axi_awaddr[3:2] < 2'(NUM_REG_BANKS));
+    wire rd_addr_valid = (axi_araddr[7:4] == 4'hA) ||
+                         ((axi_araddr[7:4] <= 4'h9) &&
+                          (axi_araddr[3:2] < 2'(NUM_REG_BANKS)));
+
     // ========================================================================
     // Internal Registers (Per-Bank Arrays)
     // ========================================================================
@@ -253,7 +264,7 @@ module axi_gpio #(
         end else begin
             if (aw_hs && w_hs && !axi_bvalid) begin
                 axi_bvalid <= 1'b1;
-                axi_bresp  <= 2'b00;  // OKAY
+                axi_bresp  <= wr_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
                 `ifdef DEBUG
                 `DEBUG2(("[GPIO] Write complete: addr=0x%h", axi_awaddr));
                 `endif
@@ -277,7 +288,7 @@ module axi_gpio #(
             if (ar_hs && !axi_rvalid) begin
                 axi_rvalid <= 1'b1;
                 axi_rdata  <= rdata_next;
-                axi_rresp  <= 2'b00;  // OKAY
+                axi_rresp  <= rd_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
                 `ifdef DEBUG
                 `DEBUG2(("[GPIO] Read: addr=0x%h data=0x%h", axi_araddr, rdata_next));
                 `endif

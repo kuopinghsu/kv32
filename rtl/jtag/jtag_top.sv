@@ -208,33 +208,12 @@ module jtag_top #(
     // =========================================================================
     // Assertions and Checks
     // =========================================================================
-    `ifndef SYNTHESIS
-        // In cJTAG mode, system clock must be significantly faster than TCKC
-        // Recommended: clk_i >= 6×TCKC (for reliable synchronization)
-        initial begin
-            $display("[JTAG_TOP] Pin Multiplexing: 4 pins shared between JTAG/cJTAG");
-            $display("[JTAG_TOP]   Pin 0: TCK/TCKC (clock input)");
-            $display("[JTAG_TOP]   Pin 1: TMS/TMSC (bidirectional)");
-            $display("[JTAG_TOP]   Pin 2: TDI (JTAG only)");
-            $display("[JTAG_TOP]   Pin 3: TDO (JTAG only)");
-
-            if (USE_CJTAG) begin
-                $display("[JTAG_TOP] Mode: cJTAG (IEEE 1149.7)");
-                $display("[JTAG_TOP]   Active pins: 0 (TCKC), 1 (TMSC bidirectional)");
-                $display("[JTAG_TOP]   System clock requirement: clk_i >= 6×TCKC");
-            end else begin
-                $display("[JTAG_TOP] Mode: JTAG (IEEE 1149.1)");
-                $display("[JTAG_TOP]   Active pins: 0 (TCK), 1 (TMS), 2 (TDI), 3 (TDO)");
-            end
-        end
-
-        // Monitor JTAG/cJTAG activity
-        `ifdef DEBUG
-        always @(posedge tap_tck) begin
-            `DEBUG2(("[%0t] JTAG_TOP: TAP TCK posedge, TMS=%b TDI=%b TDO=%b",
-                   $time, tap_tms, tap_tdi, tap_tdo));
-        end
-        `endif
-    `endif // SYNTHESIS
+    // Monitor JTAG/cJTAG activity
+    `ifdef DEBUG
+    always @(posedge tap_tck) begin
+        `DEBUG2(("[%0t] JTAG_TOP: TAP TCK posedge, TMS=%b TDI=%b TDO=%b",
+               $time, tap_tms, tap_tdi, tap_tdo));
+    end
+    `endif
 
 endmodule

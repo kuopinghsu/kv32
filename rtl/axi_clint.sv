@@ -167,6 +167,19 @@ module axi_clint (
     assign write_addr_offset = axi_awaddr[15:0];
     assign read_addr_offset  = axi_araddr[15:0];
 
+    // Only the three defined register locations are valid.
+    // Any other offset is out-of-range → AXI SLVERR (2'b10)
+    wire wr_addr_valid = (write_addr_offset == MSIP_OFFSET)              ||
+                         (write_addr_offset == MTIMECMP_OFFSET)          ||
+                         (write_addr_offset == MTIMECMP_OFFSET + 16'd4)  ||
+                         (write_addr_offset == MTIME_OFFSET)             ||
+                         (write_addr_offset == MTIME_OFFSET   + 16'd4);
+    wire rd_addr_valid  = (read_addr_offset  == MSIP_OFFSET)              ||
+                          (read_addr_offset  == MTIMECMP_OFFSET)          ||
+                          (read_addr_offset  == MTIMECMP_OFFSET + 16'd4)  ||
+                          (read_addr_offset  == MTIME_OFFSET)             ||
+                          (read_addr_offset  == MTIME_OFFSET   + 16'd4);
+
     // ========================================================================
     // Write Channel (AW + W → B)
     // ========================================================================
@@ -240,7 +253,7 @@ module axi_clint (
                 endcase
 
                 // Generate write response
-                axi_bresp  <= 2'b00;  // OKAY response
+                axi_bresp  <= wr_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
                 axi_bvalid <= 1'b1;
             end
         end
@@ -286,7 +299,7 @@ module axi_clint (
                 endcase
 
                 // Generate read response
-                axi_rresp  <= 2'b00;  // OKAY response
+                axi_rresp  <= rd_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
                 axi_rvalid <= 1'b1;
             end
         end

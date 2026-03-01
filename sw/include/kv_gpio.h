@@ -1,13 +1,12 @@
-/*
- * kv_gpio.h – GPIO driver (polling + interrupt-mode helpers)
- *
- * Hardware: axi_gpio.sv at KV_GPIO_BASE
- *   Register map – see kv_platform.h (KV_GPIO_*)
- *
- * The driver is intentionally header-only (all inline) so that it adds
- * zero code when not called.  For interrupt-driven use, pair with
- * kv_plic.h (source KV_PLIC_SRC_GPIO).
- */
+// ============================================================================
+// File: kv_gpio.h
+// Project: KV32 RISC-V Processor
+// Description: GPIO driver: data/direction/interrupt configuration, loopback helpers
+//
+// Hardware: axi_gpio.sv at KV_GPIO_BASE.
+// Header-only inline driver; pair with kv_plic.h for IRQ-driven use.
+// ============================================================================
+
 #ifndef KV_GPIO_H
 #define KV_GPIO_H
 

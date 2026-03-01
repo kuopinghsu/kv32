@@ -1,15 +1,13 @@
-/*
- * trap.c – Default trap handler for RISC-V exceptions and interrupts.
- *
- * The default trap_handler is a *weak* symbol.  User code can override
- * it by defining a non-weak trap_handler().
- *
- * When not overridden, trap_handler() delegates to kv_irq_dispatch()
- * which routes each cause to the handler registered with
- * kv_irq_register() / kv_exc_register() (see kv_irq.h).
- * This allows fine-grained per-cause hooks without replacing the whole
- * trap entry point.
- */
+// ============================================================================
+// File: trap.c
+// Project: KV32 RISC-V Processor
+// Description: Default machine-mode trap handler; delegates to kv_irq_dispatch()
+//
+// trap_handler() is a weak symbol that user code may override.
+// When not overridden it calls kv_irq_dispatch() which routes each
+// mcause value to the handler registered via kv_irq_register() or
+// kv_exc_register().
+// ============================================================================
 
 #ifdef __cplusplus
 extern "C" {

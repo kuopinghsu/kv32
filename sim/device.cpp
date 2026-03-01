@@ -73,6 +73,7 @@ uint32_t MagicDevice::read(uint32_t offset, int size) {
     if (offset == KV_MAGIC_EXIT_OFF) {
         return 0;
     }
+    last_bus_error = true;  // only EXIT and CONSOLE offsets are valid
     return 0;
 }
 
@@ -87,7 +88,10 @@ void MagicDevice::write(uint32_t offset, uint32_t value, int size) {
     if (offset == KV_MAGIC_EXIT_OFF) {
         exit_code = (value >> 1) & 0x7FFFFFFF;
         exit_pending = true;
+        return;
     }
+
+    last_bus_error = true;  // only EXIT and CONSOLE offsets are valid
 }
 
 bool MagicDevice::consume_exit_request(int* code_out) {
@@ -134,6 +138,8 @@ bool UARTDevice::get_irq() const {
 
 uint32_t UARTDevice::read(uint32_t offset, int size) {
     (void)size;
+    // Offsets beyond CAP are out-of-range (mirrors RTL addr[7:2] <= 6 check)
+    if (offset > KV_UART_CAP_OFF) { last_bus_error = true; return 0; }
     switch (offset) {
         case KV_UART_DATA_OFF:  // RX FIFO pop
             if (!rx_fifo.empty()) {
@@ -178,6 +184,8 @@ uint32_t UARTDevice::read(uint32_t offset, int size) {
 
 void UARTDevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;
+    // Offsets beyond CAP are out-of-range (mirrors RTL addr[7:2] <= 6 check)
+    if (offset > KV_UART_CAP_OFF) { last_bus_error = true; return; }
     switch (offset) {
         case KV_UART_DATA_OFF: {  // TX FIFO push → print immediately in simulation
             char c = (char)(value & 0xFF);
@@ -255,6 +263,8 @@ void I2CDevice::reset() {
 
 uint32_t I2CDevice::read(uint32_t offset, int size) {
     (void)size;
+    // Offsets beyond CAP are out-of-range
+    if (offset > KV_I2C_CAP_OFF) { last_bus_error = true; return 0; }
     switch (offset) {
         case KV_I2C_CTRL_OFF:  // Control register
             return (ack_cmd   ? KV_I2C_CTRL_NACK  : 0u) |
@@ -314,6 +324,8 @@ uint32_t I2CDevice::read(uint32_t offset, int size) {
 
 void I2CDevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;
+    // Offsets beyond CAP are out-of-range
+    if (offset > KV_I2C_CAP_OFF) { last_bus_error = true; return; }
     switch (offset) {
         case KV_I2C_CTRL_OFF:  // Control register
             i2c_enable = (value & KV_I2C_CTRL_ENABLE) != 0;
@@ -548,6 +560,8 @@ bool SPIDevice::get_irq() const {
 
 uint32_t SPIDevice::read(uint32_t offset, int size) {
     (void)size;
+    // Offsets beyond CAP are out-of-range
+    if (offset > KV_SPI_CAP_OFF) { last_bus_error = true; return 0; }
     switch (offset) {
         case KV_SPI_CTRL_OFF:  // Control register
             return ((chip_select & 0xFu) << 4) |
@@ -599,6 +613,8 @@ uint32_t SPIDevice::read(uint32_t offset, int size) {
 
 void SPIDevice::write(uint32_t offset, uint32_t value, int size) {
     (void)size;
+    // Offsets beyond CAP are out-of-range
+    if (offset > KV_SPI_CAP_OFF) { last_bus_error = true; return; }
     switch (offset) {
         case KV_SPI_CTRL_OFF:  // Control register
             spi_enable  = (value & KV_SPI_CTRL_ENABLE)   != 0;
@@ -754,7 +770,7 @@ int PLICDevice::best_claim() const {
     int best_id  = 0;
     uint32_t best_pri = 0;
     for (int i = 1; i <= NUM_IRQ; i++) {
-        if (enable_r[i] && pending_r[i] && priority_r[i] > threshold_r) {
+        if (enable_r[i] && pending_r[i] && !claimed_r[i] && priority_r[i] > threshold_r) {
             if (priority_r[i] >= best_pri) {
                 best_pri = priority_r[i];
                 best_id  = i;
@@ -823,6 +839,7 @@ uint32_t PLICDevice::read(uint32_t offset, int size) {
         return (uint32_t)id;
     }
 
+    last_bus_error = true;  // unrecognised PLIC offset
     return 0;
 }
 
@@ -833,7 +850,7 @@ void PLICDevice::write(uint32_t offset, uint32_t value, int size) {
     if (offset >= KV_PLIC_PRIORITY_OFF && offset < KV_PLIC_PENDING_OFF) {
         int src = offset >> 2;
         if (src >= 1 && src <= NUM_IRQ)
-            priority_r[src] = value & 0x7;
+            priority_r[src] = value & 0xF;
         return;
     }
 
@@ -847,7 +864,7 @@ void PLICDevice::write(uint32_t offset, uint32_t value, int size) {
 
     // Threshold
     if (offset == KV_PLIC_THRESHOLD_OFF) {
-        threshold_r = value & 0x7;
+        threshold_r = value & 0xF;
         return;
     }
 
@@ -865,6 +882,8 @@ void PLICDevice::write(uint32_t offset, uint32_t value, int size) {
         }
         return;
     }
+
+    last_bus_error = true;  // unrecognised PLIC offset
 }
 
 // ============================================================================
@@ -894,6 +913,7 @@ uint32_t CLINTDevice::read(uint32_t offset, int size) {
     } else if (offset == KV_CLINT_MTIME_HI_OFF) {
         return (mtime >> 32) & 0xFFFFFFFF;
     }
+    last_bus_error = true;  // not one of the 5 valid CLINT offsets
     return 0;
 }
 
@@ -905,6 +925,12 @@ void CLINTDevice::write(uint32_t offset, uint32_t value, int size) {
         mtimecmp = (mtimecmp & 0xFFFFFFFF00000000ULL) | value;
     } else if (offset == KV_CLINT_MTIMECMP_HI_OFF) {
         mtimecmp = (mtimecmp & 0x00000000FFFFFFFFULL) | ((uint64_t)value << 32);
+    } else if (offset == KV_CLINT_MTIME_LO_OFF) {
+        mtime = (mtime & 0xFFFFFFFF00000000ULL) | value;
+    } else if (offset == KV_CLINT_MTIME_HI_OFF) {
+        mtime = (mtime & 0x00000000FFFFFFFFULL) | ((uint64_t)value << 32);
+    } else {
+        last_bus_error = true;  // not one of the 5 valid CLINT offsets
     }
 }
 
@@ -1069,6 +1095,7 @@ uint32_t DMADevice::read(uint32_t offset, int size)
         default: return 0;
         }
     }
+    last_bus_error = true;  // offset in the hole between ch-regs/global-regs, or beyond global area
     return 0;
 }
 
@@ -1080,6 +1107,7 @@ void DMADevice::write(uint32_t offset, uint32_t value, int size)
     if (offset == KV_DMA_IRQ_STAT_OFF) { irq_stat &= ~value; return; }  // W1C
     if (offset == KV_DMA_IRQ_EN_OFF)   { irq_en    = value;  return; }
     if (offset == KV_DMA_ID_OFF)       { return; }                      // read-only
+    if (offset == KV_DMA_CAP_OFF)      { return; }                      // read-only
     if (offset == KV_DMA_PERF_CTRL_OFF) {
         if (value & 2u) {                   // bit[1] = RESET
             perf_enable   = false;
@@ -1140,6 +1168,10 @@ void DMADevice::write(uint32_t offset, uint32_t value, int size)
         default: break;
         }
     }
+
+    // Offset in the hole between per-channel area and global registers, or beyond
+    // global registers — mirrors the coarse RTL validity check for SLVERR.
+    else { last_bus_error = true; }
 }
 
 // ============================================================================
@@ -1254,7 +1286,9 @@ uint32_t GPIODevice::read(uint32_t offset, int size) {
     case 0x8: return is_r[bank];             // IS
     case 0x9: return loopback_r[bank];       // LOOPBACK
     case 0xA: return (0x0001u << 16) | (1u << 8) | 4u;  // CAPABILITY: v0.0001, 1 bank, 4 pins
-    default: return 0;
+    default:
+        last_bus_error = true;  // reg_sel > 0xA is out-of-range
+        return 0;
     }
 }
 
@@ -1273,7 +1307,9 @@ void GPIODevice::write(uint32_t offset, uint32_t value, int size) {
     case 0x7: polarity_r[bank] = value; break;                     // POLARITY
     case 0x8: is_r[bank] &= ~value; break;                         // IS (W1C)
     case 0x9: loopback_r[bank] = value; break;                     // LOOPBACK
-    default: break;
+    default:
+        last_bus_error = true;  // reg_sel > 0xA is out-of-range
+        break;
     }
 }
 
@@ -1382,8 +1418,10 @@ uint32_t TimerDevice::read(uint32_t offset, int size) {
     uint32_t timer_num = offset / KV_TIMER_CH_STRIDE;
     uint32_t reg_off = offset % KV_TIMER_CH_STRIDE;
 
-    if (timer_num >= NUM_TIMERS)
+    if (timer_num >= NUM_TIMERS) {
+        last_bus_error = true;  // offset beyond last timer channel (and not a global reg)
         return 0;
+    }
 
     switch (reg_off) {
     case KV_TIMER_COUNT_OFF:    return ch[timer_num].count_r;
@@ -1411,8 +1449,10 @@ void TimerDevice::write(uint32_t offset, uint32_t value, int size) {
     uint32_t timer_num = offset / KV_TIMER_CH_STRIDE;
     uint32_t reg_off = offset % KV_TIMER_CH_STRIDE;
 
-    if (timer_num >= NUM_TIMERS)
+    if (timer_num >= NUM_TIMERS) {
+        last_bus_error = true;  // offset beyond last timer channel (and not a global reg)
         return;
+    }
 
     switch (reg_off) {
     case KV_TIMER_COUNT_OFF:

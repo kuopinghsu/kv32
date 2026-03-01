@@ -1,16 +1,11 @@
-/*
- * RV32M Boundary Test Program
- *
- * Tests boundary/corner cases for RISC-V M-extension instructions:
- *   MUL, MULH, MULHSU, MULHU
- *   DIV, DIVU, REM, REMU
- *
- * RISC-V spec-defined boundary behavior:
- *   - Division by zero:  DIV(x,0)  = -1,       DIVU(x,0)  = UINT32_MAX
- *   - Division by zero:  REM(x,0)  = x,         REMU(x,0)  = x
- *   - Signed overflow:   DIV(INT32_MIN,-1) = INT32_MIN, REM(INT32_MIN,-1) = 0
- *   - MUL truncates lower 32 bits; MULH* return upper 32 bits
- */
+// ============================================================================
+// File: divmul.c
+// Project: KV32 RISC-V Processor
+// Description: RV32M boundary-case test: multiply/divide corner cases per RISC-V spec
+//
+// Covers: division by zero, signed overflow (INT32_MIN / -1),
+// MULH upper-32-bit results, and REM/REMU remainder semantics.
+// ============================================================================
 
 #include <stdio.h>
 #include <stdint.h>

@@ -1,9 +1,12 @@
-/*
- * kv_platform.h – KV32 SoC memory map and peripheral register definitions
- *
- * Base addresses, register offsets, and bit-field constants for every
- * peripheral in kv32_soc.sv.  All drivers include this header.
- */
+// ============================================================================
+// File: kv_platform.h
+// Project: KV32 RISC-V Processor
+// Description: KV32 SoC memory map and peripheral register definitions
+//
+// Base addresses, register offsets, and bit-field constants for every
+// peripheral in kv32_soc.sv.  Included by all peripheral drivers.
+// ============================================================================
+
 #ifndef KV_PLATFORM_H
 #define KV_PLATFORM_H
 

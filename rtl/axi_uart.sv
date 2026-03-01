@@ -105,6 +105,12 @@ module axi_uart #(
     localparam logic [15:0] UART_VERSION = 16'h0001;
     localparam logic [31:0] CAPABILITY_REG = {UART_VERSION, 8'(FIFO_DEPTH), 8'(FIFO_DEPTH)};
 
+    // Register address space: offsets 0x00–0x18 (7 word-aligned registers)
+    // Any access with byte-offset > 0x18 is out-of-range → AXI SLVERR (2'b10)
+    localparam logic [5:0] ADDR_MAX = 6'h06;            // 0x18 >> 2
+    wire wr_addr_valid = (axi_awaddr[7:2] <= ADDR_MAX); // write address in range
+    wire rd_addr_valid = (axi_araddr[7:2] <= ADDR_MAX); // read address in range
+
     // ========================================================================
     // TX FIFO
     // ========================================================================
@@ -404,7 +410,7 @@ module axi_uart #(
                     default: ;
                 endcase
                 axi_bvalid <= 1'b1;
-                axi_bresp  <= 2'b00;
+                axi_bresp  <= wr_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
             end
         end
     end
@@ -440,7 +446,7 @@ module axi_uart #(
 
             if (axi_arvalid && axi_arready) begin
                 axi_rdata  <= read_data;
-                axi_rresp  <= 2'b00;
+                axi_rresp  <= rd_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
                 axi_rvalid <= 1'b1;
             end
         end

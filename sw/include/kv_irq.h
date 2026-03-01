@@ -1,13 +1,12 @@
-/*
- * kv_irq.h – Machine-mode interrupt and trap management API
- *
- * Covers:
- *   - Global interrupt enable/disable (mstatus.MIE)
- *   - Individual interrupt enable/disable (mie CSR)
- *   - Per-cause IRQ handler registration
- *   - Exception (trap) handler hook
- *   - Low-level I/O for the default trap_handler
- */
+// ============================================================================
+// File: kv_irq.h
+// Project: KV32 RISC-V Processor
+// Description: Machine-mode interrupt and exception management API
+//
+// Covers: global MIE enable/disable, per-source mie bit control,
+// per-cause IRQ/exception handler registration, and trap entry hooks.
+// ============================================================================
+
 #ifndef KV_IRQ_H
 #define KV_IRQ_H
 

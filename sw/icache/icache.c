@@ -1,15 +1,11 @@
 // ============================================================================
-// File: sw/icache/icache.c
+// File: icache.c
 // Project: KV32 RISC-V Processor
-// Description: I-Cache functional test
+// Description: I-Cache functional test: cold/warm timing, FENCE.I flush, cbo.inval
 //
-// Tests:
-//   1. Cold vs warm timing  – cache misses on first run, hits on re-run
-//   2. FENCE.I instruction  – full cache flush; next run should be cold again
-//   3. cbo.inval instruction – line-level I-cache invalidation (Zicbom)
-//
-// The test runs with ICACHE_EN=0 as well: timing differences will be
-// absent, but the instructions must still execute without exceptions.
+// Tests: cold-miss vs warm-hit cycle counts, FENCE.I full flush
+// (next run should be cold again), and cbo.inval line invalidation.
+// Also runs correctly with ICACHE_EN=0 (no timing assertions).
 // ============================================================================
 
 #include <stdint.h>

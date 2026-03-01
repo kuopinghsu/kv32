@@ -112,6 +112,22 @@ module axi_timer (
     localparam logic [15:0] TIMER_VERSION   = 16'h0001;
     localparam logic [31:0] CAPABILITY_REG  = {TIMER_VERSION, 8'd4, 8'd32};  // 4 channels, 32-bit counters
 
+    // AXI address range checks
+    // Valid offsets (addr[7:2] word index):
+    //   Timer 0: 0x00-0x0F (idx 0-3),  Timer 1: 0x20-0x2F (idx 8-11)
+    //   Timer 2: 0x40-0x4F (idx 16-19), Timer 3: 0x60-0x6F (idx 24-27)
+    //   Global:  INT_STATUS 0x80 (W1C), INT_ENABLE 0x84, CAPABILITY 0x88 (RO)
+    wire wr_addr_valid = (axi_awaddr[7:2] <= 6'h03) ||
+                         (axi_awaddr[7:2] >= 6'h08 && axi_awaddr[7:2] <= 6'h0B) ||
+                         (axi_awaddr[7:2] >= 6'h10 && axi_awaddr[7:2] <= 6'h13) ||
+                         (axi_awaddr[7:2] >= 6'h18 && axi_awaddr[7:2] <= 6'h1B) ||
+                         (axi_awaddr[7:2] >= 6'h20 && axi_awaddr[7:2] <= 6'h21);
+    wire rd_addr_valid = (axi_araddr[7:2] <= 6'h03) ||
+                         (axi_araddr[7:2] >= 6'h08 && axi_araddr[7:2] <= 6'h0B) ||
+                         (axi_araddr[7:2] >= 6'h10 && axi_araddr[7:2] <= 6'h13) ||
+                         (axi_araddr[7:2] >= 6'h18 && axi_araddr[7:2] <= 6'h1B) ||
+                         (axi_araddr[7:2] >= 6'h20 && axi_araddr[7:2] <= 6'h22);
+
     // ========================================================================
     // Timer Registers
     // ========================================================================
@@ -287,7 +303,7 @@ module axi_timer (
         end else begin
             if (aw_hs && w_hs && !axi_bvalid) begin
                 axi_bvalid <= 1'b1;
-                axi_bresp  <= 2'b00;  // OKAY
+                axi_bresp  <= wr_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
             end else if (axi_bready) begin
                 axi_bvalid <= 1'b0;
             end
@@ -308,7 +324,7 @@ module axi_timer (
             if (ar_hs && !axi_rvalid) begin
                 axi_rvalid <= 1'b1;
                 axi_rdata  <= rdata_next;
-                axi_rresp  <= 2'b00;  // OKAY
+                axi_rresp  <= rd_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
             end else if (axi_rready) begin
                 axi_rvalid <= 1'b0;
             end

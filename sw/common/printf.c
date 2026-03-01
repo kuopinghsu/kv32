@@ -1,20 +1,12 @@
-/*
- * Lightweight printf implementation for embedded systems
- *
- * Supports:
- * - Integer types: char, short, int, long, long long (signed/unsigned)
- * - Floating point: float, double (optional, controlled by PRINTF_DISABLE_FLOAT)
- * - Format specifiers: %c, %s, %d, %i, %u, %x, %X, %o, %p
- * - Length modifiers: hh, h, l, ll, z, t
- * - Width and precision
- * - Flags: -, +, 0, space, #
- *
- * To disable floating point support (reduce code size):
- *   Define PRINTF_DISABLE_FLOAT at compile time
- *
- * To use hardware division/modulo instead of optimized bit operations:
- *   Define PRINTF_USE_HARDWARE_DIV at compile time
- */
+// ============================================================================
+// File: printf.c
+// Project: KV32 RISC-V Processor
+// Description: Lightweight embedded printf implementation (no stdlib dependency)
+//
+// Supports %c, %s, %d/%i, %u, %x/%X, %o, %p, width/precision,
+// length modifiers (hh/h/l/ll/z/t), and flags (-, +, 0, space, #).
+// Float support can be disabled with -DPRINTF_DISABLE_FLOAT.
+// ============================================================================
 
 // Use optimized division-free implementation by default
 #ifndef PRINTF_USE_HARDWARE_DIV

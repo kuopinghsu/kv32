@@ -1,5 +1,11 @@
-// System call implementations for newlib
-// Provides minimal syscall support for console output
+// ============================================================================
+// File: syscall.c
+// Project: KV32 RISC-V Processor
+// Description: Newlib syscall stubs: _write() routes console output to Magic device
+//
+// Provides the minimal newlib semihosting surface required by printf.
+// _write() sends each byte to KV_MAGIC_CONSOLE (0xFFFFFFF4).
+// ============================================================================
 
 #include <sys/stat.h>
 #include <errno.h>

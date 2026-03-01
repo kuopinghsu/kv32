@@ -161,7 +161,10 @@ module axi_magic (
                             end
                         endcase
 
-                        axi_bresp <= 2'b00;  // OKAY
+                        // Respond OKAY only for recognised magic addresses; SLVERR otherwise
+                        axi_bresp <= ((write_addr_reg & ~32'h3) == EXIT_MAGIC_ADDR ||
+                                      (write_addr_reg & ~32'h3) == CONSOLE_MAGIC_ADDR)
+                                     ? 2'b00 : 2'b10;  // OKAY or SLVERR
                         axi_bvalid <= 1'b1;
                         write_state <= WRITE_RESP;
                     end
@@ -196,7 +199,10 @@ module axi_magic (
                     if (axi_arvalid && axi_arready) begin
                         axi_arready <= 1'b0;
                         axi_rdata  <= 32'h0;
-                        axi_rresp  <= 2'b00;  // OKAY
+                        // Respond OKAY only for recognised magic addresses; SLVERR otherwise
+                        axi_rresp  <= ((axi_araddr & ~32'h3) == EXIT_MAGIC_ADDR ||
+                                       (axi_araddr & ~32'h3) == CONSOLE_MAGIC_ADDR)
+                                      ? 2'b00 : 2'b10;  // OKAY or SLVERR
                         axi_rvalid <= 1'b1;
                         read_state <= READ_RESP;
                     end

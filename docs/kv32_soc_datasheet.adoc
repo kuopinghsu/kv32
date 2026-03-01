@@ -251,7 +251,7 @@ Seven peripheral slaves hang off the AXI crossbar:
 ==== Interrupt System
 
 * **CLINT**: Machine-mode timer (mtime/mtimecmp) and software interrupts (msip)
-* **PLIC**: Routes up to 31 external interrupt sources (UART, SPI, I2C, DMA, GPIO, Timer) with programmable priorities (0-7) and a configurable claim/complete handshake
+* **PLIC**: Routes up to 31 external interrupt sources (UART, SPI, I2C, DMA, GPIO, Timer) with programmable priorities (0-15) and a configurable claim/complete handshake
 * **Core Integration**: timer_irq, software_irq, external_irq inputs to core CSR unit
 
 <<<
@@ -1899,7 +1899,7 @@ The PLIC routes external interrupt sources to the processor core with programmab
 |Up to 31 (source 0 reserved)
 
 |Priority Levels
-|0-7 (0 = never interrupt, 1-7 = increasing priority)
+|0-15 (0 = never interrupt, 1-15 = increasing priority)
 
 |Target Contexts
 |1 (hart 0, M-mode)
@@ -1923,7 +1923,7 @@ The PLIC routes external interrupt sources to the processor core with programmab
 |0x000004 × i
 |PRIORITY[i]
 |R/W
-|Priority for interrupt source i (i=1..31, 3-bit)
+|Priority for interrupt source i (i=1..31, 4-bit)
 
 |0x001000
 |PENDING
@@ -1938,7 +1938,7 @@ The PLIC routes external interrupt sources to the processor core with programmab
 |0x200000
 |THRESHOLD
 |R/W
-|Priority threshold for context 0 (3-bit) +
+|Priority threshold for context 0 (4-bit) +
 Interrupts fire only if source priority > threshold
 
 |0x200004

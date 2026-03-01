@@ -1,5 +1,8 @@
-// UART Hardware Test
-// Refactored to use kv_uart.h / kv_platform.h HAL APIs.
+// ============================================================================
+// File: uart.c
+// Project: KV32 RISC-V Processor
+// Description: UART loopback test: TX/RX polling, FIFO, and interrupt-driven modes
+// ============================================================================
 
 #include <stdint.h>
 #include "kv_uart.h"
