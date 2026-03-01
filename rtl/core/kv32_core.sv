@@ -1800,6 +1800,10 @@ module kv32_core #(
         end
     end
 
+    // sb_mem_inflight: assigned but routing logic uses dmem_resp_is_write directly
+    logic _unused_ok_sb_inflight;
+    assign _unused_ok_sb_inflight = &{1'b0, sb_mem_inflight};
+
     // ============================================================================
     // Memory Request Routing
     // ============================================================================
@@ -2480,6 +2484,12 @@ module kv32_core #(
         end
     end
 
+    // Pipeline buffer signals: assigned from EX stage but not consumed downstream
+    // (dead code retained for potential future use)
+    logic _unused_ok_pipebuf;
+    assign _unused_ok_pipebuf = &{1'b0, rd_addr_mem_reg, reg_we_mem_reg,
+                                  mem_read_mem_reg, mem_valid_reg, dmem_resp_error_buf};
+
     // ----------------------------------------------------------------------------
     // Load Data Extraction and Alignment
     // ----------------------------------------------------------------------------
@@ -2697,11 +2707,12 @@ module kv32_core #(
             end
         end
     end
+
+    // Suppress unused simulation-only debug signal (only read via DEBUG1 macro)
+    logic _unused_ok_last_cyc;
+    assign _unused_ok_last_cyc = &{1'b0, last_cycle_counter};
     `endif
 
-    // ----------------------------------------------------------------------------
-    // WB Stage Exception Detection
-    // ----------------------------------------------------------------------------
     // Detects data access faults that were flagged by the memory system.
     // These exceptions are detected in WB stage because memory responses
     // may arrive multiple cycles after the load/store request.
@@ -2864,6 +2875,7 @@ module kv32_core #(
     // assert property (p_no_write_x0)
     //     else $error("[CORE] Write to x0 (ignored by regfile), PC=0x%h", pc_wb);
 
+    /* verilator lint_off WIDTHEXPAND */
     property p_rd_addr_bounds;
         @(posedge clk) disable iff (!rst_n)
         (rd_addr_id < 32) && (rd_addr_ex < 32) && (rd_addr_mem < 32) && (rd_addr_wb < 32);
@@ -2878,6 +2890,7 @@ module kv32_core #(
     endproperty
     assert property (p_rs_addr_bounds)
         else $error("[CORE] Source register out of bounds");
+    /* verilator lint_on WIDTHEXPAND */
 
     // ========================================================================
     // Pipeline Stage Validity Consistency
@@ -3021,6 +3034,7 @@ module kv32_core #(
     assert property (p_no_duplicate_fetch)
         else $error("[CORE] Duplicate instruction fetch for PC=0x%h", imem_req_addr);
 
+    /* verilator lint_off WIDTHEXPAND */
     property p_ib_outstanding_bounded;
         @(posedge clk) disable iff (!rst_n)
         ib_outstanding <= IB_DEPTH;
@@ -3028,6 +3042,7 @@ module kv32_core #(
     assert property (p_ib_outstanding_bounded)
         else $error("[CORE] IB outstanding count exceeded: %0d > %0d",
                     ib_outstanding, IB_DEPTH);
+    /* verilator lint_on WIDTHEXPAND */
 
     // ========================================================================
     // Memory Interface Protocol
@@ -3073,6 +3088,7 @@ module kv32_core #(
     assert property (p_mem_alignment_word)
         else $error("[CORE] Word store has invalid strobe: 0x%h", store_strb_encoded);
 
+    /* verilator lint_off WIDTHEXPAND */
     property p_sb_count_bounded;
         @(posedge clk) disable iff (!rst_n)
         sb_buffered_count <= SB_DEPTH;
@@ -3080,6 +3096,7 @@ module kv32_core #(
     assert property (p_sb_count_bounded)
         else $error("[CORE] Store buffer count exceeded: %0d > %0d",
                     sb_buffered_count, SB_DEPTH);
+    /* verilator lint_on WIDTHEXPAND */
 
     // ========================================================================
     // Branch and Jump Target Validation
@@ -3291,6 +3308,15 @@ module kv32_core #(
         else $error("[CORE] Instruction retired multiple times: PC=0x%h instr=0x%h (last: PC=0x%h instr=0x%h)",
                     pc_wb, instr_wb, last_retired_pc, last_retired_instr);
 
+    // Suppress 'is_while1_loop' unused signal warning - used in property above
+    logic _unused_ok_while1;
+    assign _unused_ok_while1 = &{1'b0, is_while1_loop};
+
 `endif // ASSERTION
+
+    // Signals assigned by CSR/pipeline but not subsequently consumed in this module
+    logic _unused_ok_misc;
+    assign _unused_ok_misc = &{1'b0, system_mem, csr_illegal, irq_cause,
+                               last_wb_valid, amo_op_wb};
 
 endmodule

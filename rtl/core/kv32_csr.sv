@@ -313,4 +313,9 @@ module kv32_csr (
         end
     end
 
+    // mpie/mtie/msie/meie: extracted from CSR registers but not used downstream
+    // (interrupt enable/status bits exposed for readability; hardware acts on mie/mstatus directly)
+    logic _unused_ok_csr;
+    assign _unused_ok_csr = &{1'b0, mpie, mtie, msie, meie};
+
 endmodule

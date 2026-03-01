@@ -133,7 +133,7 @@ This datasheet is organized as follows:
                           |   | Software IRQ (msip)      |---->timer_irq|   |
                           |   +--------------------------+   +>sw_irq   |   |
                           |                                             |   |
-                          | Slave 2: PLIC     0x0C00_0000-0x0FFF_FFFF   |   |
+                          | Slave 2: PLIC     0x0C00_0000-0x0CFF_FFFF   |   |
                           |   +--------------------------+              |   |
                           |   | Priority/Enable/Claim    |<---uart_irq  |   |
                           |   | Threshold/Complete       |<---spi_irq   |   |
@@ -272,7 +272,7 @@ The RV32IMA SoC implements a 32-bit address space (4GB) with the following alloc
 |768KB
 |(only 64KB used, rest reserved per RISC-V spec)
 
-|0x0C00_0000 - 0x0FFF_FFFF
+|0x0C00_0000 - 0x0CFF_FFFF
 |PLIC
 |64MB
 |(actual registers much smaller, per RISC-V spec)
@@ -324,7 +324,7 @@ The AXI crossbar (`axi_xbar`) decodes addresses based on the high-order bits:
 
 * **Slave 0 (RAM)**: `addr[31:21] == 11'h400` (0x8000_0000)
 * **Slave 1 (CLINT)**: `addr[31:20] == 12'h020` (0x0200_0000)
-* **Slave 2 (PLIC)**: `addr[31:26] == 6'h03` (0x0C00_0000)
+* **Slave 2 (PLIC)**: `addr[31:24] == 8'h0C` (0x0C00_0000)
 * **Slave 3 (UART)**: `addr[31:16] == 16'h2000` (0x2000_0000)
 * **Slave 4 (I2C)**: `addr[31:16] == 16'h2001` (0x2001_0000)
 * **Slave 5 (SPI)**: `addr[31:16] == 16'h2002` (0x2002_0000)
@@ -1893,7 +1893,7 @@ The PLIC routes external interrupt sources to the processor core with programmab
 |0x0C00_0000
 
 |Size
-|64MB (large per RISC-V spec, only ~2MB used)
+|16MB (0x0C00_0000–0x0CFF_FFFF, per RISC-V PLIC specification `PLIC_SIZE = 0x01000000`)
 
 |Interrupt Sources
 |Up to 31 (source 0 reserved)

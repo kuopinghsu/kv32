@@ -156,6 +156,12 @@ module kv32_ib #(
     // - Only valid (non-discarded) consumptions reduce outstanding count
     assign resp_consumed_valid = resp_consumed && (discard_cnt == 0);
 
+    // can_accept_q: only used in DEBUG block; suppress when DEBUG not defined
+`ifndef DEBUG
+    logic _unused_ok_ib;
+    assign _unused_ok_ib = &{1'b0, can_accept_q};
+`endif
+
 `ifdef DEBUG
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -447,6 +453,7 @@ module kv32_ib #(
     // Pointer Wraparound Safety (for DEPTH > 1)
     generate
         if (PTR_WIDTH > 0) begin : g_ptr_checks
+            /* verilator lint_off WIDTHEXPAND */
             property p_wr_ptr_bounds;
                 @(posedge clk) disable iff (!rst_n)
                 wr_ptr < DEPTH;
@@ -460,6 +467,7 @@ module kv32_ib #(
             endproperty
             assert property (p_rd_ptr_bounds)
                 else $error("[IB] Read pointer out of bounds: %0d >= %0d", rd_ptr, DEPTH);
+            /* verilator lint_on WIDTHEXPAND */
         end
     endgenerate
 

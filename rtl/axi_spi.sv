@@ -396,4 +396,10 @@ module axi_spi #(
     assign spi_mosi = shift_reg_tx[7];
     assign spi_cs_n = spi_enable ? cs_select : 4'b1111;
 
+    // Suppress unused-signal lint warnings: upper address/data bits, byte-enable,
+    // and legacy status signals that are no longer read.
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, axi_wstrb, axi_awaddr[31:16], axi_wdata[31:16],
+                                axi_araddr[31:16], rx_data, tx_ready, tx_being_written};
+
 endmodule

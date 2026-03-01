@@ -112,7 +112,6 @@ module axi_plic #(
     logic        do_write;
     logic        complete_wr;
     logic [25:0] aw_off;                   // registered write offset
-    logic [25:0] ar_off;                   // registered read offset
 
     always_comb aw_off = aw_addr_latch[25:0];
 
@@ -167,22 +166,26 @@ module axi_plic #(
             for (int i = 1; i <= NUM_IRQ; i++) claimed_r[i] <= 1'b0;
         end else begin
             for (int i = 1; i <= NUM_IRQ; i++) begin
-                // Level-triggered: pending is set whenever irq_src is high
+                // Level-triggered: pending is set whenever irq_src is high.
                 if (irq_src[i])
                     pending_r[i] <= 1'b1;
 
-                // Claim: mark as claimed so it is not re-presented until complete
-                if (complete_wr && !do_write) begin
-                    // No action here; claim_read handled separately
+                // Disabling a source immediately clears its pending and claimed
+                // bits — matching Spike plic.cc context_enable_write() behaviour.
+                // This assignment is AFTER the irq_src set so disable wins when
+                // both happen in the same cycle.
+                if (do_write && (aw_off == 26'h002000) && enable_r[i] && !w_data_latch[i]) begin
+                    pending_r[i] <= 1'b0;
+                    claimed_r[i] <= 1'b0;
                 end
 
-                // Complete: clear pending if source is no longer asserted
-                if (complete_wr && (w_data_latch[4:0] == 5'(i)))
+                // Complete: clear claimed; clear pending if source no longer
+                // asserted (re-asserted sources stay pending for next claim).
+                if (complete_wr && (w_data_latch[4:0] == 5'(i))) begin
                     claimed_r[i] <= 1'b0;
-
-                // Clear pending on complete + source low
-                if (complete_wr && (w_data_latch[4:0] == 5'(i)) && !irq_src[i])
-                    pending_r[i] <= 1'b0;
+                    if (!irq_src[i])
+                        pending_r[i] <= 1'b0;
+                end
             end
         end
     end
@@ -357,5 +360,10 @@ module axi_plic #(
                 axi_rvalid <= 1'b0;
         end
     end
+
+    // Suppress unused-signal lint warnings: upper bits of latched addresses are
+    // always the PLIC base-address bits (decoded by the crossbar, not this module).
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, aw_addr_latch[31:26], ar_addr_latch[31:26]};
 
 endmodule

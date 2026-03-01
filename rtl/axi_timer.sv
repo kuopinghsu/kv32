@@ -285,11 +285,10 @@ module axi_timer (
     // ========================================================================
     // AXI4-Lite Interface
     // ========================================================================
-    logic aw_hs, w_hs, ar_hs, r_hs;
+    logic aw_hs, w_hs, ar_hs;
     assign aw_hs = axi_awvalid && axi_awready;
     assign w_hs  = axi_wvalid && axi_wready;
     assign ar_hs = axi_arvalid && axi_arready;
-    assign r_hs  = axi_rvalid && axi_rready;
 
     // Write address and data arrive together
     assign axi_awready = axi_awvalid && axi_wvalid && !axi_bvalid;
@@ -406,5 +405,11 @@ module axi_timer (
             end
         end
     end
+
+    // Suppress unused-signal lint warnings: upper address bits and byte-enable
+    // are not needed for this word-wide register file.
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, axi_wstrb, axi_awaddr[31:8], axi_awaddr[1:0],
+                                           axi_araddr[31:8], axi_araddr[1:0]};
 
 endmodule

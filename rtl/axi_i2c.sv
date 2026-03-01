@@ -560,4 +560,10 @@ module axi_i2c #(
         end
     end
 
+    // Suppress unused-signal lint warnings: upper address/data bits, byte-enable,
+    // SCL-in (not used in this loopback implementation), and legacy tx_ready.
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, axi_wstrb, axi_awaddr[31:16], axi_wdata[31:16],
+                                axi_araddr[31:16], i2c_scl_i, tx_ready};
+
 endmodule

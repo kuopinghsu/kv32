@@ -1065,6 +1065,13 @@ module kv32_icache #(
     //  the ##[1:$] range syntax is not used to stay Verilator-compatible.)
     // -----------------------------------------------------------------------
 
+    // Suppress unused-signal warnings: lower address bits that are not decoded
+    // (cache operates on aligned cacheline addresses), and internal tracking
+    // signals reserved for future use.
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, req_addr_r[1:0], cmo_addr_r[4:0],
+                                imem_req_addr_fill[1:0], axi_ar_accepted};
+
 `endif // ASSERTION
 
 endmodule

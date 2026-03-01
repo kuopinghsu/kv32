@@ -133,11 +133,11 @@ module axi_dma #(
     // Parameters & derived constants
     // ========================================================================
     localparam int BPB       = DATA_WIDTH / 8;                // bytes per beat
-    localparam int AXI_SIZE  = (DATA_WIDTH == 128) ? 3'd4 :
-                               (DATA_WIDTH == 64)  ? 3'd3 : 3'd2;
+    localparam int AXI_SIZE  = (DATA_WIDTH == 128) ? 4 :
+                               (DATA_WIDTH == 64)  ? 3 : 2;
     localparam int FIFO_BITS = $clog2(FIFO_DEPTH);
-    localparam int CH_STRIDE = 12'h040;                       // reg bytes / channel
-    localparam int GLBL_OFF  = 12'hF00;                       // global regs offset
+    localparam logic [11:0] CH_STRIDE = 12'h040;               // reg bytes / channel
+    localparam logic [11:0] GLBL_OFF  = 12'hF00;               // global regs offset
 
     // Capability register
     localparam logic [15:0] DMA_VERSION     = 16'h0001;
@@ -147,7 +147,7 @@ module axi_dma #(
     // Per-channel space: 0x000 .. (NUM_CHANNELS * CH_STRIDE - 1)
     // Global reg space:  GLBL_OFF .. GLBL_OFF + 0x01C  (last: PERF_WR_BYTES)
     localparam logic [11:0] CH_ADDR_MAX   = 12'(NUM_CHANNELS * CH_STRIDE) - 12'h001;
-    localparam logic [11:0] GLBL_ADDR_MAX = GLBL_OFF + 12'h01C;
+    localparam logic [11:0] GLBL_ADDR_MAX = 12'(GLBL_OFF + 12'h01C);
 
     // ========================================================================
     // Per-channel register arrays
@@ -495,6 +495,7 @@ module axi_dma #(
         sched_ch   = '0;
         no_pending = 1'b1;
         // Round-robin: scan NUM_CHANNELS slots starting from rr_ptr
+        /* verilator lint_off UNUSEDSIGNAL */
         for (int k = 0; k < NUM_CHANNELS; k++) begin
             automatic int idx = (int'(rr_ptr) + k) % NUM_CHANNELS;
             if (ch_ctrl[idx][0] &&    // EN
@@ -505,6 +506,7 @@ module axi_dma #(
                 break;
             end
         end
+        /* verilator lint_on UNUSEDSIGNAL */
     end
 
     // ── engine main always_ff ─────────────────────────────────────────────
@@ -634,6 +636,7 @@ module axi_dma #(
                 S_BURST_CALC: begin
                     // For SG mode pick up the freshly captured descriptor words
                     // directly so that burst calc sees the right addresses/lengths.
+                    /* verilator lint_off UNUSEDSIGNAL */
                     begin : bc
                         automatic logic [31:0] bc_src = (e_mode == 2'b11) ? sg_desc[0] : e_cur_src;
                         automatic logic [31:0] bc_dst = (e_mode == 2'b11) ? sg_desc[1] : e_cur_dst;
@@ -648,8 +651,9 @@ module axi_dma #(
                         automatic logic [31:0] burst_bytes     = (dst_page_limit / BPB) * BPB;
                         if (burst_bytes < BPB) burst_bytes = BPB;
                         e_burst_bytes <= burst_bytes;
-                        e_beats       <= burst_bytes[8:0] / BPB[8:0];
+                        e_beats       <= 8'(burst_bytes[8:0] / BPB[8:0]);
                     end
+                    /* verilator lint_on UNUSEDSIGNAL */
 
                     if (e_mode == 2'b11) begin
                         e_cur_src   <= sg_desc[0];
@@ -908,6 +912,13 @@ module axi_dma #(
     endproperty
     assert property (p_dma_wvalid_stable)
         else $error("[AXI_DMA] WVALID/WDATA must be stable until WREADY");
+    // Suppress unused-signal warnings: upper address bits decoded by crossbar,
+    // cfg_wstrb not checked (DMA config registers are word-wide), and internal
+    // status signals reserved for future use.
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, cfg_awaddr[31:12], cfg_wstrb, cfg_araddr[31:12],
+                                fifo_count, e_ctrl};
+
 `endif // ASSERTION
 
 endmodule

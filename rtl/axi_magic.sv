@@ -142,7 +142,7 @@ module axi_magic (
                                 if (is_byte_write) begin
                                     // Exit simulation - decode HTIF: exit_code = value >> 1
                                     `DEBUG1(("[MAGIC] Exit simulation with code %0d", write_byte >> 1));
-                                    sim_request_exit(write_byte >> 1);
+                                    sim_request_exit(32'(write_byte) >> 1);
                                 end else begin
                                     // Exit simulation - decode HTIF: exit_code = value >> 1
                                     `DEBUG1(("[MAGIC] Exit simulation with code %0d", axi_wdata >> 1));

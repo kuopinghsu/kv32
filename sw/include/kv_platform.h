@@ -35,7 +35,7 @@
  * Platform-Level Interrupt Controller (PLIC)
  * ══════════════════════════════════════════════════════════════════ */
 #define KV_PLIC_BASE        0x0C000000UL
-#define KV_PLIC_SIZE        0x04000000UL
+#define KV_PLIC_SIZE        0x01000000UL
 
 /* PLIC register offsets (context 0 = hart 0, machine mode) */
 #define KV_PLIC_PRIORITY_OFF    0x000000UL  /* Source priority[n] = base + n*4 */

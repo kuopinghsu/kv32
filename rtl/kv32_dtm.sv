@@ -199,7 +199,7 @@ module kv32_dtm #(
     } cmd_state_t;
 
     cmd_state_t cmd_state, cmd_state_next;
-    logic [4:0] cmd_regno;              // Register number being accessed
+    logic [15:0] cmd_regno;             // Register number being accessed (GPR 0-31, PC=0x1000)
     logic [2:0] cmd_size;               // Access size (0=byte, 1=half, 2=word, 3=double)
     logic       cmd_write;              // Command is write (vs read)
     logic       cmd_postexec;           // Execute progbuf after command
@@ -587,11 +587,14 @@ module kv32_dtm #(
     assign cmd_postexec = command_reg_sys[18];    // Execute progbuf after
     assign cmd_transfer = command_reg_sys[17];    // Perform transfer
     assign cmd_write = command_reg_sys[16];       // 1=write, 0=read
-    assign cmd_regno = command_reg_sys[15:0][4:0]; // Register number (GPR 0-31)
+    assign cmd_regno = command_reg_sys[15:0]; // Full register number field (GPR 0-31, PC=0x1000)
 
     // Memory access command fields (cmdtype == 2)
     logic [31:0] mem_addr;
+    // mem_size: declared for future use (cmdtype==2 not yet implemented)
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [2:0]  mem_size;
+    /* verilator lint_on UNUSEDSIGNAL */
     wire mem_write_cmd = command_reg_sys[16];
 
     // Command execution logic
@@ -629,7 +632,7 @@ module kv32_dtm #(
                             `DEBUG1(("[DTM] Command rejected: hart not halted"));
                         end else if (cmd_is_access_reg && cmd_transfer) begin
                             abstractcs_busy <= 1'b1;
-                            if (cmd_regno < 32) begin  // GPR access (x0-x31)
+                            if (cmd_regno < 16'(32)) begin  // GPR access (x0-x31)
                                 if (cmd_write) begin
                                     cmd_state <= CMD_REG_WRITE;
                                     `DEBUG1(("[DTM] Execute: Write GPR x%0d = 0x%h", cmd_regno, data0_sys));
@@ -669,8 +672,8 @@ module kv32_dtm #(
 
                 CMD_REG_READ: begin
                     // Read register value
-                    if (cmd_regno < 32) begin  // GPR
-                        dbg_reg_addr_o <= cmd_regno;
+                    if (cmd_regno < 16'(32)) begin  // GPR
+                        dbg_reg_addr_o <= 5'(cmd_regno);
                         data0_result <= dbg_reg_rdata_i;
                         data0_result_valid <= 1'b1;
                         `DEBUG1(("[DTM] Read GPR x%0d = 0x%h", cmd_regno, dbg_reg_rdata_i));
@@ -684,8 +687,8 @@ module kv32_dtm #(
 
                 CMD_REG_WRITE: begin
                     // Write register value
-                    if (cmd_regno < 32) begin  // GPR
-                        dbg_reg_addr_o <= cmd_regno;
+                    if (cmd_regno < 16'(32)) begin  // GPR
+                        dbg_reg_addr_o <= 5'(cmd_regno);
                         dbg_reg_wdata_o <= data0_sys;
                         dbg_reg_we_o <= 1'b1;
                         `DEBUG1(("[DTM] Write GPR x%0d = 0x%h", cmd_regno, data0_sys));
@@ -804,5 +807,12 @@ module kv32_dtm #(
             default:    tdo_o = bypass_shift;
         endcase
     end
+
+    // Signals set but not consumed (unimplemented DM features, placeholder sync regs)
+    logic _unused_ok_dtm;
+    assign _unused_ok_dtm = &{1'b0,
+        dmcontrol_hartreset, dmcontrol_ackhavereset, dmcontrol_ndmreset,
+        cmd_size, cmd_postexec,
+        halt_req_sync, resume_req_sync, halted_sync_r};
 
 endmodule

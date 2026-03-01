@@ -682,6 +682,7 @@ module axi_memory #(
     // ============================================================================
     // Testbench Utility Tasks and Functions
     // ============================================================================
+    /* verilator lint_off UNUSEDSIGNAL */
 
     // Memory initialization task (for testbench)
     // Can be called from SystemVerilog or through DPI
@@ -744,6 +745,8 @@ module axi_memory #(
         $fclose(file_handle);
         $display("Dumped %0d bytes to %s", length, filename);
     endtask
+
+    /* verilator lint_on UNUSEDSIGNAL */
 
     // DPI-C exports for memory access from C++
     export "DPI-C" function mem_write_byte;
@@ -809,5 +812,12 @@ module axi_memory #(
     function int mem_get_stat_max_outstanding_writes();
         return stat_max_outstanding_writes;
     endfunction
+
+    // Suppress unused signals that exist for backward compat, single-port mode, or future use
+    logic _unused_ok_mem;
+    assign _unused_ok_mem = &{1'b0, axi_arsize, state,
+                              arb_last_grant_was_write, read_can_accept,
+                              write_addr_accepted, write_data_accepted,
+                              burst_total_len};
 
 endmodule

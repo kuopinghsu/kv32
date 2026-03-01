@@ -102,7 +102,6 @@ VERILATOR ?= verilator
 VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-UNSIGNED --trace --trace-fst --cc --exe --build
 VERILATOR_FLAGS += -sv --timing
 VERILATOR_FLAGS += --top-module tb_kv32_soc
-VERILATOR_FLAGS += -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNUSEDSIGNAL
 VERILATOR_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM
 VERILATOR_FLAGS += -I$(MEM_DIR)
 

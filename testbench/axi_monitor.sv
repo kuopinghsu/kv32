@@ -84,4 +84,8 @@ module axi_monitor (
         end
     end
 
+    // axi_wstrb is present on the bus but the monitor only checks the data value
+    logic _unused_ok_monitor;
+    assign _unused_ok_monitor = &{1'b0, axi_wstrb};
+
 endmodule

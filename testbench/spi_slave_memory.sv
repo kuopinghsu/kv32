@@ -110,4 +110,8 @@ module spi_slave_memory (
     // MISO output: combinatorial from shift_reg MSB (no negedge delay needed)
     assign miso = cs_n ? 1'b0 : shift_reg[7];
 
+    // byte_count was used in an earlier implementation; kept for documentation
+    logic _unused_ok_spi;
+    assign _unused_ok_spi = &{1'b0, byte_count};
+
 endmodule

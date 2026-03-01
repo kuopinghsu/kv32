@@ -114,8 +114,8 @@ module tb_kv32_soc #(
     logic [GPIO_NUM_PINS-1:0] gpio_oe_internal;
     logic [3:0] pwm_o_internal;
 
-    // GPIO loopback for testing (output drives input when enabled)
-    assign gpio_i_internal = gpio_oe_internal ? gpio_o_internal : {GPIO_NUM_PINS{1'b0}};
+    // GPIO loopback for testing (output drives input when pin is output-enabled)
+    assign gpio_i_internal = gpio_o_internal & gpio_oe_internal;
 
     // Expose internal signals to module outputs
     assign gpio_o  = gpio_o_internal;

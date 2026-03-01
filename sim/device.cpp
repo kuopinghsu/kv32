@@ -855,9 +855,16 @@ void PLICDevice::write(uint32_t offset, uint32_t value, int size) {
     }
 
     // Enable register for context 0
+    // Disabling a source immediately clears its pending and claimed bits,
+    // matching Spike plic.cc context_enable_write() behaviour.
     if (offset == KV_PLIC_ENABLE_OFF) {
         for (int i = 1; i <= NUM_IRQ; i++) {
+            bool was_enabled = enable_r[i];
             enable_r[i] = (value >> i) & 1;
+            if (was_enabled && !enable_r[i]) {
+                pending_r[i] = false;
+                claimed_r[i] = false;
+            }
         }
         return;
     }

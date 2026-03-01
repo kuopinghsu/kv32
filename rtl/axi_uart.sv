@@ -211,6 +211,7 @@ module axi_uart #(
     logic [2:0] tx_bit_index;
     logic [7:0] tx_data_reg;
 
+    /* verilator lint_off WIDTHEXPAND */
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             tx_state     <= TX_IDLE;
@@ -276,6 +277,7 @@ module axi_uart #(
             endcase
         end
     end
+    /* verilator lint_on WIDTHEXPAND */
 
     // ========================================================================
     // UART RX State Machine
@@ -307,6 +309,7 @@ module axi_uart #(
         end
     end
 
+    /* verilator lint_off WIDTHEXPAND */
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             rx_state     <= RX_IDLE;
@@ -371,6 +374,7 @@ module axi_uart #(
             endcase
         end
     end
+    /* verilator lint_on WIDTHEXPAND */
 
     // RX FIFO push: one-cycle rx_valid pulse; drop byte silently if FIFO full
     assign rxf_push = rx_valid && !rxf_full;
@@ -427,8 +431,10 @@ module axi_uart #(
                                 txf_full};                       // [0] TX_BUSY (full=can't write)
             8'h08: read_data = {30'h0, ie_r};                    // IE
             8'h0C: read_data = {30'h0, is_wire};                 // IS (level)
+            /* verilator lint_off WIDTHEXPAND */
             8'h10: read_data = {4'h0, txf_count,
                                 4'h0, rxf_count};                // LEVEL
+            /* verilator lint_on WIDTHEXPAND */
             8'h14: read_data = {31'h0, loopback_en};             // CTRL
             8'h18: read_data = CAPABILITY_REG;                   // CAPABILITY (RO)
             default: read_data = 32'h0;
@@ -451,5 +457,11 @@ module axi_uart #(
             end
         end
     end
+
+    // Suppress unused-signal lint warnings: upper address/data bits and byte-enable
+    // are not needed for this byte-wide register file.
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, axi_wstrb, axi_awaddr[31:8],
+                                axi_wdata[31:8], axi_araddr[31:8]};
 
 endmodule

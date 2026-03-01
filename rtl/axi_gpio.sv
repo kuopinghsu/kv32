@@ -153,11 +153,7 @@ module axi_gpio #(
 
             // Pad gpio_i for this bank
             always_comb begin
-                if (BANK_PINS == 32) begin
-                    gpio_i_padded[bank] = gpio_i[BANK_HIGH:BANK_LOW];
-                end else begin
-                    gpio_i_padded[bank] = {{(32-BANK_PINS){1'b0}}, gpio_i[BANK_HIGH:BANK_LOW]};
-                end
+                gpio_i_padded[bank] = {{(32-BANK_PINS){1'b0}}, gpio_i[BANK_HIGH:BANK_LOW]};
             end
 
             // Apply loopback and synchronize inputs
@@ -246,11 +242,10 @@ module axi_gpio #(
     // ========================================================================
     // AXI4-Lite Interface
     // ========================================================================
-    logic aw_hs, w_hs, ar_hs, r_hs;
+    logic aw_hs, w_hs, ar_hs;
     assign aw_hs = axi_awvalid && axi_awready;
-    assign w_hs  = axi_wvalid && axi_wready;
+    assign w_hs  = axi_wvalid  && axi_wready;
     assign ar_hs = axi_arvalid && axi_arready;
-    assign r_hs  = axi_rvalid && axi_rready;
 
     // Write address and data arrive together
     assign axi_awready = axi_awvalid && axi_wvalid && !axi_bvalid;
@@ -313,7 +308,8 @@ module axi_gpio #(
             rdata_next = CAPABILITY_REG;  // 0xA0: CAPABILITY
         end
         // Check if bank is valid for per-bank registers
-        else if (bank_sel < NUM_REG_BANKS) begin
+        else if (bank_sel < 2'(NUM_REG_BANKS)) begin
+            /* verilator lint_off WIDTHTRUNC */
             case (reg_sel)
                 4'h0: rdata_next = data_out_r[bank_sel];       // DATA_OUT
                 4'h1: rdata_next = data_out_r[bank_sel];       // SET (reads current output)
@@ -327,6 +323,7 @@ module axi_gpio #(
                 4'h9: rdata_next = loopback_r[bank_sel];       // LOOPBACK
                 default: rdata_next = 32'h0;
             endcase
+            /* verilator lint_on WIDTHTRUNC */
         end
     end
 
@@ -405,5 +402,11 @@ module axi_gpio #(
             assign gpio_oe[BANK_HIGH:BANK_LOW] = dir_r[bank][BANK_PINS-1:0];
         end
     endgenerate
+
+    // Suppress unused-signal lint warnings: upper address bits and byte-enable
+    // are not needed for this word-wide register file.
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, axi_wstrb, axi_awaddr[31:8], axi_awaddr[1:0],
+                                           axi_araddr[31:8], axi_araddr[1:0]};
 
 endmodule

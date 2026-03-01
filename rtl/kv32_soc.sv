@@ -30,7 +30,7 @@
 // Memory Map:
 //   0x8000_0000 - 0x801F_FFFF: RAM (2MB)
 //   0x0200_0000 - 0x020B_FFFF: CLINT
-//   0x0C00_0000 - 0x0FFF_FFFF: PLIC
+//   0x0C00_0000 - 0x0CFF_FFFF: PLIC
 //   0x2000_0000 - 0x2000_FFFF: UART
 //   0x2001_0000 - 0x2001_FFFF: I2C
 //   0x2002_0000 - 0x2002_FFFF: SPI
@@ -2027,6 +2027,13 @@ module kv32_soc #(
         assert_baud_rate_valid: assert (BAUD_RATE >= 9600 && BAUD_RATE <= CLK_FREQ/4)
             else $error("[SOC] BAUD_RATE must be between 9600 and CLK_FREQ/4, got %0d", BAUD_RATE);
     end
+
+    // Suppress unused-signal warnings: AXI ID response fields that are received
+    // but not used (ID tagging not needed at SoC level), and debug memory interface
+    // ports that are wired but not yet connected to external debug logic.
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, imem_axi_rid, dma_m_axi_bid, dma_m_axi_rid,
+                                dbg_mem_req, dbg_mem_addr, dbg_mem_we, dbg_mem_wdata};
 
 `endif // ASSERTION
 

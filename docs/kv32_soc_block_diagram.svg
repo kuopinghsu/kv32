@@ -240,7 +240,7 @@
   <rect x="615" y="175" width="440" height="60" rx="4"
         fill="#FCE7F3" stroke="#F472B6" stroke-width="1.5"/>
   <text x="625" y="197" font-size="12" font-weight="bold" fill="#9D174D">Slave 2: PLIC</text>
-  <text x="625" y="211" font-size="9"  fill="#BE185D" font-family="'Courier New', monospace">0x0C00_0000 – 0x0FFF_FFFF</text>
+  <text x="625" y="211" font-size="9"  fill="#BE185D" font-family="'Courier New', monospace">0x0C00_0000 – 0x0CFF_FFFF</text>
   <text x="625" y="225" font-size="9"  fill="#DB2777">Priority/Enable/Claim/Complete · srcs: UART(1) SPI(2) I2C(3) DMA(4) GPIO(5) TMR(6)</text>
   <!-- ext_irq output label -->
   <text x="1058" y="196" font-size="9" fill="#B91C1C" font-weight="bold" font-family="'Courier New', monospace">→ ext_irq</text>

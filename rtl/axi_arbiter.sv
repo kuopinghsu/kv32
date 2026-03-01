@@ -523,6 +523,12 @@ module axi_arbiter #(
     assert property (p_id_enc_m2)
         else $error("[AXI_ARBITER] M2 AR ID bits[3:2] must be 2'b01");
 
+    // Suppress unused-signal warnings: upper 2 bits of master request IDs are
+    // not propagated (the arbiter encodes the master index in those bits on output).
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, m0_axi_arid[3:2], m1_axi_awid[3:2], m1_axi_arid[3:2],
+                                m2_axi_awid[3:2], m2_axi_arid[3:2]};
+
 `endif // ASSERTION
 
 endmodule

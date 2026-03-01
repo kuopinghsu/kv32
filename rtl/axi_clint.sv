@@ -112,14 +112,14 @@ module axi_clint (
     // NOT-YET-RETIRED instructions (those still in MEM/later stages).
     // Combinationally bypass the registered msip so the irq_pending
     // signal reaches the core before the WB→WB pipeline register load.
-    logic [31:0] msip_eff;
+    logic msip_eff;
     always_comb begin
         if (trace_mode && trace_store_valid && trace_store_addr[15:0] == MSIP_OFFSET)
-            msip_eff = trace_store_data;
+            msip_eff = trace_store_data[0];
         else
-            msip_eff = msip;
+            msip_eff = msip[0];
     end
-    assign software_irq = trace_mode ? msip_eff[0] : msip[0];
+    assign software_irq = msip_eff;
 `else
     assign software_irq = msip[0];
 `endif
@@ -304,5 +304,12 @@ module axi_clint (
             end
         end
     end
+
+    // Suppress unused-signal lint warnings: upper address bits and trace strobe
+    // are not needed for this implementation.
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, trace_store_strb,
+                                axi_awaddr[31:16], axi_araddr[31:16],
+                                trace_store_addr[31:16]};
 
 endmodule

@@ -393,6 +393,7 @@ module kv32_sb #(
     // Pointer Wraparound Safety (for DEPTH > 1)
     generate
         if (PTR_WIDTH > 0) begin : g_ptr_checks
+            /* verilator lint_off WIDTHEXPAND */
             property p_wr_ptr_bounds;
                 @(posedge clk) disable iff (!rst_n)
                 wr_ptr < DEPTH;
@@ -406,6 +407,7 @@ module kv32_sb #(
             endproperty
             assert property (p_rd_ptr_bounds)
                 else $error("[SB] Read pointer out of bounds: %0d >= %0d", rd_ptr, DEPTH);
+            /* verilator lint_on WIDTHEXPAND */
         end
     endgenerate
 
@@ -579,5 +581,13 @@ module kv32_sb #(
         else $error("[SB] X/Z detected on flush");
 
 `endif // ASSERTION
+
+    // resp_error: port input used only in DEBUG2 trace; issue: sim-only helper
+    logic _unused_ok_sb;
+    assign _unused_ok_sb = &{1'b0, resp_error
+`ifndef SYNTHESIS
+                              , issue
+`endif
+                             };
 
 endmodule

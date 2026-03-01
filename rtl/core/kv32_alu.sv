@@ -76,6 +76,11 @@ module kv32_alu #(
             assign result_mulhu_hi  = result_mulu[63:32];
             assign mul_ready = 1'b1;
 
+            // Lower 32 bits of unsigned/mixed products are not read;
+            // only the upper half is needed for MULH/MULHSU/MULHU.
+            logic _unused_mul;
+            assign _unused_mul = &{1'b0, result_mulu[31:0], result_mulsu[31:0]};
+
         end else begin : gen_serial_mul
             // Serial shift-and-add multiplier with CLZ-based early termination.
             //
@@ -487,5 +492,11 @@ module kv32_alu #(
 
     // Ready signal: all multi-cycle units must complete before advancing
     assign ready = div_ready && mul_ready;
+
+    // Suppress unused-signal warnings: clk/rst_n are only referenced by serial
+    // multiply/divide blocks; when both FAST_MUL=1 and FAST_DIV=1 those blocks
+    // are optimised away, leaving these ports unused.
+    logic _unused_clk;
+    assign _unused_clk = &{1'b0, clk, rst_n};
 
 endmodule
