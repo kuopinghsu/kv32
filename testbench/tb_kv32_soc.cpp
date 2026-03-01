@@ -191,6 +191,41 @@ static void dump_instruction_trace(
         static uint32_t last_pc = 0;
         static uint32_t last_instr = 0;
 
+        // ── Pending-store buffer ────────────────────────────────────────────
+        // When a FENCE follows a store in the MEM stage, the pipeline stalls
+        // until the store-buffer B-channel response arrives.  Nothing else can
+        // retire during this window.  We hold the store's trace line here and
+        // only commit it to the file when the B-channel returns OK; on SLVERR
+        // we discard it so the trace matches the sw-simulator's precise-
+        // exception behaviour (faulting store must not appear as committed).
+        static std::string pstore_line;
+        static bool        pstore_has   = false;
+        static uint64_t    pstore_count = 0;   // instr_count before this store
+        static bool        pstore_lv    = false;
+        static uint32_t    pstore_lp    = 0;
+        static uint32_t    pstore_li    = 0;
+        // ───────────────────────────────────────────────────────────────────
+
+        // Flush pending store once the B-channel response has arrived.
+        // This must run even when nothing is retiring (FENCE stall cycles).
+        if (pstore_has) {
+            svBit resp_valid, resp_error, fence_in_mem_unused;
+            dut->get_store_resp(&resp_valid, &resp_error, &fence_in_mem_unused);
+            if (resp_valid) {
+                if (!resp_error) {
+                    // Store completed OK — emit the buffered line
+                    trace_file << pstore_line << std::endl;
+                } else {
+                    // Store faulted (SLVERR) — discard and roll back state
+                    instr_count = pstore_count;
+                    last_valid  = pstore_lv;
+                    last_pc     = pstore_lp;
+                    last_instr  = pstore_li;
+                }
+                pstore_has = false;
+            }
+        }
+
         if (!wb_valid_val || !retire_instr) {
             return;
         }
@@ -202,6 +237,13 @@ static void dump_instruction_trace(
         if (last_valid && pc == last_pc && instr == last_instr) {
             return;
         }
+
+        // Save dedup/count state before this instruction's update.
+        // Used to roll back if this turns out to be a SLVERR store.
+        const uint64_t prior_count = instr_count;  // before ++
+        const bool     prior_lv    = last_valid;
+        const uint32_t prior_lp    = last_pc;
+        const uint32_t prior_li    = last_instr;
 
         instr_count++;
         last_valid = true;
@@ -311,6 +353,28 @@ static void dump_instruction_trace(
         std::string disasm_str = disasm->disassemble(instr, pc);
         int padding_needed = 72 - base_line.length();
         if (padding_needed < 2) padding_needed = 2;  // At least 2 spaces
+
+        // For store instructions: check whether a FENCE is currently in the
+        // MEM stage.  If so, the pipeline will stall until the B-channel
+        // response arrives, guaranteeing no other instruction can retire in
+        // the meantime.  Buffer this store's line and decide later whether to
+        // commit it (B-channel OK) or discard it (B-channel SLVERR).
+        if (mem_write_wb) {
+            svBit fence_in_mem, _rv, _re;
+            dut->get_store_resp(&_rv, &_re, &fence_in_mem);
+            if (fence_in_mem) {
+                // A FENCE is in MEM right behind this store.  The pipeline will
+                // stall until the B-channel response arrives, so nothing else
+                // can retire before we decide to commit or discard this entry.
+                pstore_count = prior_count;
+                pstore_lv    = prior_lv;
+                pstore_lp    = prior_lp;
+                pstore_li    = prior_li;
+                pstore_line  = base_line + std::string(padding_needed, ' ') + "; " + disasm_str;
+                pstore_has   = true;
+                return; // do not write to trace file yet
+            }
+        }
 
         trace_file << base_line << std::string(padding_needed, ' ') << "; " << disasm_str << std::endl;
     } catch (...) {

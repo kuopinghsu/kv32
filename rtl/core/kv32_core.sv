@@ -2466,6 +2466,23 @@ module kv32_core #(
         end
     end
 
+    // ── Faulting-store PC / address latch ────────────────────────────────────
+    // Record the PC and memory address of every retiring store.  When a
+    // deferred store-access fault is later raised at the FENCE instruction,
+    // these saved values are used for mepc and mtval so that the trap frame
+    // points to the store instruction, satisfying RISC-V precise exceptions.
+    logic [31:0] store_retired_pc;
+    logic [31:0] store_retired_addr;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            store_retired_pc   <= 32'd0;
+            store_retired_addr <= 32'd0;
+        end else if (retire_instr && mem_write_wb) begin
+            store_retired_pc   <= pc_wb;
+            store_retired_addr <= alu_result_wb;
+        end
+    end
+
     // Store MEM stage metadata for alignment logic
     // Since memory response may arrive after multiple cycles, save the
     // load operation type and register info from EX stage so we can
@@ -2740,8 +2757,12 @@ module kv32_core #(
                 wb_exception_cause = EXC_LOAD_ACCESS_FAULT;  // Exception code 5
                 `DEBUG1(("EXCEPTION: Load access fault @ PC=0x%h addr=0x%h", pc_wb, alu_result_wb));
             end else begin
+                // Store-access fault raised at FENCE: mepc/mtval must point to
+                // the original faulting store, not the FENCE (precise exceptions).
                 wb_exception_cause = EXC_STORE_ACCESS_FAULT;  // Exception code 7
-                `DEBUG1(("EXCEPTION: Store access fault @ PC=0x%h addr=0x%h", pc_wb, alu_result_wb));
+                wb_exception_pc    = store_retired_pc;
+                wb_exception_tval  = store_retired_addr;
+                `DEBUG1(("EXCEPTION: Store access fault @ PC=0x%h addr=0x%h (FENCE PC=0x%h)", store_retired_pc, store_retired_addr, pc_wb));
             end
         end
     end

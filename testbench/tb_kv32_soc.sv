@@ -362,6 +362,7 @@ module tb_kv32_soc #(
     export "DPI-C" function get_csr_signals;
     export "DPI-C" function get_wb_signals;
     export "DPI-C" function get_reg_value;
+    export "DPI-C" function get_store_resp;
 
     function bit get_ex_valid();
         return dut.core.ex_valid;
@@ -433,6 +434,20 @@ module tb_kv32_soc #(
             return dut.core.regfile.regs[reg_idx];
         end
         return 32'd0;
+    endfunction
+
+    // Returns the AXI B-channel (write-response) signals and whether a FENCE
+    // instruction is currently sitting in the MEM stage.  Used by the trace
+    // generator to implement RISC-V precise-exception semantics: a store whose
+    // B-channel comes back SLVERR must not appear in the committed trace.
+    function void get_store_resp(
+        output bit resp_valid,    // B-channel beat valid (store completed)
+        output bit resp_error,    // B-channel SLVERR
+        output bit fence_in_mem   // FENCE is in MEM stage (stalls until B-ch)
+    );
+        resp_valid  = dut.dmem_resp_valid && dut.dmem_resp_is_write;
+        resp_error  = dut.dmem_resp_error;
+        fence_in_mem = dut.core.is_fence_mem && dut.core.mem_valid;
     endfunction
 
     function void get_mem_signals(

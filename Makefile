@@ -66,7 +66,7 @@ TEST_DIRS = $(shell find $(SW_DIR) -mindepth 1 -maxdepth 1 -type d ! -name commo
 TEST_NAMES = $(notdir $(TEST_DIRS))
 
 # Tests to compare (exclude I/O-dependent tests that require external peripherals)
-COMPARE_EXCLUDE = full i2c uart spi dma gpio timer bus_err
+COMPARE_EXCLUDE = full i2c uart spi dma gpio timer
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
 # Tests to run under Spike (excludes tests not supported by Spike; override with SPIKE_TESTS=<list>)
@@ -417,6 +417,15 @@ compare-%:
 	@echo "=========================================="
 	@echo "Comparing test '$*': RTL vs Software Simulator"
 	@echo "=========================================="
+	@if echo " $(COMPARE_EXCLUDE) " | grep -q " $* "; then \
+		echo "WARNING: '$*' is in COMPARE_EXCLUDE and is not expected to produce"; \
+		echo "         a matching trace. Possible reasons:"; \
+		echo "          - I/O-dependent test (uart, i2c, spi, dma, gpio, timer)"; \
+		echo "          - Other architectural differences"; \
+		echo ""; \
+		echo "         Proceeding anyway — mismatch is expected."; \
+		echo "=========================================="; \
+	fi
 	@echo "Step 1: Running RTL simulator with trace..."
 	@-$(MAKE) rtl-$* TRACE=1
 	@echo ""
