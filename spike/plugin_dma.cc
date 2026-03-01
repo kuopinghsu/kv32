@@ -1,195 +1,176 @@
-/* ============================================================================
- * spike/plugin_dma.cc – Spike MMIO plugin for the KV32 DMA controller
- *
- * Base address : KV_DMA_BASE  (0x2003_0000)
- * Window size  : KV_DMA_SIZE  (4 KB)
- *
- * Register layout (from kv_platform.h):
- *   Per-channel regs   BASE + ch * KV_DMA_CH_STRIDE  (0x40)
- *     KV_DMA_CH_CTRL_OFF    0x00  Control
- *     KV_DMA_CH_STAT_OFF    0x04  Status (RO)
- *     KV_DMA_CH_SRC_OFF     0x08  Source address
- *     KV_DMA_CH_DST_OFF     0x0C  Destination address
- *     KV_DMA_CH_XFER_OFF    0x10  Transfer size (bytes)
- *   Global regs
- *     KV_DMA_IRQ_STAT_OFF   0xF00 IRQ status (W1C)
- *     KV_DMA_IRQ_EN_OFF     0xF04 IRQ enable
- *     KV_DMA_ID_OFF         0xF08 ID register (RO = 0xD4A00100)
- *     KV_DMA_PERF_CTRL_OFF  0xF10 Perf counter control
- *     KV_DMA_PERF_CYCLES_OFF 0xF14 Perf: cycles
- *     KV_DMA_PERF_RD_BYTES_OFF 0xF18 Perf: read bytes
- *     KV_DMA_PERF_WR_BYTES_OFF 0xF1C Perf: write bytes
- *
- * Memory access:
- *   The plugin performs actual memcpy if a flat RAM window has been
- *   registered via dma_register_memory(base_phys, host_ptr, size).
- *   Without that registration, transfers are silently completed (stat
- *   and IRQ updated) but data is not moved.
- *
- * Usage:
- *   Before running Spike, call dma_register_memory() from another
- *   plugin or via a constructor of a wrapper .so:
- *     extern "C" void dma_register_memory(uint32_t base, void* host_ptr, size_t sz);
- * =========================================================================*/
-#include "mmio_plugin_api.h"
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
+// ============================================================================
+// File: plugin_dma.cc
+// Project: KV32 RISC-V Processor
+// Description: Spike MMIO plugin for the KV32 DMA controller
+//
+// Register Map (relative to KV_DMA_BASE = 0x2003_0000, size 4 KB):
+//
+//   Per-channel registers (up to NUM_CHANNELS, each block 0x40 bytes):
+//     ch*0x40 + 0x00  CTRL     - [0]=en, [1]=start, [2]=stop, [3:4]=mode, [7]=irq_en
+//     ch*0x40 + 0x04  STAT     - [0]=busy(RO), [1]=done(W1C), [2]=err(W1C)
+//     ch*0x40 + 0x08  SRC      - Source address (R/W)
+//     ch*0x40 + 0x0C  DST      - Destination address (R/W)
+//     ch*0x40 + 0x10  XFER     - Transfer size in bytes (R/W)
+//     ch*0x40 + 0x14-0x30 stride/scatter-gather (R/W, stored but not used)
+//
+//   Global registers:
+//     0xF00  IRQ_STAT  - Per-channel done/err flags (W1C)
+//     0xF04  IRQ_EN    - Per-channel IRQ global enable (R/W)
+//     0xF08  ID        - 0xD4A00100 (read-only)
+//     0xF0C  CAP       - [7:0]=NUM_CHANNELS, [15:8]=MAX_BURST, [31:16]=VERSION
+//     0xF10-0xF1C      - Performance counters (stub: return 0)
+//   outside [0, 0xFFF]  — Bus error
+//
+// Simulation behaviour:
+//   Transfers are not actually executed (Spike plugins have no system-memory
+//   access).  When software writes CTRL with START set, the DMA "completes"
+//   immediately: STAT[1] (done) is set and IRQ_STAT[ch] is raised.
+//   Software can also poll STAT[0] (busy) — it is always 0 in simulation.
+// ============================================================================
 
-enum { DMA_NUM_CH = 4 };
+#include <riscv/abstract_device.h>
 
-/* DMA memory mapping registered by the host environment */
-static uint32_t g_mem_base = 0;
-static uint8_t* g_mem_ptr  = nullptr;
-static size_t   g_mem_size = 0;
+#include <cstring>
+#include <string>
+#include <vector>
 
-extern "C" void dma_register_memory(uint32_t base_phys,
-                                     void*    host_ptr,
-                                     size_t   byte_size)
-{
-    g_mem_base = base_phys;
-    g_mem_ptr  = (uint8_t*)host_ptr;
-    g_mem_size = byte_size;
-}
+#include "kv_platform.h"
 
-static inline uint8_t* phys_to_host(uint32_t phys) {
-    if (!g_mem_ptr) return nullptr;
-    if (phys < g_mem_base) return nullptr;
-    size_t off = phys - g_mem_base;
-    if (off >= g_mem_size) return nullptr;
-    return g_mem_ptr + off;
-}
+static constexpr uint32_t DMA_NUM_CHANNELS = 8;
+static constexpr uint32_t DMA_ID_VAL       = 0xD4A00100u;
+static constexpr uint32_t DMA_CAP_VAL      =
+    (0x0001u << 16) | (4u << 8) | DMA_NUM_CHANNELS; // version=1, burst=4, N_CH=8
+static constexpr reg_t DMA_ADDR_MAX        = 0xFFFu; // 4 KB window
 
-struct dma_ch_t {
-    uint32_t ctrl;
-    uint32_t stat;
-    uint32_t src;
-    uint32_t dst;
-    uint32_t xfer;
-    /* 2-D / 3-D / SG regs stored but not functionally used */
-    uint32_t sstride, dstride, rowcnt;
-    uint32_t spstride, dpstride, planecnt;
-    uint32_t sgaddr, sgcnt;
-};
+// Number of 32-bit words per channel (stride = 0x40 = 16 words)
+static constexpr uint32_t CH_WORDS = KV_DMA_CH_STRIDE / 4;
 
-struct dma_t {
-    dma_ch_t ch[DMA_NUM_CH];
-    uint32_t irq_stat;
-    uint32_t irq_en;
-    uint32_t perf_ctrl;
-    uint32_t perf_cycles;
-    uint32_t perf_rd_bytes;
-    uint32_t perf_wr_bytes;
-    int      irq_state;
-};
-
-static void dma_do_transfer(dma_t* d, int ch_idx) {
-    dma_ch_t* ch = &d->ch[ch_idx];
-    uint32_t  sz = ch->xfer;
-    uint8_t*  src_p = phys_to_host(ch->src);
-    uint8_t*  dst_p = phys_to_host(ch->dst);
-
-    if (src_p && dst_p && sz) {
-        memcpy(dst_p, src_p, sz);
-        if (d->perf_ctrl & 1u) {
-            d->perf_rd_bytes += sz;
-            d->perf_wr_bytes += sz;
-            d->perf_cycles   += sz;    /* 1 cycle per byte approximation */
-        }
+class plugin_dma_t : public abstract_device_t {
+public:
+    plugin_dma_t()
+    {
+        memset(ch_regs_,   0, sizeof(ch_regs_));
+        memset(glb_regs_,  0, sizeof(glb_regs_));
+        glb_regs_[DMA_ID_IDX]  = DMA_ID_VAL;
+        glb_regs_[DMA_CAP_IDX] = DMA_CAP_VAL;
     }
 
-    ch->stat &= ~(uint32_t)KV_DMA_STAT_BUSY;
-    d->irq_stat |= (1u << ch_idx);     /* mark channel done */
-}
-
-static void dma_update_irq(dma_t* d) {
-    int pending = (d->irq_stat & d->irq_en) ? 1 : 0;
-    if (pending != d->irq_state) {
-        d->irq_state = pending;
-        plic_notify(KV_PLIC_SRC_DMA, pending);
-    }
-}
-
-static void* dma_alloc(const char* /*args*/) { return calloc(1, sizeof(dma_t)); }
-static void  dma_dealloc(void* dev)          { free(dev); }
-
-static bool dma_access(void* dev, reg_t addr,
-                        size_t len, uint8_t* bytes, bool store)
-{
-    dma_t*   d   = (dma_t*)dev;
-    uint32_t off = (uint32_t)addr;
-
-    /* ----- global registers ----------------------------------------- */
-    if (off >= (uint32_t)KV_DMA_IRQ_STAT_OFF) {
-        if (!store) {
-            uint32_t val = 0;
-            if      (off == (uint32_t)KV_DMA_IRQ_STAT_OFF)      val = d->irq_stat;
-            else if (off == (uint32_t)KV_DMA_IRQ_EN_OFF)         val = d->irq_en;
-            else if (off == (uint32_t)KV_DMA_ID_OFF)             val = 0xD4A00100u;
-            else if (off == (uint32_t)KV_DMA_PERF_CTRL_OFF)      val = d->perf_ctrl;
-            else if (off == (uint32_t)KV_DMA_PERF_CYCLES_OFF)    val = d->perf_cycles;
-            else if (off == (uint32_t)KV_DMA_PERF_RD_BYTES_OFF)  val = d->perf_rd_bytes;
-            else if (off == (uint32_t)KV_DMA_PERF_WR_BYTES_OFF)  val = d->perf_wr_bytes;
-            fill_bytes(bytes, len, val);
-        } else {
-            uint32_t val = extract_val(bytes, len);
-            if      (off == (uint32_t)KV_DMA_IRQ_STAT_OFF) {
-                d->irq_stat &= ~val;    /* W1C */
-                dma_update_irq(d);
-            } else if (off == (uint32_t)KV_DMA_IRQ_EN_OFF) {
-                d->irq_en = val;
-                dma_update_irq(d);
-            } else if (off == (uint32_t)KV_DMA_PERF_CTRL_OFF) {
-                if (val & 2u) {         /* reset bit */
-                    d->perf_cycles    = 0;
-                    d->perf_rd_bytes  = 0;
-                    d->perf_wr_bytes  = 0;
-                }
-                d->perf_ctrl = val & 1u;
-            }
-        }
+    bool load(reg_t addr, size_t len, uint8_t *bytes) override
+    {
+        if (addr > DMA_ADDR_MAX || (addr & 3u)) return false;
+        uint32_t val = reg_read(addr);
+        memset(bytes, 0, len);
+        if (len >= 4) memcpy(bytes, &val, 4);
+        else           memcpy(bytes, &val, len);
         return true;
     }
 
-    /* ----- per-channel registers ------------------------------------ */
-    int ch_idx = (int)(off / (uint32_t)KV_DMA_CH_STRIDE);
-    if (ch_idx >= DMA_NUM_CH) return true;
-
-    uint32_t  ch_off = off % (uint32_t)KV_DMA_CH_STRIDE;
-    dma_ch_t* ch     = &d->ch[ch_idx];
-
-    if (!store) {
+    bool store(reg_t addr, size_t len, const uint8_t *bytes) override
+    {
+        if (addr > DMA_ADDR_MAX || (addr & 3u)) return false;
         uint32_t val = 0;
-        if      (ch_off == (uint32_t)KV_DMA_CH_CTRL_OFF)  val = ch->ctrl;
-        else if (ch_off == (uint32_t)KV_DMA_CH_STAT_OFF)  val = ch->stat;
-        else if (ch_off == (uint32_t)KV_DMA_CH_SRC_OFF)   val = ch->src;
-        else if (ch_off == (uint32_t)KV_DMA_CH_DST_OFF)   val = ch->dst;
-        else if (ch_off == (uint32_t)KV_DMA_CH_XFER_OFF)  val = ch->xfer;
-        fill_bytes(bytes, len, val);
-    } else {
-        uint32_t val = extract_val(bytes, len);
-        if (ch_off == (uint32_t)KV_DMA_CH_CTRL_OFF) {
-            ch->ctrl = val;
-            if ((val & (uint32_t)KV_DMA_CTRL_EN) &&
-                (val & (uint32_t)KV_DMA_CTRL_START)) {
-                /* Arm and start: execute transfer immediately */
-                ch->stat |= (uint32_t)KV_DMA_STAT_BUSY;
-                dma_do_transfer(d, ch_idx);
-                dma_update_irq(d);
-            } else if (val & (uint32_t)KV_DMA_CTRL_STOP) {
-                ch->stat &= ~(uint32_t)KV_DMA_STAT_BUSY;
-            }
-        } else if (ch_off == (uint32_t)KV_DMA_CH_SRC_OFF)  { ch->src  = val; }
-        else if (ch_off == (uint32_t)KV_DMA_CH_DST_OFF)    { ch->dst  = val; }
-        else if (ch_off == (uint32_t)KV_DMA_CH_XFER_OFF)   { ch->xfer = val; }
-        /* stride / scatter-gather regs silently stored */
+        if (len >= 4) memcpy(&val, bytes, 4);
+        else           memcpy(&val, bytes, len);
+        reg_write(addr, val);
+        return true;
     }
-    return true;
+
+    reg_t size() override { return (reg_t)KV_DMA_SIZE; }
+
+private:
+    // Channel register file: [channel][word_index]
+    uint32_t ch_regs_[DMA_NUM_CHANNELS][CH_WORDS];
+
+    // Global register file indexed by enum
+    enum GlbIdx { DMA_IRQSTAT_IDX = 0, DMA_IRQEN_IDX, DMA_ID_IDX, DMA_CAP_IDX,
+                  DMA_PERFCTRL_IDX, DMA_PERFCYC_IDX, DMA_PERFRDBYTES_IDX,
+                  DMA_PERFWRBYTES_IDX, DMA_GLB_COUNT };
+    uint32_t glb_regs_[DMA_GLB_COUNT];
+
+    // Map global offset to glb_regs_ index
+    static int glb_idx(reg_t off)
+    {
+        switch (off) {
+        case KV_DMA_IRQ_STAT_OFF:     return DMA_IRQSTAT_IDX;
+        case KV_DMA_IRQ_EN_OFF:       return DMA_IRQEN_IDX;
+        case KV_DMA_ID_OFF:           return DMA_ID_IDX;
+        case KV_DMA_CAP_OFF:          return DMA_CAP_IDX;
+        case KV_DMA_PERF_CTRL_OFF:    return DMA_PERFCTRL_IDX;
+        case KV_DMA_PERF_CYCLES_OFF:  return DMA_PERFCYC_IDX;
+        case KV_DMA_PERF_RD_BYTES_OFF:return DMA_PERFRDBYTES_IDX;
+        case KV_DMA_PERF_WR_BYTES_OFF:return DMA_PERFWRBYTES_IDX;
+        default: return -1;
+        }
+    }
+
+    uint32_t reg_read(reg_t addr)
+    {
+        if (addr >= KV_DMA_IRQ_STAT_OFF) {
+            int idx = glb_idx(addr);
+            return (idx >= 0) ? glb_regs_[idx] : 0u;
+        }
+        // Per-channel
+        uint32_t ch  = (uint32_t)(addr / KV_DMA_CH_STRIDE);
+        uint32_t off = (uint32_t)(addr % KV_DMA_CH_STRIDE);
+        if (ch >= DMA_NUM_CHANNELS || (off & 3u)) return 0u;
+        return ch_regs_[ch][off / 4];
+    }
+
+    void reg_write(reg_t addr, uint32_t val)
+    {
+        if (addr >= KV_DMA_IRQ_STAT_OFF) {
+            int idx = glb_idx(addr);
+            if (idx < 0) return;
+            if (idx == DMA_IRQSTAT_IDX)
+                glb_regs_[idx] &= ~val; // W1C
+            else if (idx == DMA_ID_IDX || idx == DMA_CAP_IDX)
+                return;  // read-only
+            else
+                glb_regs_[idx] = val;
+            return;
+        }
+        // Per-channel
+        uint32_t ch  = (uint32_t)(addr / KV_DMA_CH_STRIDE);
+        uint32_t off = (uint32_t)(addr % KV_DMA_CH_STRIDE);
+        if (ch >= DMA_NUM_CHANNELS || (off & 3u)) return;
+
+        uint32_t word = off / 4;
+
+        if (off == KV_DMA_CH_STAT_OFF) {
+            // STAT: W1C for done/err bits
+            ch_regs_[ch][word] &= ~(val & (KV_DMA_STAT_DONE | KV_DMA_STAT_ERR));
+            // If done/err cleared, also clear corresponding IRQ_STAT bit
+            if (val & (KV_DMA_STAT_DONE | KV_DMA_STAT_ERR))
+                glb_regs_[DMA_IRQSTAT_IDX] &= ~(1u << ch);
+            return;
+        }
+
+        ch_regs_[ch][word] = val;
+
+        if (off == KV_DMA_CH_CTRL_OFF && (val & KV_DMA_CTRL_START)) {
+            // Simulate instant transfer completion
+            ch_regs_[ch][word] &= ~(uint32_t)KV_DMA_CTRL_START; // auto-clear START
+            // Set STAT[busy=0, done=1]
+            uint32_t &stat = ch_regs_[ch][KV_DMA_CH_STAT_OFF / 4];
+            stat &= ~(uint32_t)KV_DMA_STAT_BUSY;
+            stat |=  KV_DMA_STAT_DONE;
+            // Raise global IRQ_STAT if channel IRQ enabled
+            if (val & KV_DMA_CTRL_IE)
+                glb_regs_[DMA_IRQSTAT_IDX] |= (1u << ch);
+        }
+    }
+};
+
+static plugin_dma_t *
+plugin_dma_parse(const void *, const sim_t *, reg_t *base,
+                 const std::vector<std::string> &sargs)
+{
+    if (!sargs.empty()) *base = strtoull(sargs[0].c_str(), nullptr, 0);
+    return new plugin_dma_t();
 }
 
-static const mmio_plugin_t dma_plugin = { dma_alloc, dma_dealloc, dma_access };
+static std::string
+plugin_dma_generate_dts(const sim_t *, const std::vector<std::string> &)
+{ return ""; }
 
-__attribute__((constructor))
-static void plugin_init() {
-    register_mmio_plugin("kv32_dma", &dma_plugin);
-}
+REGISTER_DEVICE(plugin_dma, plugin_dma_parse, plugin_dma_generate_dts)

@@ -1,132 +1,165 @@
-/* ============================================================================
- * spike/plugin_uart.cc – Spike MMIO plugin for the KV32 UART
- *
- * Base address : KV_UART_BASE  (0x2000_0000)
- * Window size  : KV_UART_SIZE  (64 KB)
- *
- * Register offsets (from kv_platform.h):
- *   KV_UART_DATA_OFF    0x00  RX (read) / TX (write)
- *   KV_UART_STATUS_OFF  0x04  Status flags
- *   KV_UART_IE_OFF      0x08  Interrupt Enable
- *   KV_UART_IS_OFF      0x0C  Interrupt Status (W1C)
- *   KV_UART_LEVEL_OFF   0x10  Baud-rate divisor / FIFO level
- *   KV_UART_CTRL_OFF    0x14  Control (loopback)
- *
- * Behaviour:
- *   TX write  → fputc to stdout (or loopback FIFO if loopback bit set)
- *   RX read   → dequeue from a small software FIFO
- *   Loopback  → TX data is also pushed to the RX FIFO
- *   IRQ       → plic_notify(KV_PLIC_SRC_UART, 1) when RX FIFO non-empty
- * =========================================================================*/
-#include "mmio_plugin_api.h"
-#include <stdlib.h>
-#include <stdio.h>
+// ============================================================================
+// File: plugin_uart.cc
+// Project: KV32 RISC-V Processor
+// Description: Spike MMIO plugin for the KV32 UART peripheral
+//
+// Register Map (relative to KV_UART_BASE = 0x2000_0000):
+//   0x00  DATA    - write: byte → stdout;  read: byte ← stdin (non-blocking)
+//   0x04  STATUS  - [0/1]=tx_full (0=ready), [2]=rx_ready, [3]=rx_full
+//   0x08  IE      - Interrupt enable (R/W)
+//   0x0C  IS      - Interrupt status (RO level): [0]=rx_ready, [1]=tx_empty
+//   0x10  LEVEL   - [3:0]=rx_count, [11:8]=tx_count (both reported as 0)
+//   0x14  CTRL    - [0]=loopback_en (R/W)
+//   0x18  CAP     - Capability (RO): version=0x0001, RX_DEPTH=16, TX_DEPTH=16
+//   >0x18  —      - Bus error (load/store access-fault)
+//
+// Simulation behaviour:
+//   TX always succeeds immediately (STATUS never shows tx_full).
+//   TX data is written to stdout.
+//   RX: non-blocking stdin poll via select(); returns 0 if no input available.
+//   With loopback enabled (CTRL[0]=1), each TX byte is also pushed to the RX
+//   FIFO so software loopback tests work correctly.
+// ============================================================================
 
-enum { UART_FIFO_DEPTH = 64 };
+#include <riscv/abstract_device.h>
 
-struct uart_t {
-    uint8_t  rx_fifo[UART_FIFO_DEPTH];
-    uint8_t  rd;
-    uint8_t  wr;
-    uint32_t ie;       /* interrupt enable */
-    uint32_t is;       /* interrupt status (pending) */
-    uint32_t ctrl;     /* loopback etc. */
-    uint32_t level;    /* baud divisor shadow – not functionally used */
-    int      irq_state;
-};
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <deque>
+#include <string>
+#include <vector>
 
-static inline int fifo_size(const uart_t* u) {
-    return (int)(((unsigned)(u->wr - u->rd)) & (UART_FIFO_DEPTH - 1));
-}
-static inline bool fifo_empty(const uart_t* u) { return u->rd == u->wr; }
-static inline bool fifo_full(const uart_t* u) {
-    return fifo_size(u) == UART_FIFO_DEPTH - 1;
-}
-static inline void fifo_push(uart_t* u, uint8_t b) {
-    if (!fifo_full(u)) {
-        u->rx_fifo[u->wr & (UART_FIFO_DEPTH - 1)] = b;
-        u->wr++;
-    }
-}
-static inline uint8_t fifo_pop(uart_t* u) {
-    uint8_t b = u->rx_fifo[u->rd & (UART_FIFO_DEPTH - 1)];
-    u->rd++;
-    return b;
-}
+#include <fcntl.h>
+#include <sys/select.h>
+#include <unistd.h>
 
-static void uart_update_irq(uart_t* u) {
-    int pending = 0;
-    if ((u->ie & (uint32_t)KV_UART_IE_RX_READY) && !fifo_empty(u))
-        pending = 1;
-    if (pending != u->irq_state) {
-        u->irq_state = pending;
-        plic_notify(KV_PLIC_SRC_UART, pending);
-    }
-}
+#include "kv_platform.h"
 
-static void* uart_alloc(const char* /*args*/) {
-    return calloc(1, sizeof(uart_t));
-}
-static void uart_dealloc(void* dev) { free(dev); }
+static constexpr uint32_t UART_FIFO_DEPTH = 16;
+static constexpr uint32_t UART_CAP_VAL =
+    (0x0001u << 16) | (UART_FIFO_DEPTH << 8) | UART_FIFO_DEPTH;
+// Last valid register offset
+static constexpr reg_t UART_ADDR_MAX = KV_UART_CAP_OFF;
 
-static bool uart_access(void* dev, reg_t addr,
-                         size_t len, uint8_t* bytes, bool store)
+// Non-blocking stdin: try to read one byte without blocking.
+static bool stdin_try_read(uint8_t *ch)
 {
-    uart_t*  u   = (uart_t*)dev;
-    uint32_t off = (uint32_t)addr;
-
-    if (!store) {
-        uint32_t val = 0;
-        if (off == (uint32_t)KV_UART_DATA_OFF) {
-            if (!fifo_empty(u))
-                val = fifo_pop(u);
-            uart_update_irq(u);
-        } else if (off == (uint32_t)KV_UART_STATUS_OFF) {
-            if (!fifo_empty(u))     val |= (uint32_t)KV_UART_ST_RX_READY;
-            if (fifo_full(u))       val |= (uint32_t)KV_UART_ST_RX_FULL;
-            /* TX is always ready in simulation */
-        } else if (off == (uint32_t)KV_UART_IE_OFF) {
-            val = u->ie;
-        } else if (off == (uint32_t)KV_UART_IS_OFF) {
-            if (!fifo_empty(u)) val |= (uint32_t)KV_UART_IE_RX_READY;
-            /* TX_EMPTY is always 1 in simulation */
-            val |= (uint32_t)KV_UART_IE_TX_EMPTY;
-        } else if (off == (uint32_t)KV_UART_LEVEL_OFF) {
-            val = u->level;
-        } else if (off == (uint32_t)KV_UART_CTRL_OFF) {
-            val = u->ctrl;
-        }
-        fill_bytes(bytes, len, val);
-    } else {
-        uint32_t val = extract_val(bytes, len);
-        if (off == (uint32_t)KV_UART_DATA_OFF) {
-            uint8_t ch = (uint8_t)(val & 0xFF);
-            if (u->ctrl & (uint32_t)KV_UART_CTRL_LOOPBACK) {
-                fifo_push(u, ch);
-            } else {
-                fputc(ch, stdout);
-                fflush(stdout);
-            }
-            uart_update_irq(u);
-        } else if (off == (uint32_t)KV_UART_IE_OFF) {
-            u->ie = val;
-            uart_update_irq(u);
-        } else if (off == (uint32_t)KV_UART_IS_OFF) {
-            u->is &= ~val;          /* W1C */
-        } else if (off == (uint32_t)KV_UART_LEVEL_OFF) {
-            u->level = val;
-        } else if (off == (uint32_t)KV_UART_CTRL_OFF) {
-            u->ctrl = val;
-        }
-    }
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    struct timeval tv = {0, 0};
+    if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) <= 0) return false;
+    int c = fgetc(stdin);
+    if (c == EOF) return false;
+    *ch = (uint8_t)c;
     return true;
 }
 
-static const mmio_plugin_t uart_plugin = {
-    uart_alloc, uart_dealloc, uart_access
+class plugin_uart_t : public abstract_device_t {
+public:
+    plugin_uart_t() : ie_(0), loopback_(false) {}
+
+    bool load(reg_t addr, size_t len, uint8_t *bytes) override
+    {
+        if (addr > UART_ADDR_MAX) return false;  // bus error
+        uint32_t val = reg_read(addr);
+        memset(bytes, 0, len);
+        if (len >= 4) memcpy(bytes, &val, 4);
+        else           memcpy(bytes, &val, len);
+        return true;
+    }
+
+    bool store(reg_t addr, size_t len, const uint8_t *bytes) override
+    {
+        if (addr > UART_ADDR_MAX) return false;  // bus error
+        uint32_t val = 0;
+        if (len >= 4) memcpy(&val, bytes, 4);
+        else           memcpy(&val, bytes, len);
+        reg_write(addr, val);
+        return true;
+    }
+
+    reg_t size() override { return (reg_t)KV_UART_SIZE; }
+
+private:
+    std::deque<uint8_t> rx_fifo_;
+    uint32_t ie_;
+    bool     loopback_;
+
+    // Poll stdin for any pending bytes and drain them into rx_fifo_.
+    void poll_stdin()
+    {
+        uint8_t ch;
+        while (rx_fifo_.size() < UART_FIFO_DEPTH && stdin_try_read(&ch))
+            rx_fifo_.push_back(ch);
+    }
+
+    uint32_t rx_is()   const { return rx_fifo_.empty() ? 0u : KV_UART_IE_RX_READY; }
+    uint32_t is_val()  const { return rx_is() | KV_UART_IE_TX_EMPTY; } // tx always empty
+
+    uint32_t reg_read(reg_t addr)
+    {
+        switch (addr) {
+        case KV_UART_DATA_OFF: {
+            poll_stdin();
+            if (!rx_fifo_.empty()) {
+                uint8_t b = rx_fifo_.front(); rx_fifo_.pop_front();
+                return b;
+            }
+            return 0u;
+        }
+        case KV_UART_STATUS_OFF: {
+            poll_stdin();
+            uint32_t st = 0;
+            if (!rx_fifo_.empty())                     st |= KV_UART_ST_RX_READY;
+            if (rx_fifo_.size() >= UART_FIFO_DEPTH)    st |= KV_UART_ST_RX_FULL;
+            // TX never full in simulation
+            return st;
+        }
+        case KV_UART_IE_OFF:    return ie_;
+        case KV_UART_IS_OFF:    poll_stdin(); return is_val();
+        case KV_UART_LEVEL_OFF: {
+            poll_stdin();
+            return (uint32_t)rx_fifo_.size() & 0x1Fu; // tx_count=0, rx_count in [3:0]
+        }
+        case KV_UART_CTRL_OFF:  return loopback_ ? KV_UART_CTRL_LOOPBACK : 0u;
+        case KV_UART_CAP_OFF:   return UART_CAP_VAL;
+        default:                return 0u;
+        }
+    }
+
+    void reg_write(reg_t addr, uint32_t val)
+    {
+        switch (addr) {
+        case KV_UART_DATA_OFF: {
+            char ch = (char)(val & 0xFF);
+            fputc(ch, stdout);
+            fflush(stdout);
+            if (loopback_ && rx_fifo_.size() < UART_FIFO_DEPTH)
+                rx_fifo_.push_back((uint8_t)ch);
+            break;
+        }
+        case KV_UART_IE_OFF:   ie_      = val & 0x3u; break;
+        case KV_UART_IS_OFF:   break;  // IS is read-only (W1C in RTL, no-op here)
+        case KV_UART_LEVEL_OFF: break; // LEVEL is read-only
+        case KV_UART_CTRL_OFF: loopback_ = (val & KV_UART_CTRL_LOOPBACK) != 0; break;
+        case KV_UART_CAP_OFF:  break;  // CAP is read-only
+        default: break;
+        }
+    }
 };
 
-__attribute__((constructor))
-static void plugin_init() {
-    register_mmio_plugin("kv32_uart", &uart_plugin);
+static plugin_uart_t *
+plugin_uart_parse(const void *, const sim_t *, reg_t *base,
+                  const std::vector<std::string> &sargs)
+{
+    if (!sargs.empty()) *base = strtoull(sargs[0].c_str(), nullptr, 0);
+    return new plugin_uart_t();
 }
+
+static std::string
+plugin_uart_generate_dts(const sim_t *, const std::vector<std::string> &)
+{ return ""; }
+
+REGISTER_DEVICE(plugin_uart, plugin_uart_parse, plugin_uart_generate_dts)

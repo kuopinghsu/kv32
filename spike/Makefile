@@ -16,8 +16,12 @@
 #       "symbol not found '_register_mmio_plugin'" errors at runtime, you'll
 #       need to rebuild Spike with proper symbol exports.
 
-# ── directories ───────────────────────────────────────────────────────────────
-SPIKE_DIR  := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+# Capture the spike/ directory before any includes alter MAKEFILE_LIST.
+SPIKE_DIR  := $(CURDIR)/
+
+include ../env.config
+
+# == directories ===============================================================
 BUILD_DIR  ?= ../build
 SW_INCLUDE  = ../sw/include
 
@@ -25,12 +29,12 @@ SW_INCLUDE  = ../sw/include
 # If available and contains riscv/mmio_plugin.h, use instead of our shim.
 SPIKE_INCLUDE ?=
 
-# ── compiler flags ────────────────────────────────────────────────────────────
+# == compiler flags ============================================================
 CXX      ?= g++
-CXXFLAGS  = -std=c++14 -O2 -fPIC -shared
+CXXFLAGS  = -std=c++17 -O2 -fPIC -shared
 CXXFLAGS += -I$(SPIKE_DIR) -I$(SW_INCLUDE)
 CXXFLAGS += -DKV_PLATFORM_NO_INLINE_HELPERS
-LDFLAGS   = -ldl
+LDFLAGS   =
 
 # On macOS, allow undefined symbols to be resolved at runtime
 UNAME_S := $(shell uname -s)
@@ -38,29 +42,34 @@ ifeq ($(UNAME_S),Darwin)
   LDFLAGS += -undefined dynamic_lookup
 endif
 
-# If real Spike headers are present, use them instead of our shim.
+# If real Spike headers are present, add them to the include path.
+# Check for abstract_device.h (present in all Spike builds).
 ifneq ($(SPIKE_INCLUDE),)
-  ifeq ($(wildcard $(SPIKE_INCLUDE)/riscv/mmio_plugin.h),$(SPIKE_INCLUDE)/riscv/mmio_plugin.h)
+  ifneq ($(wildcard $(SPIKE_INCLUDE)/riscv/abstract_device.h),)
     CXXFLAGS += -DSPIKE_INCLUDE -I$(SPIKE_INCLUDE)
   endif
 endif
 
-# ── targets ───────────────────────────────────────────────────────────────────
+# == targets ===================================================================
+# Note: plugin_clint and plugin_plic are built but not loaded by default –
+# Spike provides built-in CLINT/PLIC at the same addresses as KV32's SoC.
 PLUGINS = \
-  $(BUILD_DIR)/spike_plugin_magic.so   \
-  $(BUILD_DIR)/spike_plugin_plic.so    \
-  $(BUILD_DIR)/spike_plugin_clint.so   \
-  $(BUILD_DIR)/spike_plugin_uart.so    \
-  $(BUILD_DIR)/spike_plugin_spi.so     \
-  $(BUILD_DIR)/spike_plugin_i2c.so     \
-  $(BUILD_DIR)/spike_plugin_dma.so
+  $(BUILD_DIR)/spike_plugin_magic.so  \
+  $(BUILD_DIR)/spike_plugin_clint.so  \
+  $(BUILD_DIR)/spike_plugin_plic.so   \
+  $(BUILD_DIR)/spike_plugin_uart.so   \
+  $(BUILD_DIR)/spike_plugin_i2c.so    \
+  $(BUILD_DIR)/spike_plugin_spi.so    \
+  $(BUILD_DIR)/spike_plugin_dma.so    \
+  $(BUILD_DIR)/spike_plugin_gpio.so   \
+  $(BUILD_DIR)/spike_plugin_timer.so
 
 .PHONY: all clean
 
 all: $(PLUGINS)
 
-# Pattern rule: plugin_%.cc → build/spike_plugin_%.so
-$(BUILD_DIR)/spike_plugin_%.so: $(SPIKE_DIR)/plugin_%.cc $(SPIKE_DIR)/mmio_plugin_api.h
+# Pattern rule: spike/plugin_<name>.cc → build/spike_plugin_<name>.so
+$(BUILD_DIR)/spike_plugin_%.so: $(SPIKE_DIR)plugin_%.cc
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 	@echo "  Built $@"

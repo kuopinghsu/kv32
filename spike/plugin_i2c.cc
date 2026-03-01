@@ -1,125 +1,115 @@
-/* ============================================================================
- * spike/plugin_i2c.cc – Spike MMIO plugin for the KV32 I2C master
- *
- * Base address : KV_I2C_BASE  (0x2001_0000)
- * Window size  : KV_I2C_SIZE  (64 KB)
- *
- * Register offsets (from kv_platform.h):
- *   KV_I2C_CTRL_OFF    0x00  Control
- *   KV_I2C_DIV_OFF     0x04  Clock divider
- *   KV_I2C_TX_OFF      0x08  TX data
- *   KV_I2C_RX_OFF      0x0C  RX data (pop)
- *   KV_I2C_STATUS_OFF  0x10  Status
- *   KV_I2C_IE_OFF      0x14  Interrupt Enable
- *   KV_I2C_IS_OFF      0x18  Interrupt Status (W1C)
- *
- * Behaviour:
- *   Simulation model: every byte written to TX is immediately echoed
- *   back to the RX FIFO (loopback/ACK-all model).  CTRL_START and
- *   CTRL_STOP are accepted and silently consumed; CTRL_READ causes the
- *   last TX byte to be re-queued as an RX byte.
- *   IRQ is raised via plic_notify(KV_PLIC_SRC_I2C, 1) when RX FIFO
- *   becomes non-empty and KV_I2C_IE_RX_READY is set.
- * =========================================================================*/
-#include "mmio_plugin_api.h"
-#include <stdlib.h>
+// ============================================================================
+// File: plugin_i2c.cc
+// Project: KV32 RISC-V Processor
+// Description: Spike MMIO plugin for the KV32 I2C master peripheral
+//
+// Register Map (relative to KV_I2C_BASE = 0x2001_0000):
+//   0x00  CTRL    - Control (R/W): [0]=enable, [1]=start, [2]=stop, [3]=read, [4]=nack
+//   0x04  DIV     - Clock divider (R/W)
+//   0x08  TX      - TX data byte (W): push to TX FIFO (discarded in stub)
+//   0x0C  RX      - RX data byte (R): pop from RX FIFO (always returns 0xFF in stub)
+//   0x10  STATUS  - [0]=busy, [1]=tx_ready, [2]=rx_valid, [3]=ack_recv
+//   0x14  IE      - Interrupt enable (R/W)
+//   0x18  IS      - Interrupt status (RO): [0]=rx_ready, [1]=tx_empty, [2]=stop_done
+//   0x1C  CAP     - Capability (RO): version=0x0001, RX_DEPTH=4, TX_DEPTH=4
+//   >0x1C  —      - Bus error
+//
+// In simulation there is no real I2C bus.  TX writes are accepted (discarded).
+// RX reads return 0xFF (bus idle / NACK).  STATUS[1] (tx_ready) is always set.
+// CTRL[1] START clears START bit immediately (no real transaction).
+// CTRL[2] STOP  sets IS[2] (stop_done) to notify software the bus is free.
+// ============================================================================
 
-enum { I2C_FIFO_DEPTH = 16 };
+#include <riscv/abstract_device.h>
 
-struct i2c_t {
-    uint8_t  rx_fifo[I2C_FIFO_DEPTH];
-    uint8_t  rd;
-    uint8_t  wr;
-    uint8_t  last_tx;   /* saved to support CTRL_READ echo */
-    uint32_t ctrl;
-    uint32_t div;
-    uint32_t ie;
-    uint32_t is;
-    int      irq_state;
+#include <cstring>
+#include <string>
+#include <vector>
+
+#include "kv_platform.h"
+
+static constexpr uint32_t I2C_FIFO_DEPTH = 4;
+static constexpr uint32_t I2C_CAP_VAL =
+    (0x0001u << 16) | (I2C_FIFO_DEPTH << 8) | I2C_FIFO_DEPTH;
+static constexpr reg_t I2C_ADDR_MAX = KV_I2C_CAP_OFF;
+
+class plugin_i2c_t : public abstract_device_t {
+public:
+    plugin_i2c_t() : ctrl_(0), div_(0), ie_(0), is_(0) {}
+
+    bool load(reg_t addr, size_t len, uint8_t *bytes) override
+    {
+        if (addr > I2C_ADDR_MAX) return false;
+        uint32_t val = reg_read(addr);
+        memset(bytes, 0, len);
+        if (len >= 4) memcpy(bytes, &val, 4);
+        else           memcpy(bytes, &val, len);
+        return true;
+    }
+
+    bool store(reg_t addr, size_t len, const uint8_t *bytes) override
+    {
+        if (addr > I2C_ADDR_MAX) return false;
+        uint32_t val = 0;
+        if (len >= 4) memcpy(&val, bytes, 4);
+        else           memcpy(&val, bytes, len);
+        reg_write(addr, val);
+        return true;
+    }
+
+    reg_t size() override { return (reg_t)KV_I2C_SIZE; }
+
+private:
+    uint32_t ctrl_, div_, ie_, is_;
+
+    uint32_t reg_read(reg_t addr)
+    {
+        switch (addr) {
+        case KV_I2C_CTRL_OFF:   return ctrl_;
+        case KV_I2C_DIV_OFF:    return div_;
+        case KV_I2C_TX_OFF:     return 0u;   // write-only in RTL; return 0
+        case KV_I2C_RX_OFF:     return 0xFFu; // no real bus; return idle byte
+        case KV_I2C_STATUS_OFF:
+            // tx_ready always set (no hardware busy-wait needed in sim)
+            return KV_I2C_ST_TX_READY;
+        case KV_I2C_IE_OFF:     return ie_;
+        case KV_I2C_IS_OFF:     return is_;
+        case KV_I2C_CAP_OFF:    return I2C_CAP_VAL;
+        default:                return 0u;
+        }
+    }
+
+    void reg_write(reg_t addr, uint32_t val)
+    {
+        switch (addr) {
+        case KV_I2C_CTRL_OFF:
+            // START issued: clear it immediately (no real transaction)
+            ctrl_ = val & ~(uint32_t)KV_I2C_CTRL_START;
+            // STOP issued: set stop_done interrupt flag
+            if (val & KV_I2C_CTRL_STOP)
+                is_ |= KV_I2C_IE_STOP_DONE;
+            break;
+        case KV_I2C_DIV_OFF:  div_ = val;              break;
+        case KV_I2C_TX_OFF:   /* TX discarded */        break;
+        case KV_I2C_RX_OFF:   /* read-only */           break;
+        case KV_I2C_IE_OFF:   ie_  = val & 0x7u;       break;
+        case KV_I2C_IS_OFF:   is_ &= ~val;             break; // W1C
+        case KV_I2C_CAP_OFF:  /* read-only */           break;
+        default: break;
+        }
+    }
 };
 
-static inline bool i2c_rx_empty(const i2c_t* d) { return d->rd == d->wr; }
-static inline bool i2c_rx_full(const i2c_t* d) {
-    return (uint8_t)(d->wr - d->rd) == I2C_FIFO_DEPTH;
-}
-static inline void i2c_rx_push(i2c_t* d, uint8_t b) {
-    if (!i2c_rx_full(d)) { d->rx_fifo[d->wr & (I2C_FIFO_DEPTH-1)] = b; d->wr++; }
-}
-static inline uint8_t i2c_rx_pop(i2c_t* d) {
-    uint8_t b = d->rx_fifo[d->rd & (I2C_FIFO_DEPTH-1)]; d->rd++; return b;
-}
-
-static void i2c_update_irq(i2c_t* d) {
-    int pending = 0;
-    if ((d->ie & (uint32_t)KV_I2C_IE_RX_READY) && !i2c_rx_empty(d))
-        pending = 1;
-    if (pending != d->irq_state) {
-        d->irq_state = pending;
-        plic_notify(KV_PLIC_SRC_I2C, pending);
-    }
-}
-
-static void* i2c_alloc(const char* /*args*/) { return calloc(1, sizeof(i2c_t)); }
-static void  i2c_dealloc(void* dev)          { free(dev); }
-
-static bool i2c_access(void* dev, reg_t addr,
-                        size_t len, uint8_t* bytes, bool store)
+static plugin_i2c_t *
+plugin_i2c_parse(const void *, const sim_t *, reg_t *base,
+                 const std::vector<std::string> &sargs)
 {
-    i2c_t*   d   = (i2c_t*)dev;
-    uint32_t off = (uint32_t)addr;
-
-    if (!store) {
-        uint32_t val = 0;
-        if (off == (uint32_t)KV_I2C_RX_OFF) {
-            if (!i2c_rx_empty(d)) val = i2c_rx_pop(d);
-            i2c_update_irq(d);
-        } else if (off == (uint32_t)KV_I2C_CTRL_OFF) {
-            val = d->ctrl & ~((uint32_t)KV_I2C_CTRL_START |
-                              (uint32_t)KV_I2C_CTRL_STOP  |
-                              (uint32_t)KV_I2C_CTRL_READ);
-        } else if (off == (uint32_t)KV_I2C_DIV_OFF) {
-            val = d->div;
-        } else if (off == (uint32_t)KV_I2C_STATUS_OFF) {
-            /* TX is always ready; bus never busy in simulation */
-            val = (uint32_t)KV_I2C_ST_TX_READY | (uint32_t)KV_I2C_ST_ACK_RECV;
-            if (!i2c_rx_empty(d)) val |= (uint32_t)KV_I2C_ST_RX_VALID;
-        } else if (off == (uint32_t)KV_I2C_IE_OFF) {
-            val = d->ie;
-        } else if (off == (uint32_t)KV_I2C_IS_OFF) {
-            val = d->is;
-            if (!i2c_rx_empty(d)) val |= (uint32_t)KV_I2C_IE_RX_READY;
-        }
-        fill_bytes(bytes, len, val);
-    } else {
-        uint32_t val = extract_val(bytes, len);
-        if (off == (uint32_t)KV_I2C_CTRL_OFF) {
-            d->ctrl = val;
-            if (val & (uint32_t)KV_I2C_CTRL_READ) {
-                /* Simulate a read: return the last byte sent by the master */
-                i2c_rx_push(d, d->last_tx);
-                i2c_update_irq(d);
-            }
-            /* CTRL_START / CTRL_STOP are accepted silently */
-        } else if (off == (uint32_t)KV_I2C_TX_OFF) {
-            d->last_tx = (uint8_t)val;
-            /* Echo TX byte to RX FIFO (loopback / ACK-all model) */
-            i2c_rx_push(d, d->last_tx);
-            i2c_update_irq(d);
-        } else if (off == (uint32_t)KV_I2C_DIV_OFF) {
-            d->div = val;
-        } else if (off == (uint32_t)KV_I2C_IE_OFF) {
-            d->ie = val;
-            i2c_update_irq(d);
-        } else if (off == (uint32_t)KV_I2C_IS_OFF) {
-            d->is &= ~val;          /* W1C */
-        }
-    }
-    return true;
+    if (!sargs.empty()) *base = strtoull(sargs[0].c_str(), nullptr, 0);
+    return new plugin_i2c_t();
 }
 
-static const mmio_plugin_t i2c_plugin = { i2c_alloc, i2c_dealloc, i2c_access };
+static std::string
+plugin_i2c_generate_dts(const sim_t *, const std::vector<std::string> &)
+{ return ""; }
 
-__attribute__((constructor))
-static void plugin_init() {
-    register_mmio_plugin("kv32_i2c", &i2c_plugin);
-}
+REGISTER_DEVICE(plugin_i2c, plugin_i2c_parse, plugin_i2c_generate_dts)

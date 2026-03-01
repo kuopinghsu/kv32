@@ -1,78 +1,109 @@
-/* ============================================================================
- * spike/plugin_clint.cc – Spike MMIO plugin for the KV32 CLINT
- *
- * Base address : KV_CLINT_BASE  (0x0200_0000)
- * Window size  : KV_CLINT_SIZE  (64 KB)
- *
- * Register offsets (from kv_platform.h):
- *   KV_CLINT_MSIP_OFF         (0x00000)  machine software IRQ pending
- *   KV_CLINT_MTIMECMP_LO_OFF  (0x04000)  timer compare [31:0]
- *   KV_CLINT_MTIMECMP_HI_OFF  (0x04004)  timer compare [63:32]
- *   KV_CLINT_MTIME_LO_OFF     (0x0BFF8)  current time [31:0]  (RO)
- *   KV_CLINT_MTIME_HI_OFF     (0x0BFFC)  current time [63:32] (RO)
- *
- * mtime increments by 1 on every read so that firmware polling on mtime
- * always makes forward progress in simulation.
- * =========================================================================*/
-#include "mmio_plugin_api.h"
-#include <stdlib.h>
+// ============================================================================
+// File: plugin_clint.cc
+// Project: KV32 RISC-V Processor
+// Description: Spike MMIO plugin for the KV32 CLINT (Core-Local Interrupt)
+//
+// Register Map (relative to KV_CLINT_BASE = 0x0200_0000):
+//   0x00000  MSIP         - Machine Software Interrupt Pending (R/W, [0] = msip)
+//   0x04000  MTIMECMP_LO  - Timer Compare register, low 32 bits (R/W)
+//   0x04004  MTIMECMP_HI  - Timer Compare register, high 32 bits (R/W)
+//   0x0BFF8  MTIME_LO     - Current time, low 32 bits (R/W)
+//   0x0BFFC  MTIME_HI     - Current time, high 32 bits (R/W)
+//   other    —            * Bus error (load/store access-fault)
+//
+// Behaviour:
+//   mtime increments by 1 on each tick() call (RTC @ 1 MHz → 1 µs per tick).
+//   Spike reads mtime/mtimecmp from this plugin when running rv32 code that
+//   accesses the CLINT MMIO window, so CSR emulation stays consistent.
+// ============================================================================
 
-struct clint_t {
-    uint32_t msip;
-    uint64_t mtimecmp;
-    uint64_t mtime;
-};
+#include <riscv/abstract_device.h>
 
-static void* clint_alloc(const char* /*args*/) {
-    clint_t* c = (clint_t*)calloc(1, sizeof(clint_t));
-    c->mtimecmp = UINT64_MAX;   /* no timer interrupt at reset */
-    return c;
-}
+#include <cstring>
+#include <string>
+#include <vector>
 
-static void clint_dealloc(void* dev) {
-    free(dev);
-}
+#include "kv_platform.h"
 
-static bool clint_access(void* dev, reg_t addr,
-                          size_t len, uint8_t* bytes, bool store)
-{
-    clint_t* c   = (clint_t*)dev;
-    uint32_t off = (uint32_t)addr;
+class plugin_clint_t : public abstract_device_t {
+public:
+    plugin_clint_t() : msip_(0), mtime_(0), mtimecmp_(UINT64_MAX) {}
 
-    if (!store) {
+    bool load(reg_t addr, size_t len, uint8_t *bytes) override
+    {
         uint32_t val = 0;
-        if      (off == (uint32_t)KV_CLINT_MSIP_OFF)
-            val = c->msip & 1u;
-        else if (off == (uint32_t)KV_CLINT_MTIMECMP_LO_OFF)
-            val = (uint32_t)(c->mtimecmp);
-        else if (off == (uint32_t)KV_CLINT_MTIMECMP_HI_OFF)
-            val = (uint32_t)(c->mtimecmp >> 32);
-        else if (off == (uint32_t)KV_CLINT_MTIME_LO_OFF) {
-            c->mtime++;             /* advance so polling terminates */
-            val = (uint32_t)(c->mtime);
-        } else if (off == (uint32_t)KV_CLINT_MTIME_HI_OFF) {
-            val = (uint32_t)(c->mtime >> 32);
-        }
-        fill_bytes(bytes, len, val);
-    } else {
-        uint32_t val = extract_val(bytes, len);
-        if      (off == (uint32_t)KV_CLINT_MSIP_OFF)
-            c->msip = val & 1u;
-        else if (off == (uint32_t)KV_CLINT_MTIMECMP_LO_OFF)
-            c->mtimecmp = (c->mtimecmp & 0xFFFFFFFF00000000ULL) | val;
-        else if (off == (uint32_t)KV_CLINT_MTIMECMP_HI_OFF)
-            c->mtimecmp = (c->mtimecmp & 0x00000000FFFFFFFFULL) |
-                          ((uint64_t)val << 32);
-        /* mtime registers are read-only from the CPU side */
+        bool ok = reg_read32(addr, &val);
+        if (!ok) return false;
+        memset(bytes, 0, len);
+        if (len >= 4) memcpy(bytes, &val, 4);
+        else           memcpy(bytes, &val, len);
+        return true;
     }
-    return true;
-}
 
-static const mmio_plugin_t clint_plugin = {
-    clint_alloc, clint_dealloc, clint_access
+    bool store(reg_t addr, size_t len, const uint8_t *bytes) override
+    {
+        uint32_t val = 0;
+        if (len >= 4) memcpy(&val, bytes, 4);
+        else           memcpy(&val, bytes, len);
+        return reg_write32(addr, val);
+    }
+
+    void tick(reg_t /*rtc_ticks*/) override { mtime_++; }
+
+    reg_t size() override { return (reg_t)KV_CLINT_SIZE; }
+
+private:
+    uint32_t msip_;
+    uint64_t mtime_;
+    uint64_t mtimecmp_;
+
+    bool reg_read32(reg_t addr, uint32_t *out)
+    {
+        switch (addr) {
+        case KV_CLINT_MSIP_OFF:
+            *out = msip_ & 1u;                      return true;
+        case KV_CLINT_MTIMECMP_LO_OFF:
+            *out = (uint32_t)(mtimecmp_ & 0xFFFFFFFFu); return true;
+        case KV_CLINT_MTIMECMP_HI_OFF:
+            *out = (uint32_t)(mtimecmp_ >> 32);      return true;
+        case KV_CLINT_MTIME_LO_OFF:
+            *out = (uint32_t)(mtime_ & 0xFFFFFFFFu); return true;
+        case KV_CLINT_MTIME_HI_OFF:
+            *out = (uint32_t)(mtime_ >> 32);         return true;
+        default:
+            return false;  // unmapped offset → bus error
+        }
+    }
+
+    bool reg_write32(reg_t addr, uint32_t val)
+    {
+        switch (addr) {
+        case KV_CLINT_MSIP_OFF:
+            msip_ = val & 1u;                        return true;
+        case KV_CLINT_MTIMECMP_LO_OFF:
+            mtimecmp_ = (mtimecmp_ & 0xFFFFFFFF00000000ULL) | val; return true;
+        case KV_CLINT_MTIMECMP_HI_OFF:
+            mtimecmp_ = ((uint64_t)val << 32) | (mtimecmp_ & 0xFFFFFFFFULL); return true;
+        case KV_CLINT_MTIME_LO_OFF:
+            mtime_ = (mtime_ & 0xFFFFFFFF00000000ULL) | val;       return true;
+        case KV_CLINT_MTIME_HI_OFF:
+            mtime_ = ((uint64_t)val << 32) | (mtime_ & 0xFFFFFFFFULL); return true;
+        default:
+            return false;  // unmapped offset → bus error
+        }
+    }
 };
 
-__attribute__((constructor))
-static void plugin_init() {
-    register_mmio_plugin("kv32_clint", &clint_plugin);
+static plugin_clint_t *
+plugin_clint_parse(const void *, const sim_t *, reg_t *base,
+                   const std::vector<std::string> &sargs)
+{
+    if (!sargs.empty()) *base = strtoull(sargs[0].c_str(), nullptr, 0);
+    return new plugin_clint_t();
 }
+
+static std::string
+plugin_clint_generate_dts(const sim_t *, const std::vector<std::string> &)
+{ return ""; }
+
+REGISTER_DEVICE(plugin_clint, plugin_clint_parse, plugin_clint_generate_dts)
