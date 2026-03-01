@@ -69,6 +69,10 @@ TEST_NAMES = $(notdir $(TEST_DIRS))
 COMPARE_EXCLUDE = full i2c uart spi dma gpio timer bus_err
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
+# Tests to run under Spike (excludes tests not supported by Spike; override with SPIKE_TESTS=<list>)
+SPIKE_EXCLUDE = icache
+SPIKE_TESTS  ?= $(filter-out $(SPIKE_EXCLUDE), $(TEST_NAMES))
+
 # Software simulator selection (kv32sim or spike)
 SIM ?= kv32sim
 
@@ -200,10 +204,10 @@ TB_SOURCES = $(TB_DIR)/tb_kv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-
 # Output executable
 BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
-.PHONY: all build-rtl build-sim rtl-build sim-build build-spike-plugins clean clean-tests clean-spike-plugins run waves help info rtl-% sim-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
+.PHONY: all build-rtl build-sim rtl-build sim-build build-spike-plugins clean clean-tests clean-spike-plugins run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
 # Default target - run all tests
-all: rtl-all sim-all compare-all freertos-compare-simple
+all: rtl-all sim-all compare-all spike-all freertos-compare-simple
 	@make -f Makefile TRACE=1 arch-test-all
 	@make -f Makefile TRACE=1 arch-test-sim
 
@@ -359,7 +363,7 @@ SPIKE_EXTLIBS_LOCAL = $(patsubst $(BUILD_DIR)/%,--extlib=./%,$(SPIKE_PLUGINS))
 ifeq ($(SIM),spike)
 _SIM_PREREQ = build-spike-plugins
 define _SIM_RUN
-cd $(BUILD_DIR) && $(SPIKE) --isa=rv32ima $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $(1).elf 2>&1 || true
+cd $(BUILD_DIR) && $(SPIKE) --isa=rv32ima_zicsr_zicntr $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $(1).elf 2>&1 || true
 endef
 else
 _SIM_PREREQ =
@@ -380,7 +384,24 @@ ifeq ($(TRACE),1)
 else
 	@echo "Use TRACE=1 to enable instruction trace"
 endif
-	@echo "==========================================" 
+	@echo "=========================================="
+
+# Target to run test with Spike simulator (e.g., make spike-hello)
+# Always uses Spike regardless of the SIM variable.
+# Use TRACE=1 to enable instruction trace.
+spike-%: build-spike-plugins
+	@$(MAKE) $(BUILD_DIR)/$*.elf
+	@echo "=========================================="
+	@echo "Running test '$*' with Spike"
+	@echo "=========================================="
+	cd $(BUILD_DIR) && $(SPIKE) --isa=rv32ima_zicsr_zicntr $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $*.elf 2>&1
+	@echo ""
+ifeq ($(TRACE),1)
+	@echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"
+else
+	@echo "Use TRACE=1 to enable instruction trace"
+endif
+	@echo "=========================================="
 
 # Build all Spike MMIO plugins
 build-spike-plugins:
@@ -510,6 +531,34 @@ sim-all: build-sim $(_SIM_PREREQ)
 	echo "Failed: $$failed";\
 	echo "==========================================";\
 	if [ $$failed -gt 0 ]; then exit 1; fi
+
+# Target to run all tests under Spike with MMIO plugins (e.g., make spike-all)
+# Override the test list with: make spike-all SPIKE_TESTS="hello simple uart"
+spike-all: build-spike-plugins
+	@echo "=========================================="
+	@echo "Running Spike tests: $(SPIKE_TESTS)"
+	@echo "=========================================="
+	@echo ""
+	@passed=0; failed=0; \
+	for test in $(SPIKE_TESTS); do \
+		if $(MAKE) -s spike-$$test; then \
+			echo "✓ $$test PASSED"; \
+			passed=$$((passed + 1)); \
+		else \
+			echo "✗ $$test FAILED"; \
+			failed=$$((failed + 1)); \
+		fi; \
+		echo ""; \
+	done; \
+	echo "==========================================";\
+	echo "Spike Test Summary";\
+	echo "==========================================";\
+	echo "Total:  $$((passed + failed))";\
+	echo "Passed: $$passed";\
+	echo "Failed: $$failed";\
+	echo "==========================================";\
+	if [ $$failed -gt 0 ]; then exit 1; fi
+
 # Target to compare all tests (RTL vs software simulator traces)
 compare-all:
 	@echo "=========================================="
@@ -753,6 +802,8 @@ help:
 	@echo "  rtl-all       - Build and run ALL tests with RTL simulator"
 	@echo "  sim-<test>    - Build and run test with software simulator"
 	@echo "  sim-all       - Build and run ALL tests with software simulator"
+	@echo "  spike-<test>  - Build and run test with Spike (always uses Spike)"
+	@echo "  spike-all     - Run SPIKE_TESTS under Spike with MMIO plugins"
 	@echo "  build-spike-plugins - Build all Spike MMIO plugin .so files"
 	@echo "  compare-<test>      - Run both RTL and sim, compare traces"
 	@echo "  compare-all   - Compare traces for ALL tests"
@@ -775,7 +826,10 @@ help:
 	@echo "  make rtl-all         # Run all tests with RTL"
 	@echo "  make sim-uart        # Run uart test with software sim (kv32sim)"
 	@echo "  make sim-all         # Run all tests with software sim"
+	@echo "  make spike-hello           # Run hello test with Spike (shorthand)"
 	@echo "  make SIM=spike sim-hello   # Run hello test with Spike + MMIO plugins"
+	@echo "  make spike-all             # Run all Spike-compatible tests"
+	@echo "  make spike-all SPIKE_TESTS=\"hello simple dhry\"  # Run a custom subset"
 	@echo "  make build-spike-plugins   # Build all Spike MMIO plugin .so files"
 	@echo "  make compare-simple  # Compare RTL vs sim traces"
 	@echo "  make compare-all     # Compare traces for all tests"

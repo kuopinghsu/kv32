@@ -72,6 +72,9 @@ public:
     bool load(reg_t addr, size_t len, uint8_t *bytes) override
     {
         if (addr > DMA_ADDR_MAX || (addr & 3u)) return false;
+        // Hole between end of channel registers and global registers → SLVERR
+        if (addr >= (reg_t)(DMA_NUM_CHANNELS * KV_DMA_CH_STRIDE) &&
+            addr <  (reg_t)KV_DMA_IRQ_STAT_OFF) return false;
         uint32_t val = reg_read(addr);
         memset(bytes, 0, len);
         if (len >= 4) memcpy(bytes, &val, 4);
@@ -82,6 +85,9 @@ public:
     bool store(reg_t addr, size_t len, const uint8_t *bytes) override
     {
         if (addr > DMA_ADDR_MAX || (addr & 3u)) return false;
+        // Hole between end of channel registers and global registers → SLVERR
+        if (addr >= (reg_t)(DMA_NUM_CHANNELS * KV_DMA_CH_STRIDE) &&
+            addr <  (reg_t)KV_DMA_IRQ_STAT_OFF) return false;
         uint32_t val = 0;
         if (len >= 4) memcpy(&val, bytes, 4);
         else           memcpy(&val, bytes, len);
