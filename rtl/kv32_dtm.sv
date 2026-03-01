@@ -60,7 +60,11 @@ module kv32_dtm #(
     output logic [3:0] dbg_mem_we_o,        // Memory write enable (byte mask)
     output logic [31:0] dbg_mem_wdata_o,    // Memory write data
     input  logic       dbg_mem_ready_i,     // Memory ready
-    input  logic [31:0] dbg_mem_rdata_i     // Memory read data
+    input  logic [31:0] dbg_mem_rdata_i,    // Memory read data
+
+    // System reset outputs
+    output logic        dbg_ndmreset_o,     // Non-debug module reset (reset whole SoC except DM)
+    output logic        dbg_hartreset_o     // Hart reset request
 );
 
     // ========================================================================
@@ -74,16 +78,20 @@ module kv32_dtm #(
     // ========================================================================
     // DMI Register Addresses (6 bits)
     // ========================================================================
-    localparam DMI_DATA0     = 7'h04;  // Abstract data 0
-    localparam DMI_DATA1     = 7'h05;  // Abstract data 1
-    localparam DMI_DMCONTROL = 7'h10;  // Debug Module Control
-    localparam DMI_DMSTATUS  = 7'h11;  // Debug Module Status
-    localparam DMI_HARTINFO  = 7'h12;  // Hart Information
-    localparam DMI_ABSTRACTCS = 7'h16; // Abstract Control and Status
-    localparam DMI_COMMAND   = 7'h17;  // Abstract Command
-    localparam DMI_PROGBUF0  = 7'h20;  // Program Buffer 0
-    localparam DMI_PROGBUF1  = 7'h21;  // Program Buffer 1
-    localparam DMI_HALTSUM0  = 7'h40;  // Halt Summary 0
+    localparam DMI_DATA0       = 7'h04;  // Abstract data 0
+    localparam DMI_DATA1       = 7'h05;  // Abstract data 1
+    localparam DMI_DMCONTROL   = 7'h10;  // Debug Module Control
+    localparam DMI_DMSTATUS    = 7'h11;  // Debug Module Status
+    localparam DMI_HARTINFO    = 7'h12;  // Hart Information
+    localparam DMI_ABSTRACTCS  = 7'h16;  // Abstract Control and Status
+    localparam DMI_COMMAND     = 7'h17;  // Abstract Command
+    localparam DMI_ABSTRACTAUTO= 7'h18;  // Abstract Auto-Execute
+    localparam DMI_PROGBUF0    = 7'h20;  // Program Buffer 0
+    localparam DMI_PROGBUF1    = 7'h21;  // Program Buffer 1
+    localparam DMI_HALTSUM0    = 7'h40;  // Halt Summary 0
+    localparam DMI_SBCS        = 7'h38;  // System Bus Control/Status
+    localparam DMI_SBADDRESS0  = 7'h39;  // System Bus Address (lower 32 bits)
+    localparam DMI_SBDATA0     = 7'h3c;  // System Bus Data (lower 32 bits)
 
     // ========================================================================
     // Abstract Command Encoding
@@ -139,8 +147,10 @@ module kv32_dtm #(
     logic        dmcontrol_resumereq;   // Resume request
     logic        dmcontrol_hartreset;   // Hart reset
     logic        dmcontrol_ackhavereset; // Acknowledge have reset
-    logic        dmcontrol_ndmreset;    // Debug module reset
+    logic        dmcontrol_ndmreset;    // Non-debug module reset
     logic        dmcontrol_dmactive;    // Debug module active
+    logic [9:0]  dmcontrol_hartsello;   // Hart select (lower 10 bits, [25:16])
+    logic [9:0]  dmcontrol_hartselhi;   // Hart select (upper 10 bits, [5:4] in spec)
 
     // dmstatus register (0x11) - Read only, reflects current state
     wire         dmstatus_allresumeack;
@@ -149,11 +159,16 @@ module kv32_dtm #(
     wire         dmstatus_anyrunning;
     wire         dmstatus_allhalted;
     wire         dmstatus_anyhalted;
+    wire         dmstatus_allhavereset;   // Hart has been reset since last ackhavereset
+    wire         dmstatus_anyhavereset;
+    wire         dmstatus_allnonexistent; // Selected hart does not exist
+    wire         dmstatus_anynonexistent;
+    logic        havereset_r;             // sticky: set when hartreset/ndmreset fires
 
     // hartinfo register (0x12) - Read only
     localparam [31:0] HARTINFO_VALUE = {
         8'b0,           // [31:24] Reserved
-        4'd1,           // [23:20] nscratch (1 scratch register)
+        4'd2,           // [23:20] nscratch (2 scratch registers: dscratch0, dscratch1)
         3'b0,           // [19:17] Reserved
         1'b0,           // [16] dataaccess (no direct data access)
         4'd2,           // [15:12] datasize (2 = 64-bit for GPR + CSR)
@@ -166,6 +181,41 @@ module kv32_dtm #(
     logic        abstractcs_busy;       // Command busy (system clock domain)
     localparam [3:0] ABSTRACTCS_DATACOUNT = 4'd2;   // 2 data registers
     localparam [4:0] ABSTRACTCS_PROGBUFSIZE = 5'd2; // 2 progbuf registers
+
+    // abstractauto register (0x18) - auto re-execute on data/progbuf access
+    logic [11:0] abstractauto_autoexecdata;     // bit[i]=1: re-exec when data[i] accessed
+    logic [15:0] abstractauto_autoexecprogbuf;  // bit[i]=1: re-exec when progbuf[i] accessed
+
+    // Synthetic debug CSRs — owned exclusively by CLK domain (read via Capture-DR sync)
+    // ntrst_i reset is NOT needed; rst_n resets these via the CLK always_ff block below.
+    logic [31:0] dcsr_reg;       // CSR 0x7b0 – debug control/status
+    logic [31:0] dscratch0_reg;  // CSR 0x7b2 – debug scratch 0
+    logic [31:0] dscratch1_reg;  // CSR 0x7b3 – debug scratch 1
+
+    // System Bus Access (SBA) registers
+    logic        sbcs_sbbusyerror;     // Sticky error: SBA started while busy
+    logic        sbcs_readonaddr;      // Trigger SBA read when sbaddress0 written
+    logic [2:0]  sbcs_sbaccess;        // Access width: 2=32-bit (only supported)
+    logic        sbcs_autoincrement;   // Auto-increment sbaddress0 after access
+    logic        sbcs_readondata;      // Trigger SBA read when sbdata0 read
+    // sbcs_error is owned exclusively by CLK domain.
+    // W1C from TCK domain uses a toggle-sync: TCK latches the clear-mask and
+    // pulses sbcs_error_clr_toggle_tck; CLK applies the W1C on the edge.
+    logic [2:0]  sbcs_error;           // SBA error status (CLK domain)
+    logic [2:0]  sbcs_error_clr_tck;   // TCK domain: mask of bits to clear (W1C)
+    logic        sbcs_error_clr_toggle_tck;  // TCK domain: toggles to trigger W1C
+    logic [2:0]  sbcs_error_clr_sync;  // 3-stage sync for toggle (CLK domain)
+    logic        sbcs_error_clr_r;     // Edge-detect for toggle (CLK domain)
+    logic [2:0]  sbcs_error_clr_latch; // Latched clear mask, sampled on toggle edge
+    // sbcs_sbaccess synced to CLK domain so FSM can check access width at SBA trigger
+    logic [2:0]  sbcs_sbaccess_clk;    // CLK-domain copy of sbcs_sbaccess (2-stage sync)
+    logic [31:0] sbaddress0;           // SBA address
+    logic [31:0] sbdata0;              // SBA data (written = start write; read = last result)
+    logic        sba_wr_toggle_tck;    // TCK domain: toggles to trigger SBA write
+    logic        sba_rd_toggle_tck;    // TCK domain: toggles to trigger SBA read
+    // Remaining SBA localparams
+    localparam [2:0]  SBA_ACCESS32 = 3'd2;  // 32-bit access width code
+    localparam [6:0]  SBA_ASIZE   = 7'd32;  // Address size: 32-bit bus
 
     // Abstract data registers (TCK domain)
     logic [31:0] data0;                 // data0 register
@@ -188,42 +238,76 @@ module kv32_dtm #(
     // ========================================================================
     // State Machine for Abstract Command Execution
     // ========================================================================
-    typedef enum logic [2:0] {
+    typedef enum logic [3:0] {
         CMD_IDLE,
         CMD_REG_READ,
         CMD_REG_WRITE,
+        CMD_CSR_READ,
+        CMD_CSR_WRITE,
         CMD_MEM_READ,
         CMD_MEM_WRITE,
+        CMD_SBA_READ,
+        CMD_SBA_WRITE,
         CMD_WAIT,
         CMD_DONE
     } cmd_state_t;
 
     cmd_state_t cmd_state, cmd_state_next;
-    logic [15:0] cmd_regno;             // Register number being accessed (GPR 0-31, PC=0x1000)
+    logic [15:0] cmd_regno;             // Register number per debug spec: GPR=0x1000-0x101f, DPC CSR=0x7b1
     logic [2:0] cmd_size;               // Access size (0=byte, 1=half, 2=word, 3=double)
     logic       cmd_write;              // Command is write (vs read)
     logic       cmd_postexec;           // Execute progbuf after command
     logic       cmd_transfer;           // Perform transfer
 
-    // CPU Control Signals
+    // CPU Control Signals (TCK domain)
     logic       halt_req_sync;
     logic       resume_req_sync;
     logic       halted_sync, halted_sync_r;
     logic       resumeack_sync, resumeack_sync_r;
 
+    // CPU Control Signals (system clock domain)
+    logic       halted_sync_clk;         // dbg_halted_i synchronized to clk domain
+
     // Memory access tracking
     logic       mem_req_pending;
-    logic [1:0] mem_wait_cnt;
+    logic [3:0] mem_wait_cnt;            // 16-cycle timeout for memory operations
+
+    // Command trigger: toggle-sync from TCK→clk domain
+    logic       cmd_wr_toggle_tck;       // toggles in TCK domain when COMMAND is written
+    logic [2:0] cmd_wr_toggle_sync;      // 3-stage sync chain in clk domain
+    logic       cmd_wr_toggle_r;         // delayed version for edge detect
+
+    // SBA trigger: separate toggle-syncs for SBA reads and writes (TCK→clk)
+    logic [2:0] sba_wr_toggle_sync;      // SBA write toggle sync chain
+    logic       sba_wr_toggle_r;
+    logic [2:0] sba_rd_toggle_sync;      // SBA read toggle sync chain
+    logic       sba_rd_toggle_r;
+    logic [3:0] sba_wait_cnt;            // SBA timeout counter
+
+    // SBA busy: sync from clk domain back to TCK domain for SBCS.sbbusy read
+    logic       sba_busy_clk;            // clk domain: SBA FSM is active
+    logic [2:0] sba_busy_tck_chain;      // 3-stage sync to TCK
+    logic       sba_busy_tck;            // TCK domain: SBA is busy
 
     // ========================================================================
     // Status signals derived from CPU state
     // ========================================================================
-    assign dmstatus_anyhalted = halted_sync;
-    assign dmstatus_allhalted = halted_sync;
-    assign dmstatus_anyrunning = !halted_sync;
-    assign dmstatus_allrunning = !halted_sync;
-    assign dmstatus_anyresumeack = resumeack_sync && !resumeack_sync_r;
-    assign dmstatus_allresumeack = dmstatus_anyresumeack;
+    assign dmstatus_anyhalted     = halted_sync;   // TCK domain: for dmstatus reads
+    assign dmstatus_allhalted     = halted_sync;
+    assign dmstatus_anyrunning    = !halted_sync;
+    assign dmstatus_allrunning    = !halted_sync;
+    assign dmstatus_anyresumeack  = resumeack_sync && !resumeack_sync_r;
+    assign dmstatus_allresumeack  = dmstatus_anyresumeack;
+    assign dmstatus_anyhavereset  = havereset_r;   // sticky, cleared by ackhavereset
+    assign dmstatus_allhavereset  = havereset_r;
+    // nonexistent: any hartsel bits nonzero (kv32 has only hart 0)
+    wire hartsel_nonzero = (dmcontrol_hartsello != 10'b0) || (dmcontrol_hartselhi != 10'b0);
+    assign dmstatus_anynonexistent = hartsel_nonzero;
+    assign dmstatus_allnonexistent = hartsel_nonzero;
+
+    // ndmreset / hartreset output wires
+    assign dbg_ndmreset_o  = dmcontrol_ndmreset;
+    assign dbg_hartreset_o = dmcontrol_hartreset;
 
     // ========================================================================
     // Clock Domain Crossing Synchronizers
@@ -240,6 +324,8 @@ module kv32_dtm #(
             halted_sync_r <= 1'b0;
             resumeack_sync <= 1'b0;
             resumeack_sync_r <= 1'b0;
+            sba_busy_tck_chain <= 3'b0;
+            sba_busy_tck       <= 1'b0;
         end else begin
             // Double-synchronize CPU status signals
             halted_sync_chain <= {halted_sync_chain[1:0], dbg_halted_i};
@@ -249,24 +335,33 @@ module kv32_dtm #(
             resumeack_sync_chain <= {resumeack_sync_chain[1:0], dbg_resumeack_i};
             resumeack_sync <= resumeack_sync_chain[2];
             resumeack_sync_r <= resumeack_sync;
+
+            // Sync SBA busy from clk domain back to TCK domain
+            sba_busy_tck_chain <= {sba_busy_tck_chain[1:0], sba_busy_clk};
+            sba_busy_tck       <= sba_busy_tck_chain[2];
         end
     end
 
     // Synchronize debug requests from TCK domain to system clock domain
     logic [2:0] halt_req_sync_chain;
     logic [2:0] resume_req_sync_chain;
+    logic [2:0] halted_sync_clk_chain;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            halt_req_sync_chain <= 3'b0;
+            halt_req_sync_chain   <= 3'b0;
             resume_req_sync_chain <= 3'b0;
+            halted_sync_clk_chain <= 3'b0;
+            halted_sync_clk       <= 1'b0;
         end else begin
-            halt_req_sync_chain <= {halt_req_sync_chain[1:0], dmcontrol_haltreq};
+            halt_req_sync_chain   <= {halt_req_sync_chain[1:0],   dmcontrol_haltreq};
             resume_req_sync_chain <= {resume_req_sync_chain[1:0], dmcontrol_resumereq};
+            halted_sync_clk_chain <= {halted_sync_clk_chain[1:0], dbg_halted_i};
+            halted_sync_clk       <= halted_sync_clk_chain[2];
         end
     end
 
-    assign dbg_halt_req_o = halt_req_sync_chain[2];
+    assign dbg_halt_req_o   = halt_req_sync_chain[2];
     assign dbg_resume_req_o = resume_req_sync_chain[2];
 
     // ========================================================================
@@ -290,10 +385,10 @@ module kv32_dtm #(
         1'b0,                   // [28] ackhavereset
         1'b0,                   // [27] Reserved
         1'b1,                   // [26] hasel (single hart selected)
-        10'b0,                  // [25:16] hartsello (hart 0)
-        10'b0,                  // [15:6] hartselhi
+        dmcontrol_hartsello,    // [25:16] hartsello (10 bits)
+        dmcontrol_hartselhi,    // [15:6]  hartselhi (10 bits)
         4'b0,                   // [5:2] Reserved
-        1'b0,                   // [1] ndmreset
+        dmcontrol_ndmreset,     // [1] ndmreset
         dmcontrol_dmactive      // [0] dmactive
     };
 
@@ -302,14 +397,14 @@ module kv32_dtm #(
     // ========================================================================
     wire [31:0] dmstatus_rdata = {
         9'b0,                       // [31:23] Reserved
-        1'b0,                       // [22] impebreak
+        1'b1,                       // [22] impebreak (implicit ebreak at progbuf end)
         1'b0,                       // [21] Reserved
-        1'b0,                       // [20] allhavereset
-        1'b0,                       // [19] anyhavereset
+        dmstatus_allhavereset,      // [20]
+        dmstatus_anyhavereset,      // [19]
         dmstatus_allresumeack,      // [18]
         dmstatus_anyresumeack,      // [17]
-        1'b0,                       // [16] allnonexistent
-        1'b0,                       // [15] anynonexistent
+        dmstatus_allnonexistent,    // [16]
+        dmstatus_anynonexistent,    // [15]
         1'b0,                       // [14] allunavail
         1'b0,                       // [13] anyunavail
         dmstatus_allrunning,        // [12]
@@ -321,7 +416,7 @@ module kv32_dtm #(
         1'b0,                       // [6] hasresethaltreq
         1'b0,                       // [5] confstrptrvalid
         1'b0,                       // [4] Reserved
-        4'b0011                     // [3:0] version
+        4'b0010                     // [3:0] version (2 = debug spec 0.13)
     };
 
     // ========================================================================
@@ -329,7 +424,7 @@ module kv32_dtm #(
     // ========================================================================
     wire [31:0] abstractcs_rdata = {
         3'b0,                       // [31:29] Reserved
-        5'd0,                       // [28:24] progbufsize
+        ABSTRACTCS_PROGBUFSIZE,     // [28:24] progbufsize
         11'b0,                      // [23:13] Reserved
         abstractcs_busy,            // [12] busy
         1'b0,                       // [11] Reserved
@@ -368,17 +463,58 @@ module kv32_dtm #(
                     // Capture: Return data from previous operation
                     // Read the requested DMI register
                     case (dmi_address)
-                        DMI_DATA0:     dmi_shift <= {dmi_address, data0, 2'b00};
-                        DMI_DATA1:     dmi_shift <= {dmi_address, data1, 2'b00};
+                        DMI_DATA0:     begin
+                            dmi_shift <= {dmi_address, data0, 2'b00};
+                            // abstractauto: re-trigger if autoexecdata[0] on read
+                            if (abstractauto_autoexecdata[0])
+                                cmd_wr_toggle_tck <= ~cmd_wr_toggle_tck;
+                        end
+                        DMI_DATA1:     begin
+                            dmi_shift <= {dmi_address, data1, 2'b00};
+                            // abstractauto: re-trigger if autoexecdata[1] on read
+                            if (abstractauto_autoexecdata[1])
+                                cmd_wr_toggle_tck <= ~cmd_wr_toggle_tck;
+                        end
                         DMI_DMCONTROL: dmi_shift <= {dmi_address, dmcontrol_rdata, 2'b00};
                         DMI_DMSTATUS:  dmi_shift <= {dmi_address, dmstatus_rdata, 2'b00};
                         DMI_HARTINFO:  dmi_shift <= {dmi_address, HARTINFO_VALUE, 2'b00};
                         DMI_ABSTRACTCS: dmi_shift <= {dmi_address, abstractcs_rdata, 2'b00};
                         DMI_COMMAND:   dmi_shift <= {dmi_address, command_reg, 2'b00};
                         DMI_PROGBUF0:  dmi_shift <= {dmi_address, progbuf0, 2'b00};
-                        DMI_PROGBUF1:  dmi_shift <= {dmi_address, progbuf1, 2'b00};
-                        DMI_HALTSUM0:  dmi_shift <= {dmi_address, haltsum0_rdata, 2'b00};
-                        default:       dmi_shift <= {dmi_address, 32'h0, 2'b00};
+                        DMI_PROGBUF1:   dmi_shift <= {dmi_address, progbuf1, 2'b00};
+                        DMI_ABSTRACTAUTO: dmi_shift <= {dmi_address,
+                            {abstractauto_autoexecprogbuf, 4'b0, abstractauto_autoexecdata},
+                            2'b00};
+                        DMI_HALTSUM0:   dmi_shift <= {dmi_address, haltsum0_rdata, 2'b00};
+                        DMI_SBCS: begin
+                            dmi_shift <= {dmi_address,
+                                {3'd1,              // [31:29] sbversion=1
+                                 6'b0,              // [28:23] reserved
+                                 sbcs_sbbusyerror,  // [22]
+                                 sba_busy_tck,      // [21] sbbusy: live from clk domain
+                                 sbcs_readonaddr,   // [20]
+                                 sbcs_sbaccess,     // [19:17]
+                                 sbcs_autoincrement,// [16]
+                                 sbcs_readondata,   // [15]
+                                 sbcs_error,        // [14:12]
+                                 SBA_ASIZE,         // [11:5] asize=32
+                                 1'b0,          // [4] no 128-bit
+                                 1'b0,          // [3] no 64-bit
+                                 1'b1,          // [2] access32=1
+                                 1'b0,          // [1] no 16-bit
+                                 1'b0},         // [0] no 8-bit
+                                2'b00};
+                        end
+                        DMI_SBADDRESS0: dmi_shift <= {dmi_address, sbaddress0, 2'b00};
+                        DMI_SBDATA0: begin
+                            dmi_shift <= {dmi_address, sbdata0, 2'b00};
+                            // readondata: trigger SBA read when sbdata0 is read
+                            if (sbcs_readondata && sbcs_error == 3'b0) begin
+                                if (sba_busy_tck) sbcs_sbbusyerror <= 1'b1;
+                                else sba_rd_toggle_tck <= ~sba_rd_toggle_tck;  // CLK checks width
+                            end
+                        end
+                        default:        dmi_shift <= {dmi_address, 32'h0, 2'b00};
                     endcase
                 end
                 IR_BYPASS: begin
@@ -454,12 +590,33 @@ module kv32_dtm #(
             dmcontrol_ackhavereset <= 1'b0;
             dmcontrol_ndmreset <= 1'b0;
             dmcontrol_dmactive <= 1'b0;
+            dmcontrol_hartsello <= 10'b0;
+            dmcontrol_hartselhi <= 10'b0;
             data0 <= 32'b0;
             data1 <= 32'b0;
             progbuf0 <= 32'b0;
             progbuf1 <= 32'b0;
             command_reg <= 32'b0;
             abstractcs_cmderr <= 3'b0;
+            cmd_wr_toggle_tck <= 1'b0;
+            // abstractauto
+            abstractauto_autoexecdata    <= 12'b0;
+            abstractauto_autoexecprogbuf <= 16'b0;
+            // Synthetic debug CSRs: owned by CLK domain, reset there; not here.
+            // SBA
+            sbcs_sbbusyerror  <= 1'b0;
+            sbcs_readonaddr   <= 1'b0;
+            sbcs_sbaccess     <= SBA_ACCESS32;
+            sbcs_autoincrement<= 1'b0;
+            sbcs_readondata   <= 1'b0;
+            // sbcs_error owned by CLK domain; only the clr-request fields live here
+            sbcs_error_clr_tck    <= 3'b0;
+            sbcs_error_clr_toggle_tck <= 1'b0;
+            sbaddress0        <= 32'b0;
+            sbdata0           <= 32'b0;
+            sba_wr_toggle_tck <= 1'b0;
+            sba_rd_toggle_tck <= 1'b0;
+            havereset_r       <= 1'b0;
         end else if (update_dr_i && ir_i == IR_DMI) begin
             // Extract address field from shifted data
             dmi_address <= dmi_shift[40:34];
@@ -481,51 +638,113 @@ module kv32_dtm #(
                         if (!abstractcs_busy) begin
                             data0 <= dmi_shift[33:2];
                             `DEBUG1(("[DTM] Write DATA0 = 0x%h", dmi_shift[33:2]));
+                            // abstractauto: re-trigger last command if autoexecdata[0]
+                            if (abstractauto_autoexecdata[0])
+                                cmd_wr_toggle_tck <= ~cmd_wr_toggle_tck;
                         end
                     end
                     DMI_DATA1: begin
                         if (!abstractcs_busy) begin
                             data1 <= dmi_shift[33:2];
                             `DEBUG1(("[DTM] Write DATA1 = 0x%h", dmi_shift[33:2]));
+                            // abstractauto: re-trigger last command if autoexecdata[1]
+                            if (abstractauto_autoexecdata[1])
+                                cmd_wr_toggle_tck <= ~cmd_wr_toggle_tck;
                         end
                     end
                     DMI_DMCONTROL: begin
-                        dmcontrol_dmactive <= dmi_shift[2];  // bit 0
-                        dmcontrol_ndmreset <= dmi_shift[3];  // bit 1
-                        dmcontrol_haltreq <= dmi_shift[33];  // bit 31
-                        dmcontrol_resumereq <= dmi_shift[32]; // bit 30
-                        dmcontrol_hartreset <= dmi_shift[31]; // bit 29
-                        dmcontrol_ackhavereset <= dmi_shift[30]; // bit 28
-                        `DEBUG1(("[DTM] Write DMCONTROL: dmactive=%b haltreq=%b resumereq=%b",
-                               dmi_shift[2], dmi_shift[33], dmi_shift[32]));
+                        dmcontrol_dmactive <= dmi_shift[2];   // bit[0]
+                        dmcontrol_ndmreset <= dmi_shift[3];   // bit[1]
+                        dmcontrol_haltreq <= dmi_shift[33];   // bit[31]
+                        dmcontrol_resumereq <= dmi_shift[32]; // bit[30]
+                        dmcontrol_hartreset <= dmi_shift[31]; // bit[29]
+                        if (dmi_shift[30]) begin  // bit[28] ackhavereset clears havereset
+                            dmcontrol_ackhavereset <= 1'b1;
+                            havereset_r <= 1'b0;
+                        end else begin
+                            dmcontrol_ackhavereset <= 1'b0;
+                        end
+                        dmcontrol_hartsello <= dmi_shift[27:18]; // bits[25:16]
+                        dmcontrol_hartselhi <= dmi_shift[17:8];  // bits[15:6]
+                        // Set havereset sticky when hartreset or ndmreset goes high
+                        if (dmi_shift[31] || dmi_shift[3]) havereset_r <= 1'b1;
+                        `DEBUG1(("[DTM] Write DMCONTROL: dmactive=%b haltreq=%b resumereq=%b ndmreset=%b hartsel=%h",
+                               dmi_shift[2], dmi_shift[33], dmi_shift[32], dmi_shift[3], dmi_shift[27:18]));
                     end
                     DMI_ABSTRACTCS: begin
-                        // Writing to cmderr clears it (write-1-to-clear)
+                        // W1C: each set bit in the write clears the corresponding cmderr bit
                         if (dmi_shift[10:8] != 3'b0) begin
-                            abstractcs_cmderr <= 3'b0;
-                            `DEBUG1(("[DTM] Clear ABSTRACTCS cmderr"));
+                            abstractcs_cmderr <= abstractcs_cmderr & ~dmi_shift[10:8];
+                            `DEBUG1(("[DTM] Clear ABSTRACTCS cmderr mask=%0b", dmi_shift[10:8]));
                         end
                     end
                     DMI_COMMAND: begin
                         if (!abstractcs_busy && dmcontrol_dmactive) begin
-                            command_reg <= dmi_shift[33:2];
+                            command_reg    <= dmi_shift[33:2];
+                            cmd_wr_toggle_tck <= ~cmd_wr_toggle_tck; // Pulse edge to clk domain
                             `DEBUG1(("[DTM] Write COMMAND = 0x%h", dmi_shift[33:2]));
                         end else if (abstractcs_busy) begin
-                            // Don't write error here, let system domain handle it
-                            `DEBUG1(("[DTM] COMMAND write rejected: busy"));
+                            // Spec 3.7.1.1: set cmderr=1 (busy) and discard command
+                            if (abstractcs_cmderr == 3'b0)
+                                abstractcs_cmderr <= CMDERR_BUSY;
+                            `DEBUG1(("[DTM] COMMAND write rejected: busy, cmderr set"));
                         end
                     end
                     DMI_PROGBUF0: begin
                         if (!abstractcs_busy) begin
                             progbuf0 <= dmi_shift[33:2];
                             `DEBUG1(("[DTM] Write PROGBUF0 = 0x%h", dmi_shift[33:2]));
+                            // abstractauto: re-trigger last command if autoexecprogbuf[0]
+                            if (abstractauto_autoexecprogbuf[0])
+                                cmd_wr_toggle_tck <= ~cmd_wr_toggle_tck;
                         end
                     end
                     DMI_PROGBUF1: begin
                         if (!abstractcs_busy) begin
                             progbuf1 <= dmi_shift[33:2];
                             `DEBUG1(("[DTM] Write PROGBUF1 = 0x%h", dmi_shift[33:2]));
+                            // abstractauto: re-trigger last command if autoexecprogbuf[1]
+                            if (abstractauto_autoexecprogbuf[1])
+                                cmd_wr_toggle_tck <= ~cmd_wr_toggle_tck;
                         end
+                    end
+                    DMI_ABSTRACTAUTO: begin
+                        abstractauto_autoexecdata    <= dmi_shift[13:2];   // bits[11:0]
+                        abstractauto_autoexecprogbuf <= dmi_shift[33:18];  // bits[31:16]
+                        `DEBUG1(("[DTM] Write ABSTRACTAUTO execdata=%h execprogbuf=%h",
+                                 dmi_shift[13:2], dmi_shift[29:14]));
+                    end
+                    DMI_SBCS: begin
+                        // [24] W1C sbbusyerror; [22] readonaddr; [21:19] sbaccess; [18] autoincr
+                        // [17] readondata; [16:14] W1C error (sent to CLK domain via toggle)
+                        if (dmi_shift[24]) sbcs_sbbusyerror <= 1'b0;  // bit[22] W1C
+                        sbcs_readonaddr    <= dmi_shift[22];   // bit[20]
+                        sbcs_sbaccess      <= dmi_shift[21:19];// bits[19:17]
+                        sbcs_autoincrement <= dmi_shift[18];   // bit[16]
+                        sbcs_readondata    <= dmi_shift[17];   // bit[15]
+                        // W1C sbcs_error: request CLK domain to clear via toggle-sync
+                        if (dmi_shift[16:14] != 3'b0) begin
+                            sbcs_error_clr_tck        <= dmi_shift[16:14];
+                            sbcs_error_clr_toggle_tck <= ~sbcs_error_clr_toggle_tck;
+                        end
+                        `DEBUG1(("[DTM] Write SBCS: readonaddr=%b sbaccess=%0d",
+                                 dmi_shift[22], dmi_shift[21:19]));
+                    end
+                    DMI_SBADDRESS0: begin
+                        sbaddress0 <= dmi_shift[33:2];
+                        if (sbcs_readonaddr && sbcs_error == 3'b0) begin
+                            if (sba_busy_tck) sbcs_sbbusyerror <= 1'b1;
+                            else sba_rd_toggle_tck <= ~sba_rd_toggle_tck;  // CLK checks width
+                        end
+                        `DEBUG1(("[DTM] Write SBADDRESS0 = 0x%h", dmi_shift[33:2]));
+                    end
+                    DMI_SBDATA0: begin
+                        sbdata0 <= dmi_shift[33:2];
+                        if (sbcs_error == 3'b0) begin
+                            if (sba_busy_tck) sbcs_sbbusyerror <= 1'b1;
+                            else sba_wr_toggle_tck <= ~sba_wr_toggle_tck;  // CLK checks width
+                        end
+                        `DEBUG1(("[DTM] Write SBDATA0 = 0x%h", dmi_shift[33:2]));
                     end
                     default: begin
                         // Other registers are read-only
@@ -536,38 +755,58 @@ module kv32_dtm #(
     end
 
     // ========================================================================
-    // Synchronize command and data from TCK to system clock domain
+    // Synchronize command and data from TCK to system clock domain (toggle-sync)
     // ========================================================================
-    logic [31:0] command_reg_sync [2:0];
-    logic [31:0] data0_sync [2:0];
+    // cmd_wr_toggle_tck declared above; toggles once per COMMAND write in TCK domain.
+    // The 3-stage sync chain converts the toggle to a reliable edge in clk domain.
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            command_reg_sync[0] <= 32'b0;
-            command_reg_sync[1] <= 32'b0;
-            command_reg_sync[2] <= 32'b0;
-            data0_sync[0] <= 32'b0;
-            data0_sync[1] <= 32'b0;
-            data0_sync[2] <= 32'b0;
-            command_reg_sys <= 32'b0;
-            data0_sys <= 32'b0;
-            command_valid_sys <= 1'b0;
+            cmd_wr_toggle_sync <= 3'b0;
+            cmd_wr_toggle_r    <= 1'b0;
+            command_reg_sys    <= 32'b0;
+            data0_sys          <= 32'b0;
+            command_valid_sys  <= 1'b0;
+            sba_wr_toggle_sync <= 3'b0;
+            sba_wr_toggle_r    <= 1'b0;
+            sba_rd_toggle_sync <= 3'b0;
+            sba_rd_toggle_r    <= 1'b0;
+            sba_wait_cnt       <= 4'b0;
+            sbcs_error_clr_sync  <= 3'b0;
+            sbcs_error_clr_r     <= 1'b0;
+            sbcs_error_clr_latch <= 3'b0;
+            sbcs_sbaccess_clk    <= SBA_ACCESS32;
         end else begin
-            command_reg_sync[0] <= command_reg;
-            command_reg_sync[1] <= command_reg_sync[0];
-            command_reg_sync[2] <= command_reg_sync[1];
-            data0_sync[0] <= data0;
-            data0_sync[1] <= data0_sync[0];
-            data0_sync[2] <= data0_sync[1];
+            cmd_wr_toggle_sync <= {cmd_wr_toggle_sync[1:0], cmd_wr_toggle_tck};
+            cmd_wr_toggle_r    <= cmd_wr_toggle_sync[2];
 
-            // Detect new command (transition from 0 to non-zero)
-            if (command_reg_sync[2] != 32'b0 && command_reg_sys == 32'b0) begin
-                command_reg_sys <= command_reg_sync[2];
-                data0_sys <= data0_sync[2];
+            // Sync sbcs_sbaccess to CLK (stable before any SBA trigger toggle fires)
+            sbcs_sbaccess_clk    <= sbcs_sbaccess;
+
+            // sbcs_error W1C toggle-sync from TCK domain
+            sbcs_error_clr_sync  <= {sbcs_error_clr_sync[1:0], sbcs_error_clr_toggle_tck};
+            sbcs_error_clr_r     <= sbcs_error_clr_sync[2];
+            if (sbcs_error_clr_sync[2] != sbcs_error_clr_r) begin
+                sbcs_error_clr_latch <= sbcs_error_clr_tck;
+                sbcs_error           <= sbcs_error & ~sbcs_error_clr_tck;
+            end
+
+            // SBA write/read toggle syncs
+            sba_wr_toggle_sync <= {sba_wr_toggle_sync[1:0], sba_wr_toggle_tck};
+            sba_rd_toggle_sync <= {sba_rd_toggle_sync[1:0], sba_rd_toggle_tck};
+            sba_wr_toggle_r    <= sba_wr_toggle_sync[2];
+            sba_rd_toggle_r    <= sba_rd_toggle_sync[2];
+
+            if (cmd_wr_toggle_sync[2] != cmd_wr_toggle_r) begin
+                // New command edge from TCK domain - latch command & data
+                command_reg_sys   <= command_reg;
+                data0_sys         <= data0;
                 command_valid_sys <= 1'b1;
-                data0_result_valid <= 1'b0;  // Clear result valid
-            end else if (cmd_state == CMD_DONE) begin
-                command_reg_sys <= 32'b0;
+                data0_result_valid <= 1'b0;
+                `DEBUG1(("[DTM] Toggle-sync: command latched = 0x%h", command_reg));
+            end else if (cmd_state == CMD_DONE ||
+                         (command_valid_sys && abstractcs_cmderr_sys != 3'b0)) begin
+                // Clear after FSM finishes or rejected the command (error set)
                 command_valid_sys <= 1'b0;
             end
         end
@@ -582,19 +821,19 @@ module kv32_dtm #(
     wire cmd_is_access_reg = (command_reg_sys[31:24] == CMD_ACCESS_REG);
     wire cmd_is_access_mem = (command_reg_sys[31:24] == CMD_ACCESS_MEM);
 
+    // sba_busy_clk: true while any SBA state is active in clk domain
+    assign sba_busy_clk = (cmd_state == CMD_SBA_READ) || (cmd_state == CMD_SBA_WRITE);
+
     // Register access command fields (cmdtype == 0)
     assign cmd_size = command_reg_sys[22:20];     // Size: 2=32-bit, 3=64-bit
     assign cmd_postexec = command_reg_sys[18];    // Execute progbuf after
     assign cmd_transfer = command_reg_sys[17];    // Perform transfer
     assign cmd_write = command_reg_sys[16];       // 1=write, 0=read
-    assign cmd_regno = command_reg_sys[15:0]; // Full register number field (GPR 0-31, PC=0x1000)
+    assign cmd_regno = command_reg_sys[15:0]; // Register number (GPR: 0x1000-0x101f, CSR DPC: 0x7b1)
 
     // Memory access command fields (cmdtype == 2)
     logic [31:0] mem_addr;
-    // mem_size: declared for future use (cmdtype==2 not yet implemented)
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic [2:0]  mem_size;
-    /* verilator lint_on UNUSEDSIGNAL */
+    logic [2:0]  mem_size;  // reserved for future cmdtype==2 implementation
     wire mem_write_cmd = command_reg_sys[16];
 
     // Command execution logic
@@ -610,7 +849,13 @@ module kv32_dtm #(
             dbg_mem_req_o <= 1'b0;
             dbg_mem_we_o <= 4'b0;
             mem_req_pending <= 1'b0;
-            mem_wait_cnt <= 2'b0;
+            mem_wait_cnt <= 4'b0;
+            // Synthetic CSRs — CLK domain only
+            dcsr_reg      <= 32'h40000003; // xdebugver=4 [31:28], prv=3 [1:0]
+            dscratch0_reg <= 32'b0;
+            dscratch1_reg <= 32'b0;
+            // sbcs_error — CLK domain only
+            sbcs_error    <= 3'b0;
         end else begin
             cmd_state <= cmd_state_next;
 
@@ -626,33 +871,47 @@ module kv32_dtm #(
 
                     // Check if new command written (transition from TCK domain)
                     if (command_valid_sys && !abstractcs_busy) begin
-                        if (!halted_sync) begin
+                        if (!halted_sync_clk) begin
                             // Hart must be halted to execute commands
                             abstractcs_cmderr_sys <= CMDERR_HALTRESUME;
                             `DEBUG1(("[DTM] Command rejected: hart not halted"));
                         end else if (cmd_is_access_reg && cmd_transfer) begin
                             abstractcs_busy <= 1'b1;
-                            if (cmd_regno < 16'(32)) begin  // GPR access (x0-x31)
+                            if (cmd_regno >= 16'h1000 && cmd_regno < 16'h1020) begin // GPR x0-x31
                                 if (cmd_write) begin
                                     cmd_state <= CMD_REG_WRITE;
-                                    `DEBUG1(("[DTM] Execute: Write GPR x%0d = 0x%h", cmd_regno, data0_sys));
+                                    `DEBUG1(("[DTM] Execute: Write GPR x%0d = 0x%h", cmd_regno - 16'h1000, data0_sys));
                                 end else begin
                                     cmd_state <= CMD_REG_READ;
-                                    `DEBUG1(("[DTM] Execute: Read GPR x%0d", cmd_regno));
+                                    `DEBUG1(("[DTM] Execute: Read GPR x%0d", cmd_regno - 16'h1000));
                                 end
-                            end else if (cmd_regno == 16'h1000) begin  // DPC (PC) access
+                            end else if (cmd_regno == 16'h07b1) begin  // CSR DPC (program counter)
                                 if (cmd_write) begin
                                     cmd_state <= CMD_REG_WRITE;
-                                    `DEBUG1(("[DTM] Execute: Write PC = 0x%h", data0_sys));
+                                    `DEBUG1(("[DTM] Execute: Write DPC = 0x%h", data0_sys));
                                 end else begin
                                     cmd_state <= CMD_REG_READ;
-                                    `DEBUG1(("[DTM] Execute: Read PC"));
+                                    `DEBUG1(("[DTM] Execute: Read DPC"));
+                                end
+                            end else if (cmd_regno == 16'h07b0 ||
+                                         cmd_regno == 16'h07b2 ||
+                                         cmd_regno == 16'h07b3) begin  // Synthetic CSRs
+                                if (cmd_write) begin
+                                    cmd_state <= CMD_CSR_WRITE;
+                                    `DEBUG1(("[DTM] Execute: Write CSR 0x%h = 0x%h", cmd_regno, data0_sys));
+                                end else begin
+                                    cmd_state <= CMD_CSR_READ;
+                                    `DEBUG1(("[DTM] Execute: Read CSR 0x%h", cmd_regno));
                                 end
                             end else begin
                                 abstractcs_cmderr_sys <= CMDERR_NOTSUP;
                                 abstractcs_busy <= 1'b0;
                                 `DEBUG1(("[DTM] Unsupported register: 0x%h", cmd_regno));
                             end
+                        end else if (cmd_is_access_reg && !cmd_transfer && cmd_postexec) begin
+                            // postexec without transfer: not supported (no debug ROM)
+                            abstractcs_cmderr_sys <= CMDERR_NOTSUP;
+                            `DEBUG1(("[DTM] postexec without transfer: not supported"));
                         end else if (cmd_is_access_mem) begin
                             abstractcs_busy <= 1'b1;
                             mem_addr <= data1;  // Address in data1
@@ -668,46 +927,101 @@ module kv32_dtm #(
                             `DEBUG1(("[DTM] Unsupported command type"));
                         end
                     end
-                end
+
+                    // SBA: handle pending SBA read/write (independent of halt/abstract state)
+                    if (!command_valid_sys || abstractcs_busy) begin
+                        if (sba_rd_toggle_sync[2] != sba_rd_toggle_r && !mem_req_pending) begin
+                            cmd_state    <= CMD_SBA_READ;
+                            sba_wait_cnt <= 4'b0;
+                        end else if (sba_wr_toggle_sync[2] != sba_wr_toggle_r && !mem_req_pending) begin
+                            cmd_state    <= CMD_SBA_WRITE;
+                            sba_wait_cnt <= 4'b0;
+                        end
+                    end
+                end  // CMD_IDLE
 
                 CMD_REG_READ: begin
                     // Read register value
-                    if (cmd_regno < 16'(32)) begin  // GPR
-                        dbg_reg_addr_o <= 5'(cmd_regno);
+                    if (cmd_regno >= 16'h1000 && cmd_regno < 16'h1020) begin  // GPR
+                        dbg_reg_addr_o <= 5'(cmd_regno - 16'h1000);
                         data0_result <= dbg_reg_rdata_i;
                         data0_result_valid <= 1'b1;
-                        `DEBUG1(("[DTM] Read GPR x%0d = 0x%h", cmd_regno, dbg_reg_rdata_i));
-                    end else if (cmd_regno == 16'h1000) begin  // PC
+                        `DEBUG1(("[DTM] Read GPR x%0d = 0x%h", cmd_regno - 16'h1000, dbg_reg_rdata_i));
+                    end else if (cmd_regno == 16'h07b1) begin  // CSR DPC
                         data0_result <= dbg_pc_i;
                         data0_result_valid <= 1'b1;
-                        `DEBUG1(("[DTM] Read PC = 0x%h", dbg_pc_i));
+                        `DEBUG1(("[DTM] Read DPC = 0x%h", dbg_pc_i));
                     end
                     cmd_state <= CMD_DONE;
                 end
 
                 CMD_REG_WRITE: begin
                     // Write register value
-                    if (cmd_regno < 16'(32)) begin  // GPR
-                        dbg_reg_addr_o <= 5'(cmd_regno);
+                    if (cmd_regno >= 16'h1000 && cmd_regno < 16'h1020) begin  // GPR
+                        dbg_reg_addr_o <= 5'(cmd_regno - 16'h1000);
                         dbg_reg_wdata_o <= data0_sys;
                         dbg_reg_we_o <= 1'b1;
-                        `DEBUG1(("[DTM] Write GPR x%0d = 0x%h", cmd_regno, data0_sys));
-                    end else if (cmd_regno == 16'h1000) begin  // PC
+                        `DEBUG1(("[DTM] Write GPR x%0d = 0x%h", cmd_regno - 16'h1000, data0_sys));
+                    end else if (cmd_regno == 16'h07b1) begin  // CSR DPC
                         dbg_pc_wdata_o <= data0_sys;
                         dbg_pc_we_o <= 1'b1;
-                        `DEBUG1(("[DTM] Write PC = 0x%h", data0_sys));
+                        `DEBUG1(("[DTM] Write DPC = 0x%h", data0_sys));
                     end
+                    cmd_state <= CMD_DONE;
+                end
+
+                CMD_CSR_READ: begin
+                    // Synthetic CSR read (stored in DTM registers)
+                    case (cmd_regno)
+                        16'h07b0: begin  // dcsr: force xdebugver=4 (read-only)
+                            data0_result <= {4'd4, dcsr_reg[27:0]};
+                            `DEBUG1(("[DTM] Read DCSR = 0x%h", {4'd4, dcsr_reg[27:0]}));
+                        end
+                        16'h07b2: begin  // dscratch0
+                            data0_result <= dscratch0_reg;
+                            `DEBUG1(("[DTM] Read DSCRATCH0 = 0x%h", dscratch0_reg));
+                        end
+                        16'h07b3: begin  // dscratch1
+                            data0_result <= dscratch1_reg;
+                            `DEBUG1(("[DTM] Read DSCRATCH1 = 0x%h", dscratch1_reg));
+                        end
+                        default: begin
+                            abstractcs_cmderr_sys <= CMDERR_NOTSUP;
+                        end
+                    endcase
+                    data0_result_valid <= 1'b1;
+                    cmd_state <= CMD_DONE;
+                end
+
+                CMD_CSR_WRITE: begin
+                    // Synthetic CSR write; xdebugver[31:28] always read-only = 4
+                    case (cmd_regno)
+                        16'h07b0: begin  // dcsr: preserve xdebugver in upper nibble
+                            dcsr_reg <= {4'd4, data0_sys[27:0]};
+                            `DEBUG1(("[DTM] Write DCSR = 0x%h", {4'd4, data0_sys[27:0]}));
+                        end
+                        16'h07b2: begin  // dscratch0
+                            dscratch0_reg <= data0_sys;
+                            `DEBUG1(("[DTM] Write DSCRATCH0 = 0x%h", data0_sys));
+                        end
+                        16'h07b3: begin  // dscratch1
+                            dscratch1_reg <= data0_sys;
+                            `DEBUG1(("[DTM] Write DSCRATCH1 = 0x%h", data0_sys));
+                        end
+                        default: begin
+                            abstractcs_cmderr_sys <= CMDERR_NOTSUP;
+                        end
+                    endcase
                     cmd_state <= CMD_DONE;
                 end
 
                 CMD_MEM_READ: begin
                     if (!mem_req_pending) begin
-                        // Issue memory read request
                         dbg_mem_req_o <= 1'b1;
                         dbg_mem_addr_o <= mem_addr;
                         dbg_mem_we_o <= 4'b0;  // Read
                         mem_req_pending <= 1'b1;
-                        mem_wait_cnt <= 2'b0;
+                        mem_wait_cnt <= 4'b0;
                     end else if (dbg_mem_ready_i) begin
                         // Memory read complete
                         data0_result <= dbg_mem_rdata_i;
@@ -719,8 +1033,8 @@ module kv32_dtm #(
                     end else begin
                         // Wait for memory
                         mem_wait_cnt <= mem_wait_cnt + 1;
-                        if (mem_wait_cnt == 2'b11) begin
-                            // Timeout
+                        if (mem_wait_cnt == 4'b1111) begin
+                            // Timeout (16 cycles)
                             abstractcs_cmderr_sys <= CMDERR_BUS;
                             dbg_mem_req_o <= 1'b0;
                             mem_req_pending <= 1'b0;
@@ -738,7 +1052,7 @@ module kv32_dtm #(
                         dbg_mem_wdata_o <= data0_sys;
                         dbg_mem_we_o <= 4'b1111;  // Write all bytes
                         mem_req_pending <= 1'b1;
-                        mem_wait_cnt <= 2'b0;
+                        mem_wait_cnt <= 4'b0;
                     end else if (dbg_mem_ready_i) begin
                         // Memory write complete
                         dbg_mem_req_o <= 1'b0;
@@ -748,13 +1062,79 @@ module kv32_dtm #(
                     end else begin
                         // Wait for memory
                         mem_wait_cnt <= mem_wait_cnt + 1;
-                        if (mem_wait_cnt == 2'b11) begin
-                            // Timeout
+                        if (mem_wait_cnt == 4'b1111) begin
+                            // Timeout (16 cycles)
                             abstractcs_cmderr_sys <= CMDERR_BUS;
                             dbg_mem_req_o <= 1'b0;
                             mem_req_pending <= 1'b0;
                             cmd_state <= CMD_DONE;
                             `DEBUG1(("[DTM] Memory write timeout"));
+                        end
+                    end
+                end
+
+                CMD_SBA_READ: begin
+                    if (!mem_req_pending) begin
+                        if (sbcs_sbaccess_clk != SBA_ACCESS32) begin
+                            // Unsupported access width; set sberror=4, abort
+                            sbcs_error <= 3'd4;
+                            cmd_state  <= CMD_IDLE;
+                        end else begin
+                            // Issue SBA memory read
+                            dbg_mem_req_o   <= 1'b1;
+                            dbg_mem_addr_o  <= sbaddress0;
+                            dbg_mem_we_o    <= 4'b0;
+                            mem_req_pending <= 1'b1;
+                            sba_wait_cnt    <= 4'b0;
+                        end
+                    end else if (dbg_mem_ready_i) begin
+                        sbdata0         <= dbg_mem_rdata_i;
+                        dbg_mem_req_o   <= 1'b0;
+                        mem_req_pending <= 1'b0;
+                        if (sbcs_autoincrement) sbaddress0 <= sbaddress0 + 4;
+                        cmd_state <= CMD_IDLE;
+                        `DEBUG1(("[DTM] SBA Read [0x%h] = 0x%h", sbaddress0, dbg_mem_rdata_i));
+                    end else begin
+                        sba_wait_cnt <= sba_wait_cnt + 1;
+                        if (sba_wait_cnt == 4'b1111) begin
+                            sbcs_error      <= 3'd2;  // error=2: timeout
+                            dbg_mem_req_o   <= 1'b0;
+                            mem_req_pending <= 1'b0;
+                            cmd_state <= CMD_IDLE;
+                            `DEBUG1(("[DTM] SBA Read timeout"));
+                        end
+                    end
+                end
+
+                CMD_SBA_WRITE: begin
+                    if (!mem_req_pending) begin
+                        if (sbcs_sbaccess_clk != SBA_ACCESS32) begin
+                            // Unsupported access width; set sberror=4, abort
+                            sbcs_error <= 3'd4;
+                            cmd_state  <= CMD_IDLE;
+                        end else begin
+                            // Issue SBA memory write
+                            dbg_mem_req_o   <= 1'b1;
+                            dbg_mem_addr_o  <= sbaddress0;
+                            dbg_mem_wdata_o <= sbdata0;
+                            dbg_mem_we_o    <= 4'b1111;
+                            mem_req_pending <= 1'b1;
+                            sba_wait_cnt    <= 4'b0;
+                        end
+                    end else if (dbg_mem_ready_i) begin
+                        dbg_mem_req_o   <= 1'b0;
+                        mem_req_pending <= 1'b0;
+                        if (sbcs_autoincrement) sbaddress0 <= sbaddress0 + 4;
+                        cmd_state <= CMD_IDLE;
+                        `DEBUG1(("[DTM] SBA Write [0x%h] = 0x%h", sbaddress0, sbdata0));
+                    end else begin
+                        sba_wait_cnt <= sba_wait_cnt + 1;
+                        if (sba_wait_cnt == 4'b1111) begin
+                            sbcs_error      <= 3'd2;  // error=2: timeout
+                            dbg_mem_req_o   <= 1'b0;
+                            mem_req_pending <= 1'b0;
+                            cmd_state <= CMD_IDLE;
+                            `DEBUG1(("[DTM] SBA Write timeout"));
                         end
                     end
                 end
@@ -780,10 +1160,12 @@ module kv32_dtm #(
                 // Handled in sequential block
                 cmd_state_next = cmd_state;
             end
-            CMD_REG_READ, CMD_REG_WRITE: begin
+            CMD_REG_READ, CMD_REG_WRITE,
+            CMD_CSR_READ, CMD_CSR_WRITE: begin
                 cmd_state_next = CMD_DONE;
             end
-            CMD_MEM_READ, CMD_MEM_WRITE: begin
+            CMD_MEM_READ, CMD_MEM_WRITE,
+            CMD_SBA_READ, CMD_SBA_WRITE: begin
                 // Stays in state until memory completes (handled in sequential block)
                 cmd_state_next = cmd_state;
             end
@@ -811,8 +1193,13 @@ module kv32_dtm #(
     // Signals set but not consumed (unimplemented DM features, placeholder sync regs)
     logic _unused_ok_dtm;
     assign _unused_ok_dtm = &{1'b0,
-        dmcontrol_hartreset, dmcontrol_ackhavereset, dmcontrol_ndmreset,
-        cmd_size, cmd_postexec,
-        halt_req_sync, resume_req_sync, halted_sync_r};
+        dmcontrol_ackhavereset,
+        dcsr_reg[31:28],           // xdebugver always forced to 4'd4; these bits never used
+        sbcs_error_clr_latch,      // W1C mask latched for debug; not consumed combinatorially
+        cmd_size,
+        mem_size,                  // reserved for future cmdtype==2 (memory access) support
+        command_reg_sys[23], command_reg_sys[19],  // reserved bits in AC_ACCESS_REGISTER
+        halt_req_sync, resume_req_sync,
+        halted_sync, halted_sync_r};  // TCK-domain synced versions; system domain uses halted_sync_clk
 
 endmodule

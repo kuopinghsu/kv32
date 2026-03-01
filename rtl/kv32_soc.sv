@@ -517,6 +517,9 @@ module kv32_soc #(
     logic [31:0] dbg_mem_wdata;       // Debug memory write data (tied off for now)
     logic        dbg_mem_ready;       // Debug memory ready (tied off for now)
     logic [31:0] dbg_mem_rdata;       // Debug memory read data (tied off for now)
+    // ndmreset/hartreset from DM — to be wired into SoC/CPU reset logic
+    logic        dbg_ndmreset;        // Non-debug module reset (should reset CPU + peripherals)
+    logic        dbg_hartreset;       // Hart reset (should reset CPU only)
 
     // Tie off debug memory interface (not yet implemented - would need AXI master)
     assign dbg_mem_ready = 1'b0;
@@ -1628,7 +1631,11 @@ module kv32_soc #(
         .dbg_mem_we_o    (dbg_mem_we),
         .dbg_mem_wdata_o (dbg_mem_wdata),
         .dbg_mem_ready_i (dbg_mem_ready),
-        .dbg_mem_rdata_i (dbg_mem_rdata)
+        .dbg_mem_rdata_i (dbg_mem_rdata),
+
+        // System reset outputs (ndmreset/hartreset to SoC reset tree)
+        .dbg_ndmreset_o  (dbg_ndmreset),
+        .dbg_hartreset_o (dbg_hartreset)
     );
 
     // ========================================================================
@@ -2033,7 +2040,8 @@ module kv32_soc #(
     // ports that are wired but not yet connected to external debug logic.
     logic _unused_ok;
     assign _unused_ok = &{1'b0, imem_axi_rid, dma_m_axi_bid, dma_m_axi_rid,
-                                dbg_mem_req, dbg_mem_addr, dbg_mem_we, dbg_mem_wdata};
+                                dbg_mem_req, dbg_mem_addr, dbg_mem_we, dbg_mem_wdata,
+                                dbg_ndmreset, dbg_hartreset};  // TODO: wire to SoC/CPU reset tree
 
 `endif // ASSERTION
 

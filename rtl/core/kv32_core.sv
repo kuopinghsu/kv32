@@ -2875,22 +2875,21 @@ module kv32_core #(
     // assert property (p_no_write_x0)
     //     else $error("[CORE] Write to x0 (ignored by regfile), PC=0x%h", pc_wb);
 
-    /* verilator lint_off WIDTHEXPAND */
     property p_rd_addr_bounds;
         @(posedge clk) disable iff (!rst_n)
-        (rd_addr_id < 32) && (rd_addr_ex < 32) && (rd_addr_mem < 32) && (rd_addr_wb < 32);
+        (6'(rd_addr_id) < 6'd32) && (6'(rd_addr_ex) < 6'd32) &&
+        (6'(rd_addr_mem) < 6'd32) && (6'(rd_addr_wb) < 6'd32);
     endproperty
     assert property (p_rd_addr_bounds)
         else $error("[CORE] Destination register out of bounds");
 
     property p_rs_addr_bounds;
         @(posedge clk) disable iff (!rst_n)
-        (rs1_addr < 32) && (rs2_addr < 32) &&
-        (rs1_addr_ex < 32) && (rs2_addr_ex < 32);
+        (6'(rs1_addr) < 6'd32) && (6'(rs2_addr) < 6'd32) &&
+        (6'(rs1_addr_ex) < 6'd32) && (6'(rs2_addr_ex) < 6'd32);
     endproperty
     assert property (p_rs_addr_bounds)
         else $error("[CORE] Source register out of bounds");
-    /* verilator lint_on WIDTHEXPAND */
 
     // ========================================================================
     // Pipeline Stage Validity Consistency
@@ -3034,15 +3033,13 @@ module kv32_core #(
     assert property (p_no_duplicate_fetch)
         else $error("[CORE] Duplicate instruction fetch for PC=0x%h", imem_req_addr);
 
-    /* verilator lint_off WIDTHEXPAND */
     property p_ib_outstanding_bounded;
         @(posedge clk) disable iff (!rst_n)
-        ib_outstanding <= IB_DEPTH;
+        int'(ib_outstanding) <= IB_DEPTH;
     endproperty
     assert property (p_ib_outstanding_bounded)
         else $error("[CORE] IB outstanding count exceeded: %0d > %0d",
                     ib_outstanding, IB_DEPTH);
-    /* verilator lint_on WIDTHEXPAND */
 
     // ========================================================================
     // Memory Interface Protocol
@@ -3088,15 +3085,13 @@ module kv32_core #(
     assert property (p_mem_alignment_word)
         else $error("[CORE] Word store has invalid strobe: 0x%h", store_strb_encoded);
 
-    /* verilator lint_off WIDTHEXPAND */
     property p_sb_count_bounded;
         @(posedge clk) disable iff (!rst_n)
-        sb_buffered_count <= SB_DEPTH;
+        int'(sb_buffered_count) <= SB_DEPTH;
     endproperty
     assert property (p_sb_count_bounded)
         else $error("[CORE] Store buffer count exceeded: %0d > %0d",
                     sb_buffered_count, SB_DEPTH);
-    /* verilator lint_on WIDTHEXPAND */
 
     // ========================================================================
     // Branch and Jump Target Validation

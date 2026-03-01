@@ -135,7 +135,8 @@ module axi_dma #(
     localparam int BPB       = DATA_WIDTH / 8;                // bytes per beat
     localparam int AXI_SIZE  = (DATA_WIDTH == 128) ? 4 :
                                (DATA_WIDTH == 64)  ? 3 : 2;
-    localparam int FIFO_BITS = $clog2(FIFO_DEPTH);
+    localparam int FIFO_BITS    = $clog2(FIFO_DEPTH);
+    localparam int CH_SEL_BITS  = $clog2(NUM_CHANNELS > 1 ? NUM_CHANNELS : 2);  // bits for channel index
     localparam logic [11:0] CH_STRIDE = 12'h040;               // reg bytes / channel
     localparam logic [11:0] GLBL_OFF  = 12'hF00;               // global regs offset
 
@@ -495,19 +496,40 @@ module axi_dma #(
         sched_ch   = '0;
         no_pending = 1'b1;
         // Round-robin: scan NUM_CHANNELS slots starting from rr_ptr
-        /* verilator lint_off UNUSEDSIGNAL */
         for (int k = 0; k < NUM_CHANNELS; k++) begin
-            automatic int idx = (int'(rr_ptr) + k) % NUM_CHANNELS;
-            if (ch_ctrl[idx][0] &&    // EN
-                ch_armed[idx]   &&    // START was written and not yet consumed
-                !ch_busy[idx]) begin
-                sched_ch   = idx[$clog2(NUM_CHANNELS > 1 ? NUM_CHANNELS : 2)-1:0];
+            if (ch_ctrl[(int'(rr_ptr) + k) % NUM_CHANNELS][0] &&    // EN
+                ch_armed[(int'(rr_ptr) + k) % NUM_CHANNELS]   &&    // START pending
+                !ch_busy[(int'(rr_ptr) + k) % NUM_CHANNELS]) begin  // not running
+                sched_ch   = CH_SEL_BITS'((int'(rr_ptr) + k) % NUM_CHANNELS);
                 no_pending = 1'b0;
                 break;
             end
         end
-        /* verilator lint_on UNUSEDSIGNAL */
     end
+
+    // Compute burst size clamped to MAX_BURST_LEN and 4K-page boundaries.
+    // Returns {burst_bytes[31:0], beats[7:0]} packed into 40 bits.
+    // Only the lower 12 bits of src/dst (page offsets) are needed for 4K-boundary checks.
+    // NOTE: VLT cannot lint automatic function internals; suppress UNUSEDSIGNAL for this function.
+    /* verilator lint_off UNUSEDSIGNAL */
+    function automatic logic [39:0] calc_burst(
+        input logic [11:0] src,
+        input logic [11:0] dst,
+        input logic [31:0] rem
+    );
+        logic [31:0] max_b, lim, lim_al, sp_lim, dp_lim, bb;
+        max_b  = 32'(MAX_BURST_LEN) * 32'(BPB);
+        lim    = (rem < max_b) ? rem : max_b;
+        lim_al = (lim  / 32'(BPB)) * 32'(BPB);
+        sp_lim = (lim_al < (32'h1000 - {20'h0, src})) ?
+                  lim_al : (32'h1000 - {20'h0, src});
+        dp_lim = (sp_lim < (32'h1000 - {20'h0, dst})) ?
+                  sp_lim : (32'h1000 - {20'h0, dst});
+        bb     = (dp_lim / 32'(BPB)) * 32'(BPB);
+        if (bb < 32'(BPB)) bb = 32'(BPB);
+        return {bb, 8'(bb[8:0] / 9'(BPB))};
+    endfunction
+    /* verilator lint_on UNUSEDSIGNAL */
 
     // ── engine main always_ff ─────────────────────────────────────────────
     always_ff @(posedge clk or negedge rst_n) begin : eng
@@ -634,26 +656,16 @@ module axi_dma #(
 
                 // ── BURST_CALC: compute next burst length (4K boundary) ───
                 S_BURST_CALC: begin
-                    // For SG mode pick up the freshly captured descriptor words
-                    // directly so that burst calc sees the right addresses/lengths.
-                    /* verilator lint_off UNUSEDSIGNAL */
+                    // Pick up src/dst/rem from either normal or scatter-gather mode,
+                    // then compute the burst parameters via calc_burst().
                     begin : bc
-                        automatic logic [31:0] bc_src = (e_mode == 2'b11) ? sg_desc[0] : e_cur_src;
-                        automatic logic [31:0] bc_dst = (e_mode == 2'b11) ? sg_desc[1] : e_cur_dst;
+                        automatic logic [11:0] bc_src = (e_mode == 2'b11) ? sg_desc[0][11:0] : e_cur_src[11:0];
+                        automatic logic [11:0] bc_dst = (e_mode == 2'b11) ? sg_desc[1][11:0] : e_cur_dst[11:0];
                         automatic logic [31:0] bc_rem = (e_mode == 2'b11) ? sg_desc[2] : e_rem_bytes;
-                        automatic logic [31:0] rem_in_src_page = 32'h1000 - {20'h0, bc_src[11:0]};
-                        automatic logic [31:0] rem_in_dst_page = 32'h1000 - {20'h0, bc_dst[11:0]};
-                        automatic logic [31:0] max_burst_bytes = {24'h0, MAX_BURST_LEN[7:0]} * BPB;
-                        automatic logic [31:0] limit = (bc_rem < max_burst_bytes) ? bc_rem : max_burst_bytes;
-                        automatic logic [31:0] limit_aligned   = (limit / BPB) * BPB;
-                        automatic logic [31:0] src_page_limit  = (limit_aligned < rem_in_src_page) ? limit_aligned : rem_in_src_page;
-                        automatic logic [31:0] dst_page_limit  = (src_page_limit < rem_in_dst_page) ? src_page_limit : rem_in_dst_page;
-                        automatic logic [31:0] burst_bytes     = (dst_page_limit / BPB) * BPB;
-                        if (burst_bytes < BPB) burst_bytes = BPB;
-                        e_burst_bytes <= burst_bytes;
-                        e_beats       <= 8'(burst_bytes[8:0] / BPB[8:0]);
+                        automatic logic [39:0] result = calc_burst(bc_src, bc_dst, bc_rem);
+                        e_burst_bytes <= result[39:8];
+                        e_beats       <= result[7:0];
                     end
-                    /* verilator lint_on UNUSEDSIGNAL */
 
                     if (e_mode == 2'b11) begin
                         e_cur_src   <= sg_desc[0];

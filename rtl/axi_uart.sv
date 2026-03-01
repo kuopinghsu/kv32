@@ -100,6 +100,9 @@ module axi_uart #(
 
     localparam CLKS_PER_BIT = CLK_FREQ / BAUD_RATE;
     localparam FIFO_BITS    = $clog2(FIFO_DEPTH);
+    // Precomputed constants used in narrow-signal comparisons (avoids WIDTHEXPAND)
+    localparam CLKS_PER_BIT_M1 = CLKS_PER_BIT - 1;
+    localparam CLKS_HALF_M1    = (CLKS_PER_BIT - 1) / 2;
 
     // Capability register
     localparam logic [15:0] UART_VERSION = 16'h0001;
@@ -211,12 +214,11 @@ module axi_uart #(
     logic [2:0] tx_bit_index;
     logic [7:0] tx_data_reg;
 
-    /* verilator lint_off WIDTHEXPAND */
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             tx_state     <= TX_IDLE;
-            tx_clk_count <= 0;
-            tx_bit_index <= 0;
+            tx_clk_count <= '0;
+            tx_bit_index <= '0;
             tx_data_reg  <= 8'd0;
             uart_tx      <= 1'b1;
             tx_ready     <= 1'b1;
@@ -225,8 +227,8 @@ module axi_uart #(
                 TX_IDLE: begin
                     uart_tx      <= 1'b1;
                     tx_ready     <= 1'b1;
-                    tx_clk_count <= 0;
-                    tx_bit_index <= 0;
+                    tx_clk_count <= '0;
+                    tx_bit_index <= '0;
 
                     if (tx_valid) begin
                         tx_data_reg <= tx_data;
@@ -238,10 +240,10 @@ module axi_uart #(
                 TX_START_BIT: begin
                     uart_tx <= 1'b0;
 
-                    if (tx_clk_count < CLKS_PER_BIT - 1) begin
+                    if (int'(tx_clk_count) < CLKS_PER_BIT_M1) begin
                         tx_clk_count <= tx_clk_count + 1;
                     end else begin
-                        tx_clk_count <= 0;
+                        tx_clk_count <= '0;
                         tx_state     <= TX_DATA_BITS;
                     end
                 end
@@ -249,15 +251,15 @@ module axi_uart #(
                 TX_DATA_BITS: begin
                     uart_tx <= tx_data_reg[tx_bit_index];
 
-                    if (tx_clk_count < CLKS_PER_BIT - 1) begin
+                    if (int'(tx_clk_count) < CLKS_PER_BIT_M1) begin
                         tx_clk_count <= tx_clk_count + 1;
                     end else begin
-                        tx_clk_count <= 0;
+                        tx_clk_count <= '0;
 
-                        if (tx_bit_index < 7) begin
+                        if (int'(tx_bit_index) < 7) begin
                             tx_bit_index <= tx_bit_index + 1;
                         end else begin
-                            tx_bit_index <= 0;
+                            tx_bit_index <= '0;
                             tx_state     <= TX_STOP_BIT;
                         end
                     end
@@ -265,7 +267,7 @@ module axi_uart #(
 
                 TX_STOP_BIT: begin
                     uart_tx <= 1'b1;
-                    if (tx_clk_count < CLKS_PER_BIT - 1)
+                    if (int'(tx_clk_count) < CLKS_PER_BIT_M1)
                         tx_clk_count <= tx_clk_count + 1;
                     else begin
                         tx_ready <= 1'b1;
@@ -277,7 +279,6 @@ module axi_uart #(
             endcase
         end
     end
-    /* verilator lint_on WIDTHEXPAND */
 
     // ========================================================================
     // UART RX State Machine
@@ -309,12 +310,11 @@ module axi_uart #(
         end
     end
 
-    /* verilator lint_off WIDTHEXPAND */
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             rx_state     <= RX_IDLE;
-            rx_clk_count <= 0;
-            rx_bit_index <= 0;
+            rx_clk_count <= '0;
+            rx_bit_index <= '0;
             rx_data_buf  <= 8'd0;
             rx_data      <= 8'd0;
             rx_valid     <= 1'b0;
@@ -323,8 +323,8 @@ module axi_uart #(
 
             case (rx_state)
                 RX_IDLE: begin
-                    rx_clk_count <= 0;
-                    rx_bit_index <= 0;
+                    rx_clk_count <= '0;
+                    rx_bit_index <= '0;
 
                     if (uart_rx_sync2 == 1'b0) begin
                         rx_state <= RX_START_BIT;
@@ -332,11 +332,11 @@ module axi_uart #(
                 end
 
                 RX_START_BIT: begin
-                    if (rx_clk_count < (CLKS_PER_BIT - 1) / 2) begin
+                    if (int'(rx_clk_count) < CLKS_HALF_M1) begin
                         rx_clk_count <= rx_clk_count + 1;
                     end else begin
                         if (uart_rx_sync2 == 1'b0) begin
-                            rx_clk_count <= 0;
+                            rx_clk_count <= '0;
                             rx_state     <= RX_DATA_BITS;
                         end else begin
                             rx_state <= RX_IDLE;
@@ -345,23 +345,23 @@ module axi_uart #(
                 end
 
                 RX_DATA_BITS: begin
-                    if (rx_clk_count < CLKS_PER_BIT - 1) begin
+                    if (int'(rx_clk_count) < CLKS_PER_BIT_M1) begin
                         rx_clk_count <= rx_clk_count + 1;
                     end else begin
-                        rx_clk_count <= 0;
+                        rx_clk_count <= '0;
                         rx_data_buf[rx_bit_index] <= uart_rx_sync2;
 
-                        if (rx_bit_index < 7) begin
+                        if (int'(rx_bit_index) < 7) begin
                             rx_bit_index <= rx_bit_index + 1;
                         end else begin
-                            rx_bit_index <= 0;
+                            rx_bit_index <= '0;
                             rx_state     <= RX_STOP_BIT;
                         end
                     end
                 end
 
                 RX_STOP_BIT: begin
-                    if (rx_clk_count < CLKS_PER_BIT - 1)
+                    if (int'(rx_clk_count) < CLKS_PER_BIT_M1)
                         rx_clk_count <= rx_clk_count + 1;
                     else begin
                         rx_data  <= rx_data_buf;
@@ -374,7 +374,6 @@ module axi_uart #(
             endcase
         end
     end
-    /* verilator lint_on WIDTHEXPAND */
 
     // RX FIFO push: one-cycle rx_valid pulse; drop byte silently if FIFO full
     assign rxf_push = rx_valid && !rxf_full;
@@ -431,10 +430,7 @@ module axi_uart #(
                                 txf_full};                       // [0] TX_BUSY (full=can't write)
             8'h08: read_data = {30'h0, ie_r};                    // IE
             8'h0C: read_data = {30'h0, is_wire};                 // IS (level)
-            /* verilator lint_off WIDTHEXPAND */
-            8'h10: read_data = {4'h0, txf_count,
-                                4'h0, rxf_count};                // LEVEL
-            /* verilator lint_on WIDTHEXPAND */
+            8'h10: read_data = {16'(txf_count), 16'(rxf_count)};  // LEVEL [31:16]=TX [15:0]=RX
             8'h14: read_data = {31'h0, loopback_en};             // CTRL
             8'h18: read_data = CAPABILITY_REG;                   // CAPABILITY (RO)
             default: read_data = 32'h0;

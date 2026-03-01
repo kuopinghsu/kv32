@@ -106,6 +106,7 @@ module axi_gpio #(
     // ========================================================================
     // Determine how many 32-bit register banks are needed
     localparam int NUM_REG_BANKS = (NUM_PINS + 31) / 32;  // Ceiling division
+    localparam int BANK_BITS      = $clog2(NUM_REG_BANKS > 1 ? NUM_REG_BANKS : 2);  // bits to address all banks
 
     // Capability register (read-only)
     localparam logic [15:0] GPIO_VERSION = 16'h0001;       // Version 0.1
@@ -309,21 +310,19 @@ module axi_gpio #(
         end
         // Check if bank is valid for per-bank registers
         else if (bank_sel < 2'(NUM_REG_BANKS)) begin
-            /* verilator lint_off WIDTHTRUNC */
             case (reg_sel)
-                4'h0: rdata_next = data_out_r[bank_sel];       // DATA_OUT
-                4'h1: rdata_next = data_out_r[bank_sel];       // SET (reads current output)
-                4'h2: rdata_next = data_out_r[bank_sel];       // CLEAR (reads current output)
-                4'h3: rdata_next = gpio_i_sync2[bank_sel];     // DATA_IN
-                4'h4: rdata_next = dir_r[bank_sel];            // DIR
-                4'h5: rdata_next = ie_r[bank_sel];             // IE
-                4'h6: rdata_next = trigger_r[bank_sel];        // TRIGGER
-                4'h7: rdata_next = polarity_r[bank_sel];       // POLARITY
-                4'h8: rdata_next = is_r[bank_sel];             // IS
-                4'h9: rdata_next = loopback_r[bank_sel];       // LOOPBACK
+                4'h0: rdata_next = data_out_r[BANK_BITS'(bank_sel)];       // DATA_OUT
+                4'h1: rdata_next = data_out_r[BANK_BITS'(bank_sel)];       // SET (reads current output)
+                4'h2: rdata_next = data_out_r[BANK_BITS'(bank_sel)];       // CLEAR (reads current output)
+                4'h3: rdata_next = gpio_i_sync2[BANK_BITS'(bank_sel)];     // DATA_IN
+                4'h4: rdata_next = dir_r[BANK_BITS'(bank_sel)];            // DIR
+                4'h5: rdata_next = ie_r[BANK_BITS'(bank_sel)];             // IE
+                4'h6: rdata_next = trigger_r[BANK_BITS'(bank_sel)];        // TRIGGER
+                4'h7: rdata_next = polarity_r[BANK_BITS'(bank_sel)];       // POLARITY
+                4'h8: rdata_next = is_r[BANK_BITS'(bank_sel)];             // IS
+                4'h9: rdata_next = loopback_r[BANK_BITS'(bank_sel)];       // LOOPBACK
                 default: rdata_next = 32'h0;
             endcase
-            /* verilator lint_on WIDTHTRUNC */
         end
     end
 

@@ -95,10 +95,8 @@ module mem_axi #(
     logic read_fifo_full;
     logic write_fifo_full;
 
-    /* verilator lint_off WIDTHEXPAND */
-    assign read_fifo_full  = (read_outstanding_count >= OUTSTANDING_DEPTH);
-    assign write_fifo_full = (write_outstanding_count >= OUTSTANDING_DEPTH);
-    /* verilator lint_on WIDTHEXPAND */
+    assign read_fifo_full  = (int'(read_outstanding_count) >= OUTSTANDING_DEPTH);
+    assign write_fifo_full = (int'(write_outstanding_count) >= OUTSTANDING_DEPTH);
 
     // ========================================================================
     // AR Channel (Read Address) - Use constant ID for in-order responses
@@ -158,9 +156,7 @@ module mem_axi #(
     assign resp_push_r = axi_rvalid && axi_rready;
     assign resp_push_b = (!resp_push_r) && axi_bvalid && axi_bready;
     assign resp_pop = mem_resp_valid && mem_resp_ready;
-    /* verilator lint_off WIDTHEXPAND */
-    assign resp_fifo_full = (resp_count >= OUTSTANDING_DEPTH);
-    /* verilator lint_on WIDTHEXPAND */
+    assign resp_fifo_full = (int'(resp_count) >= OUTSTANDING_DEPTH);
     assign axi_rready = !resp_fifo_full;  // Accept responses unless FIFO full
 
     // ========================================================================
@@ -407,10 +403,9 @@ module mem_axi #(
         else $error("[%s] RREADY must be asserted when FIFO not full", BRIDGE_NAME);
 
     // Outstanding Transaction Bounds
-    /* verilator lint_off WIDTHEXPAND */
     property p_read_outstanding_bounds;
         @(posedge clk) disable iff (!rst_n)
-        read_outstanding_count <= OUTSTANDING_DEPTH;
+        int'(read_outstanding_count) <= OUTSTANDING_DEPTH;
     endproperty
     assert property (p_read_outstanding_bounds)
         else $error("%s: Read outstanding count exceeded: %0d > %0d",
@@ -418,12 +413,11 @@ module mem_axi #(
 
     property p_write_outstanding_bounds;
         @(posedge clk) disable iff (!rst_n)
-        write_outstanding_count <= OUTSTANDING_DEPTH;
+        int'(write_outstanding_count) <= OUTSTANDING_DEPTH;
     endproperty
     assert property (p_write_outstanding_bounds)
         else $error("%s: Write outstanding count exceeded: %0d > %0d",
                     BRIDGE_NAME, write_outstanding_count, OUTSTANDING_DEPTH);
-    /* verilator lint_on WIDTHEXPAND */
 
     // Response FIFO Integrity
     property p_resp_fifo_no_overflow;
@@ -440,15 +434,13 @@ module mem_axi #(
     assert property (p_resp_fifo_no_underflow)
         else $error("[%s] Response FIFO underflow detected", BRIDGE_NAME);
 
-    /* verilator lint_off WIDTHEXPAND */
     property p_resp_count_bounds;
         @(posedge clk) disable iff (!rst_n)
-        resp_count <= OUTSTANDING_DEPTH;
+        int'(resp_count) <= OUTSTANDING_DEPTH;
     endproperty
     assert property (p_resp_count_bounds)
         else $error("[%s] Response FIFO count exceeded: %0d > %0d",
                     BRIDGE_NAME, resp_count, OUTSTANDING_DEPTH);
-    /* verilator lint_on WIDTHEXPAND */
 
     // Mutual Exclusivity
     property p_read_write_mutex;

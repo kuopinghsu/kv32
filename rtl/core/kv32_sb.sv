@@ -393,21 +393,19 @@ module kv32_sb #(
     // Pointer Wraparound Safety (for DEPTH > 1)
     generate
         if (PTR_WIDTH > 0) begin : g_ptr_checks
-            /* verilator lint_off WIDTHEXPAND */
             property p_wr_ptr_bounds;
                 @(posedge clk) disable iff (!rst_n)
-                wr_ptr < DEPTH;
+                int'(wr_ptr) < DEPTH;
             endproperty
             assert property (p_wr_ptr_bounds)
                 else $error("[SB] Write pointer out of bounds: %0d >= %0d", wr_ptr, DEPTH);
 
             property p_rd_ptr_bounds;
                 @(posedge clk) disable iff (!rst_n)
-                rd_ptr < DEPTH;
+                int'(rd_ptr) < DEPTH;
             endproperty
             assert property (p_rd_ptr_bounds)
                 else $error("[SB] Read pointer out of bounds: %0d >= %0d", rd_ptr, DEPTH);
-            /* verilator lint_on WIDTHEXPAND */
         end
     endgenerate
 

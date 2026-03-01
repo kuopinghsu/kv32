@@ -76,7 +76,11 @@ module jtag_top #(
     output logic [3:0]  dbg_mem_we_o,      // Memory write enable (byte mask)
     output logic [31:0] dbg_mem_wdata_o,   // Memory write data
     input  logic        dbg_mem_ready_i,   // Memory ready
-    input  logic [31:0] dbg_mem_rdata_i    // Memory read data
+    input  logic [31:0] dbg_mem_rdata_i,   // Memory read data
+
+    // System reset outputs
+    output logic        dbg_ndmreset_o,    // Non-debug module reset (resets SoC except DM)
+    output logic        dbg_hartreset_o    // Hart reset request
 );
 
     // =========================================================================
@@ -202,7 +206,11 @@ module jtag_top #(
         .dbg_mem_we_o     (dbg_mem_we_o),
         .dbg_mem_wdata_o  (dbg_mem_wdata_o),
         .dbg_mem_ready_i  (dbg_mem_ready_i),
-        .dbg_mem_rdata_i  (dbg_mem_rdata_i)
+        .dbg_mem_rdata_i  (dbg_mem_rdata_i),
+
+        // System reset outputs
+        .dbg_ndmreset_o   (dbg_ndmreset_o),
+        .dbg_hartreset_o  (dbg_hartreset_o)
     );
 
     // =========================================================================
