@@ -26,6 +26,11 @@
 
 #include <riscv/abstract_device.h>
 
+#ifdef SPIKE_INCLUDE
+#include <riscv/sim.h>
+#include <riscv/devices.h>
+#endif
+
 #include <cstring>
 #include <string>
 #include <vector>
@@ -41,7 +46,7 @@ static constexpr reg_t TIMER_ADDR_MAX = KV_TIMER_CAP_OFF + 3u;
 
 class plugin_timer_t : public abstract_device_t {
 public:
-    plugin_timer_t()
+    explicit plugin_timer_t(sim_t *sim = nullptr) : sim_(sim)
     {
         memset(count_,    0, sizeof(count_));
         memset(compare1_, 0, sizeof(compare1_));
@@ -72,31 +77,58 @@ public:
         return true;
     }
 
-    void tick(reg_t /*rtc_ticks*/) override
+    void tick(reg_t rtc_ticks) override
     {
+        // rtc_ticks is the CLINT period: CPU cycles between each tick() call.
+        // The KV32 timer counts CPU clock cycles (prescaler=0 → 1 count/cycle).
+        // Advance count by (cycles / (prescaler+1)) to simulate correct speed.
+        const uint32_t cycles = (uint32_t)(rtc_ticks > 0 ? rtc_ticks : 1);
+
         for (uint32_t ch = 0; ch < TIMER_NUM_CH; ++ch) {
             if (!(ctrl_[ch] & (1u << KV_TIMER_CTRL_EN_BIT))) continue;
 
             uint32_t prescaler = ctrl_[ch] >> 16; // [31:16]
-            prescaler_cnt_[ch]++;
-            if (prescaler_cnt_[ch] <= prescaler) continue;
-            prescaler_cnt_[ch] = 0;
+            // prescaler_cnt_ accumulates leftover sub-period cycles.
+            prescaler_cnt_[ch] += cycles;
+            uint32_t ticks_now = prescaler_cnt_[ch] / (prescaler + 1);
+            if (ticks_now == 0) continue;
+            prescaler_cnt_[ch] %= (prescaler + 1);
 
-            count_[ch]++;
-
-            // Compare1 match: raise interrupt and reload (COMPARE2 = reload value)
-            if (compare1_[ch] != 0 && count_[ch] >= compare1_[ch]) {
-                count_[ch] = compare2_[ch]; // auto-reload
-                if (ctrl_[ch] & (1u << KV_TIMER_CTRL_INT_EN_BIT)) {
-                    int_status_ |= (1u << ch);
+            // Simulate each individual timer tick (CPU cycle) to preserve
+            // compare-match granularity without resetting count to zero.
+            // Using strict '>' for compare2 and subtracting compare2 (not +1)
+            // keeps the overshoot so count never returns to exactly 0.
+            bool irq_any = false;
+            for (uint32_t i = 0; i < ticks_now; i++) {
+                count_[ch]++;
+                if (compare2_[ch] != 0 && count_[ch] > compare2_[ch]) {
+                    // Period end: reload by subtracting compare2 (keep overshoot)
+                    count_[ch] -= compare2_[ch];
+                    if (ctrl_[ch] & (1u << KV_TIMER_CTRL_INT_EN_BIT))
+                        irq_any = true;
+                } else if (compare1_[ch] != 0 && count_[ch] >= compare1_[ch]) {
+                    if (ctrl_[ch] & (1u << KV_TIMER_CTRL_INT_EN_BIT))
+                        irq_any = true;
                 }
             }
+            if (irq_any) int_status_ |= (1u << ch);
         }
+        update_meip();
     }
 
     reg_t size() override { return (reg_t)KV_TIMER_SIZE; }
 
 private:
+    void update_meip() const
+    {
+#ifdef SPIKE_INCLUDE
+        if (!sim_) return;
+        const bool pending = (int_status_ & int_enable_) != 0;
+        sim_->get_intctrl()->set_interrupt_level(
+            (uint32_t)KV_PLIC_SRC_TIMER, pending ? 1 : 0);
+#endif
+    }
+    sim_t   *sim_;
     uint32_t count_[TIMER_NUM_CH];
     uint32_t compare1_[TIMER_NUM_CH];
     uint32_t compare2_[TIMER_NUM_CH];
@@ -133,8 +165,8 @@ private:
 
     void reg_write(reg_t addr, uint32_t val)
     {
-        if (addr == KV_TIMER_INT_STATUS_OFF) { int_status_ &= ~val; return; } // W1C
-        if (addr == KV_TIMER_INT_ENABLE_OFF) { int_enable_  = val;  return; }
+        if (addr == KV_TIMER_INT_STATUS_OFF) { int_status_ &= ~val; update_meip(); return; } // W1C
+        if (addr == KV_TIMER_INT_ENABLE_OFF) { int_enable_  = val;  update_meip(); return; }
         if (addr == KV_TIMER_CAP_OFF)        return; // read-only
 
         uint32_t ch; reg_t off;
@@ -152,11 +184,11 @@ private:
 };
 
 static plugin_timer_t *
-plugin_timer_parse(const void *, const sim_t *, reg_t *base,
+plugin_timer_parse(const void *, const sim_t *sim, reg_t *base,
                    const std::vector<std::string> &sargs)
 {
     if (!sargs.empty()) *base = strtoull(sargs[0].c_str(), nullptr, 0);
-    return new plugin_timer_t();
+    return new plugin_timer_t(const_cast<sim_t *>(sim));
 }
 
 static std::string

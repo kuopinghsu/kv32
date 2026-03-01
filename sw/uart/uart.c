@@ -155,7 +155,10 @@ static int test8_fifo_irq_transfer(void)
     print("  TX method: 16-byte FIFO bursts (polls TX_BUSY)\n");
     print("  RX method: interrupt-driven (PLIC -> UART RX IRQ)\n\n");
 
-    /* ── flush loopback echoes from previous test output ─────────────────── */
+    /* ── enable internal loopback so TX bytes echo back to RX ───────────── */
+    kv_uart_loopback_enable();
+
+    /* ── flush any residual bytes from previous tests ────────────────────── */
     t8_flush_uart();
 
     /* ── interrupt setup ─────────────────────────────────────────── */
@@ -195,6 +198,7 @@ static int test8_fifo_irq_transfer(void)
     kv_uart_irq_disable(KV_UART_IE_RX_READY);
     kv_irq_disable();
     kv_plic_disable_source(KV_PLIC_SRC_UART);
+    kv_uart_loopback_disable();
 
     /* ── verify received data ────────────────────────────────────── */
     uint32_t errors = 0;

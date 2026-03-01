@@ -114,17 +114,26 @@ private:
     uint32_t rx_is()  const { return rx_fifo_.empty() ? 0u : KV_UART_IE_RX_READY; }
     // TX FIFO is always "empty" in simulation (instant transmit).
     uint32_t is_val() const { return rx_is() | KV_UART_IE_TX_EMPTY; }
-    bool     irq_pending() const { return (ie_ & is_val()) != 0; }
 
-    // Tell Spike's built-in PLIC whether our IRQ source is asserted.
-    // Spike's PLIC then asserts/deasserts MIP.MEIP automatically and handles
-    // the software claim/complete handshake at 0x0C200000/0x0C200004.
+    // Assert/deassert MIP.MEIP on hart 0 to reflect the current IRQ state.
+    //
+    // Route through Spike's built-in PLIC via set_interrupt_level() so that:
+    //  1. plic_t::level[] is updated.
+    //  2. plic_t::context_update() propagates the pending bit into
+    //     plic_context_t::pending[], which is what context_claim() reads.
+    //  3. context_update() internally calls backdoor_write_with_mask(MIP_MEIP)
+    //     so the hart also sees the pending interrupt immediately.
+    //
+    // Only assert when RX FIFO is non-empty AND the RX interrupt is enabled.
+    // (TX always completes instantly in simulation; asserting TX_EMPTY would
+    // cause a flood of spurious interrupts before the handler can service.)
     void update_meip() const
     {
 #ifdef SPIKE_INCLUDE
         if (!sim_) return;
+        const bool pending = (ie_ & KV_UART_IE_RX_READY) != 0 && !rx_fifo_.empty();
         sim_->get_intctrl()->set_interrupt_level(
-            (uint32_t)KV_PLIC_SRC_UART, irq_pending() ? 1 : 0);
+            (uint32_t)KV_PLIC_SRC_UART, pending ? 1 : 0);
 #endif
     }
 
@@ -156,6 +165,10 @@ private:
             uint32_t st = 0;
             if (!rx_fifo_.empty())                  st |= KV_UART_ST_RX_READY;
             if (rx_fifo_.size() >= UART_FIFO_DEPTH) st |= KV_UART_ST_RX_FULL;
+            // In loopback mode, assert TX_BUSY when RX FIFO is full so the TX
+            // loop backs off and gives the interrupt handler a chance to drain.
+            if (loopback_ && rx_fifo_.size() >= UART_FIFO_DEPTH)
+                st |= KV_UART_ST_TX_BUSY;
             return st;
         }
         case KV_UART_IE_OFF:    return ie_;
