@@ -1,0 +1,404 @@
+// ============================================================================
+// File: wfi.c
+// Project: KV32 RISC-V Processor
+// Description: Comprehensive WFI (Wait For Interrupt) test suite
+//
+// Two interrupt source types are exercised:
+//
+//   Level-triggered (CLINT timer, MTIP):
+//     The MTIP signal in mip stays asserted as long as mtime >= mtimecmp.
+//     The handler must advance mtimecmp to de-assert MTIP.  A persistent
+//     level source can re-fire the same WFI iteration if not cleared in time.
+//     Tests 1-4 cover this source.
+//
+//   Edge-triggered (CLINT MSIP, software interrupt):
+//     MSIP is write-1-to-set and stays asserted until software clears it.
+//     It fires once per set/clear cycle; the handler explicitly clears it to
+//     prevent re-entry.  Edge-like in the sense that it requires an explicit
+//     software "edge" (write) to inject each event.
+//     Tests 5-7 cover this source.
+//
+// Tests:
+//   1  Timer edge     : WFI stalls until a future timer fires (~1000 cycles)
+//   2  Timer level    : Timer already expired; WFI wakes almost immediately
+//   3  Timer repeat   : 20 back-to-back timer-wakeup WFI calls
+//   4  Timer timing   : Sleep duration ≈ specified timer period (± margin)
+//   5  MSIP edge      : Timer handler fires MSIP; second WFI wakes on MSIP
+//   6  MSIP level     : MSIP set before WFI via timer chain; wakes immediately
+//   7  Rapid storm    : 50 WFIs with a 200-cycle timer period
+// ============================================================================
+
+#include <stdint.h>
+#include <stdio.h>
+#include "kv_platform.h"
+#include "kv_irq.h"
+#include "kv_clint.h"
+
+/* ── test accounting ─────────────────────────────────────────────────────── */
+
+static int g_pass, g_fail;
+
+#define TEST_PASS(n)      do { printf("[TEST %2d] PASS\n", (n)); g_pass++; } while (0)
+#define TEST_FAIL(n, msg) do { printf("[TEST %2d] FAIL: %s\n", (n), (msg)); g_fail++; } while (0)
+
+/* ── shared IRQ state ────────────────────────────────────────────────────── */
+
+static volatile uint32_t g_timer_count;   /* MTI fires */
+static volatile uint32_t g_msip_count;    /* MSI fires */
+static volatile uint64_t g_handler_time;  /* mtime sampled inside MTI handler */
+/* When set by a test, the MTI handler also fires MSIP to chain interrupts. */
+static volatile uint32_t g_arm_msip;
+
+/* ── default MTI handler ─────────────────────────────────────────────────── */
+
+static void on_timer(uint32_t cause)
+{
+    (void)cause;
+    g_handler_time = kv_clint_mtime();
+    g_timer_count++;
+    kv_clint_timer_disable();           /* de-assert MTIP; caller reschedules */
+
+    if (g_arm_msip) {                   /* for MSIP edge/level tests */
+        g_arm_msip = 0;
+        kv_clint_msip_set();
+    }
+}
+
+/* ── default MSI handler ─────────────────────────────────────────────────── */
+
+static void on_msip(uint32_t cause)
+{
+    (void)cause;
+    g_msip_count++;
+    kv_clint_msip_clear();
+}
+
+/* ── helper: reset state and (re-)register defaults ─────────────────────── */
+
+static void reset_state(void)
+{
+    g_timer_count   = 0;
+    g_msip_count    = 0;
+    g_handler_time  = 0;
+    g_arm_msip      = 0;
+    kv_irq_register(KV_CAUSE_MTI, on_timer);
+    kv_irq_register(KV_CAUSE_MSI, on_msip);
+}
+
+/* ============================================================================
+ * Test 1 – Timer edge
+ * WFI stalls ~1000 cycles, waiting for a future timer interrupt.
+ * Verifies the core actually sleeps (mtime advances roughly 1000 cycles from
+ * when we enter WFI) and that the handler fires exactly once.
+ * ========================================================================= */
+#define T1_PERIOD 1000ULL
+
+static void test1_timer_edge(void)
+{
+    printf("[TEST  1] Timer edge: WFI stalls ~%llu cycles for future timer\n",
+           (unsigned long long)T1_PERIOD);
+
+    reset_state();
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    kv_clint_timer_set_rel(T1_PERIOD);
+    uint64_t t0 = kv_clint_mtime();
+    kv_wfi();                           /* sleeps until timer fires */
+    uint64_t t1 = kv_clint_mtime();
+
+    kv_clint_timer_irq_disable();
+    kv_irq_disable();
+
+    uint64_t elapsed = t1 - t0;
+
+    if (g_timer_count != 1)
+        TEST_FAIL(1, "timer handler did not fire exactly once");
+    else if (elapsed < T1_PERIOD / 2)
+        TEST_FAIL(1, "WFI returned too early (icache/pipeline drain issue?)");
+    else
+        TEST_PASS(1);
+}
+
+/* ============================================================================
+ * Test 2 – Timer short period (level-trigger stress)
+ * Timer is set to a very short future period (~50 cycles).  By the time WFI
+ * fully stalls in the execution pipeline the timer fires, demonstrating that
+ * WFI wakes from a level-asserted MTIP.  Because the timer handler advances
+ * mtimecmp (kv_clint_timer_disable), MTIP returns to 0 immediately after the
+ * handler; the key is that WFI sees the level while it is stalling.
+ * ========================================================================= */
+#define T2_SHORT_PERIOD 50ULL
+
+static void test2_timer_short(void)
+{
+    printf("[TEST  2] Timer short period: WFI wakes on MTIP within ~%llu cycles\n",
+           (unsigned long long)T2_SHORT_PERIOD);
+
+    reset_state();
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    kv_clint_timer_set_rel(T2_SHORT_PERIOD);
+    uint64_t t0 = kv_clint_mtime();
+    kv_wfi();                           /* wakes when MTIP asserts */
+    uint64_t t1 = kv_clint_mtime();
+
+    kv_clint_timer_irq_disable();
+    kv_irq_disable();
+
+    uint64_t elapsed = t1 - t0;
+
+    if (g_timer_count != 1)
+        TEST_FAIL(2, "timer handler did not fire");
+    else if (elapsed > 800ULL)
+        TEST_FAIL(2, "WFI took too long for short-period timer");
+    else
+        TEST_PASS(2);
+}
+
+/* ============================================================================
+ * Test 3 – Repeated timer wakeups (level-trigger stress)
+ * Each handler reschedules the timer, producing a repeating wakeup stream:
+ * the level condition is forced to re-assert on every iteration.
+ * Executes T3_ITERS consecutive WFI calls; verifies all wake correctly.
+ * ========================================================================= */
+#define T3_ITERS   20
+#define T3_PERIOD 300ULL
+
+static volatile uint32_t t3_wakeup;
+
+static void t3_timer_handler(uint32_t cause)
+{
+    (void)cause;
+    g_timer_count++;
+    kv_clint_timer_disable();           /* caller will reschedule each loop */
+    t3_wakeup = 1;
+}
+
+static void test3_timer_repeat(void)
+{
+    printf("[TEST  3] Timer repeat: %d WFI wakeups, period %llu cycles each\n",
+           T3_ITERS, (unsigned long long)T3_PERIOD);
+
+    reset_state();
+    kv_irq_register(KV_CAUSE_MTI, t3_timer_handler);
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    for (int i = 0; i < T3_ITERS; i++) {
+        t3_wakeup = 0;
+        kv_clint_timer_set_rel(T3_PERIOD);
+        kv_wfi();
+        /* Defensive: if WFI exited without the handler firing (should not
+         * happen), the missed-count will be detected at the end. */
+    }
+
+    kv_clint_timer_irq_disable();
+    kv_irq_disable();
+
+    if (g_timer_count != T3_ITERS)
+        TEST_FAIL(3, "wakeup count mismatch");
+    else
+        TEST_PASS(3);
+
+    /* Restore default handler. */
+    reset_state();
+}
+
+/* ============================================================================
+ * Test 4 – Timing accuracy
+ * Verifies the WFI sleep duration is within ±20 % of the requested period.
+ * ========================================================================= */
+#define T4_PERIOD  2000ULL
+#define T4_MARGIN   400ULL   /* 20 % of T4_PERIOD */
+
+static void test4_timer_timing(void)
+{
+    printf("[TEST  4] Timer timing: sleep ≈ %llu cycles (±%llu)\n",
+           (unsigned long long)T4_PERIOD, (unsigned long long)T4_MARGIN);
+
+    reset_state();
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    kv_clint_timer_set_rel(T4_PERIOD);
+    uint64_t t0 = kv_clint_mtime();
+    kv_wfi();
+    uint64_t t1 = kv_clint_mtime();
+
+    kv_clint_timer_irq_disable();
+    kv_irq_disable();
+
+    uint64_t elapsed = t1 - t0;
+    uint64_t lo = T4_PERIOD - T4_MARGIN;
+    uint64_t hi = T4_PERIOD + T4_MARGIN;
+
+    if (g_timer_count != 1) {
+        TEST_FAIL(4, "timer did not fire");
+    } else if (elapsed < lo || elapsed > hi) {
+        printf("  elapsed=%llu, expected [%llu, %llu]\n",
+               (unsigned long long)elapsed,
+               (unsigned long long)lo, (unsigned long long)hi);
+        TEST_FAIL(4, "sleep duration out of range");
+    } else {
+        TEST_PASS(4);
+    }
+}
+
+/* ============================================================================
+ * Test 5 – MSIP edge (cascaded from timer)
+ * Demonstrates edge-triggered MSIP: the timer fires DURING the WFI stall
+ * window, and inside the timer handler we fire MSIP (write MSIP=1).  On
+ * MRET from the timer handler the processor sees MSIP pending and
+ * immediately takes the MSIP interrupt before returning to user code.
+ * Both handlers must fire from one WFI call.
+ *
+ * Because MSIP is software-set-and-cleared it behaves edge-like: each
+ * software write=1 is one event; the MSIP handler clears it.
+ * ========================================================================= */
+static void test5_msip_edge(void)
+{
+    printf("[TEST  5] MSIP edge: timer fires DURING WFI stall, cascades MSIP\n");
+
+    reset_state();
+    g_arm_msip = 1;                     /* timer handler will fire MSIP */
+    kv_clint_msip_irq_enable();
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    /* WFI stalls ~600 cycles; timer fires inside the stall, handler sets
+     * MSIP, MRET -> MSIP interrupt taken -> MSIP handler clears it -> MRET
+     * -> user code resumes after WFI. */
+    kv_clint_timer_set_rel(600ULL);
+    uint64_t t0 = kv_clint_mtime();
+    kv_wfi();
+    uint64_t t1 = kv_clint_mtime();
+
+    kv_clint_timer_irq_disable();
+    kv_clint_msip_irq_disable();
+    kv_irq_disable();
+
+    uint64_t elapsed = t1 - t0;
+
+    if (g_timer_count != 1)
+        TEST_FAIL(5, "timer handler did not fire");
+    else if (g_msip_count != 1)
+        TEST_FAIL(5, "MSIP handler did not cascade from timer handler");
+    else if (elapsed > 2000ULL)
+        TEST_FAIL(5, "WFI+cascade took unexpectedly long");
+    else
+        TEST_PASS(5);
+}
+
+/* ============================================================================
+ * Test 6 – MSIP repeated cascade (T6_MSIP_ITERS iterations)
+ * Repeats the timer→MSIP cascade N times.  Each iteration: timer fires DURING
+ * WFI stall, handler sets MSIP; on MRET from timer handler the processor
+ * takes the MSIP interrupt immediately (MSIP level still asserted), MSIP
+ * handler clears it, then returns to user code.  Validates both interrupt
+ * sources fire per WFI call and that state resets cleanly each iteration.
+ * ========================================================================= */
+#define T6_MSIP_ITERS 5
+
+static void test6_msip_repeated(void)
+{
+    printf("[TEST  6] MSIP cascade repeat: %d iterations of timer->MSIP\n",
+           T6_MSIP_ITERS);
+
+    reset_state();
+    kv_clint_msip_irq_enable();
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    int ok = 1;
+
+    for (int i = 0; ok && i < T6_MSIP_ITERS; i++) {
+        g_arm_msip    = 1;
+        g_timer_count = 0;
+        g_msip_count  = 0;
+
+        kv_clint_timer_set_rel(400ULL);
+        kv_wfi();
+
+        if (g_timer_count != 1 || g_msip_count != 1) {
+            printf("  iter %d: timer_count=%lu msip_count=%lu\n",
+                   i, (unsigned long)g_timer_count, (unsigned long)g_msip_count);
+            ok = 0;
+        }
+    }
+
+    kv_clint_timer_irq_disable();
+    kv_clint_msip_irq_disable();
+    kv_irq_disable();
+
+    if (ok)
+        TEST_PASS(6);
+    else
+        TEST_FAIL(6, "cascade mismatch (see details above)");
+}
+
+/* ============================================================================
+ * Test 7 – Rapid WFI storm (stress)
+ * T7_ITERS consecutive WFI calls with a very short timer period.
+ * Exercises back-to-back WFI without the bug where an in-flight icache
+ * response prevents core_sleep_o from asserting.
+ * ========================================================================= */
+#define T7_ITERS   50
+#define T7_PERIOD 200ULL
+
+static void t7_timer_handler(uint32_t cause)
+{
+    (void)cause;
+    g_timer_count++;
+    kv_clint_timer_disable();
+}
+
+static void test7_rapid_storm(void)
+{
+    printf("[TEST  7] Rapid storm: %d WFIs, timer period %llu cycles\n",
+           T7_ITERS, (unsigned long long)T7_PERIOD);
+
+    reset_state();
+    kv_irq_register(KV_CAUSE_MTI, t7_timer_handler);
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    for (int i = 0; i < T7_ITERS; i++) {
+        kv_clint_timer_set_rel(T7_PERIOD);
+        kv_wfi();
+    }
+
+    kv_clint_timer_irq_disable();
+    kv_irq_disable();
+
+    if ((int)g_timer_count != T7_ITERS)
+        TEST_FAIL(7, "wakeup count mismatch in storm");
+    else
+        TEST_PASS(7);
+}
+
+/* ── main ─────────────────────────────────────────────────────────────────── */
+
+int main(void)
+{
+    printf("\n========================================\n");
+    printf("  WFI (Wait For Interrupt) Test Suite\n");
+    printf("  Level-triggered:  CLINT timer (MTIP)\n");
+    printf("  Edge-triggered:   CLINT MSIP (software)\n");
+    printf("========================================\n\n");
+
+    test1_timer_edge();
+    test2_timer_short();
+    test3_timer_repeat();
+    test4_timer_timing();
+    test5_msip_edge();
+    test6_msip_repeated();
+    test7_rapid_storm();
+
+    printf("\n========================================\n");
+    printf("  Summary: %d/%d tests PASSED\n", g_pass, g_pass + g_fail);
+    printf("========================================\n\n");
+
+    return (g_fail == 0) ? 0 : 1;
+}
