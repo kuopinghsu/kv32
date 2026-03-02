@@ -357,6 +357,7 @@ module kv32_core #(
     logic        is_fence_mem;
     logic        is_fence_i_mem;  // FENCE.I in MEM stage
     logic        is_cbo_mem;      // CBO in MEM stage
+    logic        is_mret_mem;     // MRET instruction in MEM stage (MIE already restored)
     logic        fence_i_flush;     // Gate new fetches/IB while FENCE.I in MEM
     logic        fence_i_committing; // FENCE.I retiring from MEM this cycle (no stall)
     logic        cbo_flush;          // Gate new fetches/IB while CBO in MEM (breaks deadlock)
@@ -1194,6 +1195,11 @@ module kv32_core #(
             jalr_ex      <= 1'b0;
             system_ex    <= 1'b0;
             ex_valid     <= 1'b0;  // Mark as invalid
+            // Clear system-instruction flags so a flushed MRET/ECALL/EBREAK does
+            // not re-fire in the next cycle after ex_flush (e.g. IRQ preempting MRET).
+            is_mret_ex   <= 1'b0;
+            is_ecall_ex  <= 1'b0;
+            is_ebreak_ex <= 1'b0;
             `DEBUG2(("Cycle %0t: ID/EX flush - ex_flush=%b, blocking PC=0x%h instr=0x%h", $time, ex_flush, pc_id, instr_id));
         end else if (if_id_stall && !downstream_stall) begin
             // IF/ID stalled (e.g., load-use hazard) but EX can advance: inject bubble
@@ -1591,7 +1597,26 @@ module kv32_core #(
         // The interrupt flushes MEM, EX, ID, and IF stages.  The instruction in the
         // MEM stage (if valid) is the oldest one that hasn't written back yet and needs
         // to be re-executed after mret.  Walk the pipeline from oldest to newest.
-        if (mem_valid) begin
+        //
+        // Special case: if MRET is stalled in EX (is_mret_ex=1) and an IRQ fires,
+        // MRET already restored MIE from MPIE on the first cycle it entered EX.  The
+        // IRQ should appear to have fired at the address MRET was about to return to
+        // (mepc), NOT at the MRET instruction itself (pc_ex).  Using pc_ex here would
+        // save pc_ex as the new mepc, causing the IRQ handler's own MRET to re-execute
+        // the MRET instruction and loop forever.  Use mepc (unchanged since the last
+        // IRQ entry) so the nested handler correctly returns to the original target.
+        if ((is_mret_ex || is_mret_mem) && irq_pending) begin
+            // interrupt_pc = mepc covers two scenarios:
+            //   is_mret_ex:  IRQ fires while MRET is still stalled in EX (MIE was
+            //                restored by the CSR on the first EX cycle).
+            //   is_mret_mem: IRQ fires the cycle after MRET advances from EX to MEM
+            //                (most common case: no stall, MIE restored at posedge of
+            //                EX cycle, IRQ fires at the next posedge with MRET in MEM).
+            // In both cases mepc still holds the original return address (A) since
+            // MRET never writes mepc; using it here prevents the handler's own MRET
+            // from jumping back to R (MRET's own address) and looping forever.
+            interrupt_pc = mepc;     // MRET preempted: return to MRET's target, not MRET itself
+        end else if (mem_valid) begin
             interrupt_pc = pc_mem;   // MEM stage is oldest un-committed
         end else if (ex_valid) begin
             interrupt_pc = pc_ex;    // EX stage (no valid instruction in MEM)
@@ -1685,6 +1710,7 @@ module kv32_core #(
             is_fence_mem  <= 1'b0;
             is_fence_i_mem <= 1'b0;
             is_cbo_mem    <= 1'b0;
+            is_mret_mem   <= 1'b0;
             mem_valid     <= 1'b0;
             data_access_fault_mem <= 1'b0;
         end else if (mem_flush) begin
@@ -1697,6 +1723,7 @@ module kv32_core #(
             is_fence_mem  <= 1'b0;
             is_fence_i_mem <= 1'b0;
             is_cbo_mem    <= 1'b0;
+            is_mret_mem   <= 1'b0;
             data_access_fault_mem <= 1'b0;
         end else if (!ex_mem_stall) begin
             if (!id_ex_stall) begin
@@ -1729,6 +1756,11 @@ module kv32_core #(
                 is_fence_mem  <= is_fence_ex;
                 is_fence_i_mem <= is_fence_i_ex;
                 is_cbo_mem    <= is_cbo_ex;
+                // Track MRET through MEM stage so that if an IRQ fires while MRET
+                // is in MEM (MIE already restored by the EX-stage CSR update), the
+                // interrupt_pc logic can use mepc instead of pc_mem (= MRET's own
+                // address R), preventing an infinite loop at R.
+                is_mret_mem   <= is_mret_ex && !exception && !irq_pending && !wb_exception;
                 mem_valid     <= ex_valid && !exception && !irq_pending && !wb_exception;
                 if (ex_valid) begin
                     `DEBUG2(("Cycle %0t: EX->MEM pc=0x%h instr=0x%h ex_valid=%b mem_valid_next=%b",
@@ -1753,6 +1785,7 @@ module kv32_core #(
                 is_fence_mem  <= 1'b0;
                 is_fence_i_mem <= 1'b0;
                 is_cbo_mem    <= 1'b0;
+                is_mret_mem   <= 1'b0;
                 data_access_fault_mem <= 1'b0;
             end
         end
@@ -3146,7 +3179,16 @@ module kv32_core #(
 
     property p_mret_updates_pc_to_mepc;
         @(posedge clk) disable iff (!rst_n)
-        is_mret_ex |=> (pc_if == $past(mepc));
+        // Check that MRET redirects the PC to mepc.  Guard: only fire the antecedent
+        // when no higher-priority event (IRQ/exception) is ALSO active this cycle so
+        // that ex_flush doesn't simultaneously steer pc_if to mtvec.
+        //
+        // The consequent also accepts irq/exception on the NEXT cycle because MRET
+        // restores MIE=1 combinatorially; an interrupt that was pending can fire on
+        // the very next cycle, changing pc_if from mepc to mtvec — that is correct
+        // architectural behaviour, not a bug.
+        (is_mret_ex && !irq_pending && !exception && !wb_exception) |=>
+            (pc_if == $past(mepc)) || irq_pending || wb_exception || exception;
     endproperty
     assert property (p_mret_updates_pc_to_mepc)
         else $error("[CORE] MRET did not update PC to mepc");

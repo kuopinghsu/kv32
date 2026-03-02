@@ -405,23 +405,26 @@ module axi_memory #(
                 end
             end
         end else begin
-            // Multi-cycle write: perform at last pipeline stage
-
-            if (write_pipe[MEM_WRITE_LATENCY-1].valid && write_pipe[MEM_WRITE_LATENCY-1].resp == 2'b00) begin
-                automatic logic [31:0] base_addr = ((write_pipe[MEM_WRITE_LATENCY-1].addr - BASE_ADDR) & (MEM_SIZE - 1)) & ~32'h3;
-                if (write_pipe[MEM_WRITE_LATENCY-1].strb[0]) mem[base_addr] <= write_pipe[MEM_WRITE_LATENCY-1].data[7:0];
-                if (write_pipe[MEM_WRITE_LATENCY-1].strb[1]) mem[(base_addr + 1) & (MEM_SIZE-1)] <= write_pipe[MEM_WRITE_LATENCY-1].data[15:8];
-                if (write_pipe[MEM_WRITE_LATENCY-1].strb[2]) mem[(base_addr + 2) & (MEM_SIZE-1)] <= write_pipe[MEM_WRITE_LATENCY-1].data[23:16];
-                if (write_pipe[MEM_WRITE_LATENCY-1].strb[3]) mem[(base_addr + 3) & (MEM_SIZE-1)] <= write_pipe[MEM_WRITE_LATENCY-1].data[31:24];
+            // Multi-cycle write: write each beat immediately as it is accepted;
+            // the pipeline is only used to delay the B response by MEM_WRITE_LATENCY
+            // cycles.  Previously this block only committed the *last* beat (wlast)
+            // stored in write_pipe[MEM_WRITE_LATENCY-1], silently dropping every
+            // intermediate beat of a multi-beat burst.
+            if (write_addr_valid && axi_wvalid && write_can_accept &&
+                (write_addr_reg >= BASE_ADDR && write_addr_reg < (BASE_ADDR + MEM_SIZE))) begin
+                automatic logic [31:0] base_addr = ((write_addr_reg - BASE_ADDR) & (MEM_SIZE - 1)) & ~32'h3;
+                if (axi_wstrb[0]) mem[base_addr] <= axi_wdata[7:0];
+                if (axi_wstrb[1]) mem[(base_addr + 1) & (MEM_SIZE-1)] <= axi_wdata[15:8];
+                if (axi_wstrb[2]) mem[(base_addr + 2) & (MEM_SIZE-1)] <= axi_wdata[23:16];
+                if (axi_wstrb[3]) mem[(base_addr + 3) & (MEM_SIZE-1)] <= axi_wdata[31:24];
 
                 if (ENABLE_MEM_TRACE) begin
                     $display("[AXI_MEM][WRITE] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
-                             write_pipe[MEM_WRITE_LATENCY-1].addr, write_pipe[MEM_WRITE_LATENCY-1].data,
-                             write_pipe[MEM_WRITE_LATENCY-1].strb,
-                             write_pipe[MEM_WRITE_LATENCY-1].strb[0] ? write_pipe[MEM_WRITE_LATENCY-1].data[7:0] : 8'hXX,
-                             write_pipe[MEM_WRITE_LATENCY-1].strb[1] ? write_pipe[MEM_WRITE_LATENCY-1].data[15:8] : 8'hXX,
-                             write_pipe[MEM_WRITE_LATENCY-1].strb[2] ? write_pipe[MEM_WRITE_LATENCY-1].data[23:16] : 8'hXX,
-                             write_pipe[MEM_WRITE_LATENCY-1].strb[3] ? write_pipe[MEM_WRITE_LATENCY-1].data[31:24] : 8'hXX);
+                             write_addr_reg, axi_wdata, axi_wstrb,
+                             axi_wstrb[0] ? axi_wdata[7:0] : 8'hXX,
+                             axi_wstrb[1] ? axi_wdata[15:8] : 8'hXX,
+                             axi_wstrb[2] ? axi_wdata[23:16] : 8'hXX,
+                             axi_wstrb[3] ? axi_wdata[31:24] : 8'hXX);
                 end
             end
         end

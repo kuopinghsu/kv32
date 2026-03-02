@@ -221,7 +221,7 @@ all: rtl-all sim-all compare-all spike-all freertos-compare-simple
 	@make -f Makefile TRACE=1 arch-test-sim
 
 # Verify memory interface
-verify_mem:
+verify-mem:
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=4 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=1 compare-all rtl-all
@@ -281,13 +281,20 @@ build-sim:
 sim-build: build-sim
 
 # Software test program build rules
+#
+# Use secondary expansion so the stem $* (test name) can be referenced inside
+# the prerequisite list.  This lets each %.elf track its own per-test sources
+# (sw/<test>/*.c, *.cpp, *.h) so that touching those files triggers a rebuild.
+.SECONDEXPANSION:
 
 # Pattern rule to build a test program (handles both C and C++ automatically)
-$(BUILD_DIR)/%.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld
+$(BUILD_DIR)/%.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld \
+                    $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h $(SW_DIR)/$$*/*.S)
 	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@ DIS_OUT=$(BUILD_DIR)/$*.dis READELF_OUT=$(BUILD_DIR)/$*.readelf
 
 # Pattern rule to build a test program for Spike (with HTIF support)
-$(BUILD_DIR)/%-spike.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld
+$(BUILD_DIR)/%-spike.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld \
+                          $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h $(SW_DIR)/$$*/*.S)
 	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@ HTIF=1 DIS_OUT=$(BUILD_DIR)/$*-spike.dis READELF_OUT=$(BUILD_DIR)/$*-spike.readelf
 
 # Internal helper target used by software build pattern rules.
@@ -819,7 +826,11 @@ help:
 	@echo "=========================================="
 	@echo ""
 	@echo "Main Targets:"
-	@echo "  all        - Build RTL (default)"
+	@echo "  all        - Full correctness run: RTL + sim + compare + arch-tests"
+	@echo "               (Use this to verify core correctness at default latency)"
+	@echo "  verify-mem - AXI interface stress: runs compare-all + rtl-all across"
+	@echo "               10 latency/port combinations (read=1/4/16, write=1/4/16,"
+	@echo "               dual-port=0/1) to catch memory interface bugs"
 	@echo "  build-rtl  - Build RTL with Verilator"
 	@echo "  build-sim  - Build software simulator (kv32sim)"
 	@echo "  clean      - Remove all build artifacts"
@@ -852,6 +863,8 @@ help:
 	@echo ""
 	@echo "Examples:"
 	@echo "  make                 # Build RTL"
+	@echo "  make all             # Run full correctness suite (RTL+sim+compare+arch)"
+	@echo "  make verify-mem      # Stress AXI interface across 10 latency/port configs"
 	@echo "  make hello           # Build hello test"
 	@echo "  make rtl-hello       # Run hello test with RTL"
 	@echo "  make rtl-all         # Run all tests with RTL"

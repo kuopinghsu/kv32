@@ -28,6 +28,44 @@ import sys
 import re
 import argparse
 
+# ── Module-level constants for fast opcode checks ─────────────────────────────
+_CYCLE_CSRS    = frozenset({0xc00, 0xc01, 0xc02, 0xc80, 0xc81, 0xc82,
+                             0xb00, 0xb02, 0xb80, 0xb82})
+_CSR_RW_FUNCT3 = frozenset({1, 2, 3, 5, 6, 7})
+
+# ── Pre-compiled regex patterns ──────────────────────────────────────────────
+# RTL trace line — captured groups:
+#   1=cycle  2=pc  3=instr
+#   4=regname (opt)  5=regval (opt)
+#   6=memaddr (opt)  7=memval (opt)
+_RTL_LINE_RE = re.compile(
+    r'^(\d+)'
+    r'\s+0x([0-9a-fA-F]+)'
+    r'\s+\(0x([0-9a-fA-F]+)\)'
+    r'(?:\s+(?!mem\b|store\b)([a-zA-Z]\w*)\s+0x([0-9a-fA-F]+))?'
+    r'(?:\s+mem\s+0x([0-9a-fA-F]+)(?:\s+0x([0-9a-fA-F]+))?)?'
+)
+
+# Spike/kv32sim trace line (both count-prefix and plain variants) — groups:
+#   1=pc  2=instr
+#   3=regname (opt)  4=regval (opt)
+#   5=memaddr (opt)  6=memval (opt)
+_SPIKE_LINE_RE = re.compile(
+    r'^core\s+\d+:\s+'
+    r'(?:\d+\s+)?'
+    r'0x([0-9a-fA-F]+)'
+    r'\s+\(0x([0-9a-fA-F]+)\)'
+    r'(?:\s+(?!mem\b|store\b)([a-zA-Z]\w*)\s+0x([0-9a-fA-F]+))?'
+    r'(?:\s+mem\s+0x([0-9a-fA-F]+)(?:\s+0x([0-9a-fA-F]+))?)?'
+)
+
+# Format detection
+_DETECT_RTL_RE   = re.compile(r'^\d+\s+0x[0-9a-fA-F]+\s+\(0x[0-9a-fA-F]+\)')
+_DETECT_SPIKE_RE = re.compile(r'^core\s+\d+:')
+
+# CSR field pattern (rare — only searched when 'csr' appears in the line)
+_CSR_FIELD_RE = re.compile(r'csr:?(\w+)\s+0x([0-9a-fA-F]+)')
+
 # RISC-V register number to ABI name mapping
 REG_ABI_NAMES = {
     'x0': 'zero', 'x1': 'ra', 'x2': 'sp', 'x3': 'gp',
@@ -53,7 +91,7 @@ def normalize_csr_name(csr_name):
 
 # Pattern that matches kv32sim/RTL CSR register names: c<hex_digits>_<name>
 # e.g. c300_mstatus, c340_mscratch, c305_mtvec
-_CSR_NAME_RE = re.compile(r'^c[0-9a-fA-F]+_')
+_CSR_NAME_RE = re.compile(r'^c[0-9a-fA-F]+_')  # already pre-compiled
 
 def is_csr_name(reg_name):
     """
@@ -127,180 +165,155 @@ def is_cycle_counter_csr(instr_val):
 def parse_rtl_trace(filename):
     """Parse RTL trace file (format: CYCLES PC (INSTR) ...)"""
     traces = []
-    with open(filename, 'r') as f:
+    with open(filename, 'r', buffering=1 << 20) as f:
         for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
+            m = _RTL_LINE_RE.match(line)
+            if not m:
                 continue
-            # Expected format: CYCLES 0xPC (0xINSTR) [optional reg/mem/csr info]
-            match = re.match(r'(\d+)\s+0x([0-9a-fA-F]+)\s+\(0x([0-9a-fA-F]+)\)', line)
-            if match:
-                cycle, pc, instr = match.groups()
-                instr_val = int(instr, 16)
-                opcode = instr_val & 0x7f
-                entry = {
-                    'cycle': int(cycle),
-                    'pc': int(pc, 16),
-                    'instr': instr_val,
-                    'opcode': opcode,
-                    'is_load': opcode == 0x03,
-                    'is_store': opcode == 0x23,
-                    'is_amo': is_amo_instr(instr_val),
-                    'is_cycle_csr': is_cycle_counter_csr(instr_val),
-                    'is_csr_rw': is_csr_rw_instr(instr_val),
-                    'trace_type': 'rtl',
-                    'line': line,
-                    'disasm': None,         # Disassembly string
-                    'reg_write': None,  # (reg_name, value)
-                    'mem_access': None, # (address, value, type='read'/'write')
-                    'csr_access': None  # (csr_name, value, type='read'/'write')
-                }
+            cycle_s, pc_s, instr_s, reg_name, reg_val_s, mem_addr_s, mem_val_s = m.groups()
 
-                # Parse disassembly: ; instruction operands
-                disasm_match = re.search(r';\s*(.+)$', line)
-                if disasm_match:
-                    entry['disasm'] = disasm_match.group(1).strip()
+            instr_val = int(instr_s, 16)
+            opcode    = instr_val & 0x7f
 
-                # Parse register write: regname 0xVALUE
-                # Look for pattern like: x1 0x12345678 or ra 0x12345678
-                # Exclude trace-format keywords ('mem', 'store') from matching
-                # as register names — they are not RISC-V register names.
-                reg_match = re.search(r'\)\s+(?!mem\b|store\b)([a-z]\w*)\s+0x([0-9a-fA-F]+)', line)
-                if reg_match:
-                    entry['reg_write'] = (reg_match.group(1), int(reg_match.group(2), 16))
+            # Inline opcode-flag computation (avoids 3 function-call overheads)
+            is_load  = opcode == 0x03
+            is_store = opcode == 0x23
+            is_amo   = opcode == 0x2f
+            if opcode == 0x73:  # SYSTEM
+                funct3        = (instr_val >> 12) & 0x7
+                csr_addr_bits = (instr_val >> 20) & 0xfff
+                is_cycle_csr  = funct3 != 0 and csr_addr_bits in _CYCLE_CSRS
+                is_csr_rw     = funct3 in _CSR_RW_FUNCT3
+            else:
+                is_cycle_csr = False
+                is_csr_rw    = False
 
-                # Parse memory access: mem 0xADDR 0xVALUE
-                mem_match = re.search(r'mem\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)', line)
-                if mem_match:
-                    mem_addr = int(mem_match.group(1), 16)
-                    mem_val = int(mem_match.group(2), 16)
-                    # Determine read/write from instruction or context
-                    # Store instructions (sw, sh, sb) write, load instructions (lw, lh, lb, lbu, lhu) read
-                    instr_val = entry['instr']
-                    opcode = entry['opcode']
-                    if opcode == 0x23:  # STORE
-                        entry['mem_access'] = (mem_addr, mem_val, 'write')
-                    elif opcode == 0x03:  # LOAD
-                        entry['mem_access'] = (mem_addr, mem_val, 'read')
-                    else:
-                        entry['mem_access'] = (mem_addr, mem_val, 'unknown')
+            # reg_write — captured by the combined regex
+            reg_write = (reg_name, int(reg_val_s, 16)) if reg_name is not None else None
 
-                # Parse CSR access: csr:CSRNAME 0xVALUE or csr 0xADDR 0xVALUE
-                csr_match = re.search(r'csr:?(\w+)\s+0x([0-9a-fA-F]+)', line)
-                if csr_match:
-                    entry['csr_access'] = (csr_match.group(1), int(csr_match.group(2), 16), 'access')
+            # mem_access — captured by the combined regex
+            if mem_addr_s is not None:
+                addr = int(mem_addr_s, 16)
+                val  = int(mem_val_s, 16) if mem_val_s is not None else 0
+                mem_access = (addr, val,
+                              'write' if is_store else 'read' if is_load else 'unknown')
+            else:
+                mem_access = None
 
-                traces.append(entry)
+            # disasm — cheap string find instead of regex
+            semi   = line.find('; ')
+            disasm = line[semi + 2:].rstrip() if semi != -1 else None
+
+            # csr_access — only pay for the search when 'csr' is present
+            csr_access = None
+            if 'csr' in line:
+                cm = _CSR_FIELD_RE.search(line)
+                if cm:
+                    csr_access = (cm.group(1), int(cm.group(2), 16), 'access')
+
+            traces.append({
+                'cycle':        int(cycle_s),
+                'pc':           int(pc_s, 16),
+                'instr':        instr_val,
+                'opcode':       opcode,
+                'is_load':      is_load,
+                'is_store':     is_store,
+                'is_amo':       is_amo,
+                'is_cycle_csr': is_cycle_csr,
+                'is_csr_rw':    is_csr_rw,
+                'trace_type':   'rtl',
+                'line':         line.rstrip(),
+                'disasm':       disasm,
+                'reg_write':    reg_write,
+                'mem_access':   mem_access,
+                'csr_access':   csr_access,
+            })
     return traces
 
 def parse_spike_trace(filename):
-    """Parse Spike trace file (handles both -l and --log-commits formats)"""
+    """Parse Spike/kv32sim trace file (handles both -l and --log-commits formats)."""
     traces = []
-    with open(filename, 'r') as f:
+    with open(filename, 'r', buffering=1 << 20) as f:
         for line in f:
-            line = line.strip()
-            if not line:
+            m = _SPIKE_LINE_RE.match(line)
+            if not m:
                 continue
-            entry = None
-            # Try Spike format with -l flag: core   0: 0x80000000 (0x00000297) ...
-            match = re.match(r'core\s+\d+:\s+0x([0-9a-fA-F]+)\s+\(0x([0-9a-fA-F]+)\)', line)
-            if match:
-                pc, instr = match.groups()
-                instr_val = int(instr, 16)
-                opcode = instr_val & 0x7f
-                entry = {
-                    'pc': int(pc, 16),
-                    'instr': instr_val,
-                    'opcode': opcode,
-                    'is_load': opcode == 0x03,
-                    'is_store': opcode == 0x23,
-                    'is_amo': is_amo_instr(instr_val),
-                    'is_cycle_csr': is_cycle_counter_csr(instr_val),
-                    'is_csr_rw': is_csr_rw_instr(instr_val),
-                    'trace_type': 'spike',
-                    'line': line,
-                    'disasm': None,
-                    'reg_write': None,
-                    'mem_access': None,
-                    'csr_access': None
-                }
+            pc_s, instr_s, reg_name, reg_val_s, mem_addr_s, mem_val_s = m.groups()
+
+            instr_val = int(instr_s, 16)
+            opcode    = instr_val & 0x7f
+
+            # Inline opcode-flag computation
+            is_load  = opcode == 0x03
+            is_store = opcode == 0x23
+            is_amo   = opcode == 0x2f
+            if opcode == 0x73:  # SYSTEM
+                funct3        = (instr_val >> 12) & 0x7
+                csr_addr_bits = (instr_val >> 20) & 0xfff
+                is_cycle_csr  = funct3 != 0 and csr_addr_bits in _CYCLE_CSRS
+                is_csr_rw     = funct3 in _CSR_RW_FUNCT3
             else:
-                # Try Spike format with --log-commits: core   0: 3 0x80000000 (0x00000297) ...
-                match = re.match(r'core\s+\d+:\s+\d+\s+0x([0-9a-fA-F]+)\s+\(0x([0-9a-fA-F]+)\)', line)
-                if match:
-                    pc, instr = match.groups()
-                    instr_val = int(instr, 16)
-                    opcode = instr_val & 0x7f
-                    entry = {
-                        'pc': int(pc, 16),
-                        'instr': instr_val,
-                        'opcode': opcode,
-                        'is_load': opcode == 0x03,
-                        'is_store': opcode == 0x23,
-                        'is_amo': is_amo_instr(instr_val),
-                        'is_cycle_csr': is_cycle_counter_csr(instr_val),
-                        'is_csr_rw': is_csr_rw_instr(instr_val),
-                        'trace_type': 'spike',
-                        'line': line,
-                        'disasm': None,
-                        'reg_write': None,
-                        'mem_access': None,
-                        'csr_access': None
-                    }
+                is_cycle_csr = False
+                is_csr_rw    = False
 
-            if entry:
-                # Parse disassembly: ; instruction operands
-                disasm_match = re.search(r';\s*(.+)$', line)
-                if disasm_match:
-                    entry['disasm'] = disasm_match.group(1).strip()
+            # reg_write — convert Spike x<N> names to ABI names
+            if reg_name is not None:
+                if reg_name.startswith('x') and reg_name in REG_ABI_NAMES:
+                    reg_name = REG_ABI_NAMES[reg_name]
+                reg_write = (reg_name, int(reg_val_s, 16))
+            else:
+                reg_write = None
 
-                # Parse register write: regname 0xVALUE or x<num> 0xVALUE
-                # Spike uses x<num> format, convert to ABI names for comparison.
-                # Exclude trace-format keywords ('mem', 'store') — spike AMO
-                # traces emit 'mem 0xADDR 0xDATA' which must not be parsed as
-                # a register write named 'mem'.
-                reg_match = re.search(r'\)\s+(?!mem\b|store\b)([a-z]\w*|x\d+)\s+0x([0-9a-fA-F]+)', line)
-                if reg_match:
-                    reg_name = reg_match.group(1)
-                    # Convert x<num> to ABI name if needed
-                    if reg_name.startswith('x') and reg_name in REG_ABI_NAMES:
-                        reg_name = REG_ABI_NAMES[reg_name]
-                    entry['reg_write'] = (reg_name, int(reg_match.group(2), 16))
+            # mem_access
+            if mem_addr_s is not None:
+                addr = int(mem_addr_s, 16)
+                val  = int(mem_val_s, 16) if mem_val_s is not None else 0
+                mem_access = (addr, val,
+                              'write' if is_store else 'read' if is_load else 'unknown')
+            else:
+                mem_access = None
 
-                # Parse memory access: mem 0xADDR 0xVALUE
-                mem_match = re.search(r'mem\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)', line)
-                if mem_match:
-                    mem_addr = int(mem_match.group(1), 16)
-                    mem_val = int(mem_match.group(2), 16)
-                    instr_val = entry['instr']
-                    opcode = entry['opcode']
-                    if opcode == 0x23:  # STORE
-                        entry['mem_access'] = (mem_addr, mem_val, 'write')
-                    elif opcode == 0x03:  # LOAD
-                        entry['mem_access'] = (mem_addr, mem_val, 'read')
-                    else:
-                        entry['mem_access'] = (mem_addr, mem_val, 'unknown')
+            # disasm — cheap string find
+            semi   = line.find('; ')
+            disasm = line[semi + 2:].rstrip() if semi != -1 else None
 
-                # Parse CSR access: csr:CSRNAME 0xVALUE or csr 0xADDR 0xVALUE
-                csr_match = re.search(r'csr:?(\w+)\s+0x([0-9a-fA-F]+)', line)
-                if csr_match:
-                    entry['csr_access'] = (csr_match.group(1), int(csr_match.group(2), 16), 'access')
+            # csr_access — only search when 'csr' is present
+            csr_access = None
+            if 'csr' in line:
+                cm = _CSR_FIELD_RE.search(line)
+                if cm:
+                    csr_access = (cm.group(1), int(cm.group(2), 16), 'access')
 
-                traces.append(entry)
+            traces.append({
+                'cycle':        None,
+                'pc':           int(pc_s, 16),
+                'instr':        instr_val,
+                'opcode':       opcode,
+                'is_load':      is_load,
+                'is_store':     is_store,
+                'is_amo':       is_amo,
+                'is_cycle_csr': is_cycle_csr,
+                'is_csr_rw':    is_csr_rw,
+                'trace_type':   'spike',
+                'line':         line.rstrip(),
+                'disasm':       disasm,
+                'reg_write':    reg_write,
+                'mem_access':   mem_access,
+                'csr_access':   csr_access,
+            })
     return traces
 
 def detect_trace_type(filename):
-    """Detect if this is an RTL trace or Spike/kv32sim trace"""
-    with open(filename, 'r') as f:
+    """Detect if this is an RTL trace or Spike/kv32sim trace."""
+    with open(filename, 'r', buffering=1 << 20) as f:
         for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
+            if not line or line[0] == '#':
                 continue
-            # RTL format starts with cycle count (number without 'core')
-            if re.match(r'^\d+\s+0x[0-9a-fA-F]+\s+\(0x[0-9a-fA-F]+\)', line):
+            # RTL format: leading digit(s) then ' 0x...'
+            if _DETECT_RTL_RE.match(line):
                 return 'rtl'
-            # Spike/kv32sim format starts with 'core'
-            if re.match(r'^core\s+\d+:', line):
+            # Spike/kv32sim format: starts with 'core'
+            if _DETECT_SPIKE_RE.match(line):
                 return 'spike'
     return 'unknown'
 
@@ -436,6 +449,20 @@ def compare_traces(traces1, traces2, name1="Trace1", name2="Trace2"):
         pc_match    = t1['pc']    == t2['pc']
         instr_match = t1['instr'] == t2['instr']
 
+        # ── Fast path: skip all function/branch overhead for the common
+        # all-matching case (~99 % of RTL-vs-RTL iterations).
+        # Direct equality is correct for RTL-vs-RTL because both sides use the
+        # same CSR-name prefixes; the cycle-CSR value difference would make
+        # reg_write unequal here, falling through to the slow path correctly.
+        if (not cross_format and pc_match and instr_match and
+                t1['reg_write']  == t2['reg_write'] and
+                t1['mem_access'] == t2['mem_access']):
+            i1 += 1
+            i2 += 1
+            entry_num += 1
+            continue
+        # ─────────────────────────────────────────────────────
+
         # Spike vs RTL cross-format: skip RTL store entries for deferred bus
         # faults.  RTL logs the faulting store before B-channel SLVERR arrives;
         # Spike does not (store is never committed).  Detect by: PC mismatch +
@@ -454,10 +481,12 @@ def compare_traces(traces1, traces2, name1="Trace1", name2="Trace2"):
         entry_num += 1
         reg_match, reg_skip_reason = _reg_match_result(t1, t2)
 
-        # For AMO instructions (RV32A), spike logs the memory read value but
-        # kv32sim RTL trace does not emit a mem field — skip the mem comparison
-        # when the two traces have different formats (cross_format mode).
-        if (t1.get('is_amo') or t2.get('is_amo')) and cross_format:
+        # For AMO/LR/SC instructions (RV32A, opcode 0x2f), kv32sim RTL trace
+        # never emits a mem field while the RTL verilator trace emits the
+        # memory address (no data).  Skip the mem comparison for any pair that
+        # includes an AMO/LR/SC — this applies to both cross-format and same-
+        # format (RTL-vs-RTL / kv32sim-vs-RTL) comparisons.
+        if t1.get('is_amo') or t2.get('is_amo'):
             mem_match = True
         elif cross_format and (t1.get('is_store') or t2.get('is_store')):
             # sb/sh: spike logs the byte/halfword-masked store data; kv32sim logs

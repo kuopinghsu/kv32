@@ -24,6 +24,7 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <deque>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -64,6 +65,10 @@ extern "C" {
 static volatile sig_atomic_t sigint_received = 0;
 static volatile int exit_requested = 0;
 static volatile int exit_code_value = 0;
+// Set to true while there are stores whose B-channel response has not yet been
+// observed.  Used to keep the simulation loop alive for drain cycles after
+// exit_requested fires so that the exit store is flushed to the trace file.
+static bool g_has_pending_stores = false;
 
 // DPI-C export function called from axi_magic when exit is requested
 extern "C" void sim_request_exit(int exit_code) {
@@ -192,54 +197,84 @@ static void dump_instruction_trace(
         static uint32_t last_pc = 0;
         static uint32_t last_instr = 0;
 
-        // ── Pending-store buffer ────────────────────────────────────────────
-        // When a FENCE follows a store in the MEM stage, the pipeline stalls
-        // until the store-buffer B-channel response arrives.  Nothing else can
-        // retire during this window.  We hold the store's trace line here and
-        // only commit it to the file when the B-channel returns OK; on SLVERR
-        // we discard it so the trace matches the sw-simulator's precise-
-        // exception behaviour (faulting store must not appear as committed).
-        static std::string pstore_line;
-        static bool        pstore_has   = false;
-        static uint64_t    pstore_count = 0;   // instr_count before this store
-        static bool        pstore_lv    = false;
-        static uint32_t    pstore_lp    = 0;
-        static uint32_t    pstore_li    = 0;
-        // Queue for instructions that retired while a store was pending.
-        // fence_stall only activates once FENCE reaches MEM, but fence_in_pipe
-        // detects FENCE as early as the IF stage.  Between the sw retiring and
-        // the fence reaching MEM, addi/bne etc. can retire and must be queued
-        // here so they are emitted AFTER the pending store trace line.
-        static std::vector<std::string> pstore_queue;
+        // ── Pending-store FIFO ──────────────────────────────────────────────
+        // Each outstanding store is placed in this FIFO.  Non-store
+        // instructions that retire while any store is pending are appended to
+        // the most-recently-pushed entry's after_queue so they are emitted
+        // immediately after that store (in program order) once its B-channel
+        // response arrives.
+        //
+        // AXI write responses arrive in FIFO order (same order as issuance),
+        // so each resp_valid pulse corresponds to pending_stores.front().
+        //
+        // On B-channel OK  : emit front.line + front.after_queue, pop front.
+        // On B-channel SLVERR: discard the faulting store and every subsequent
+        //   entry (precise-exception semantics — faulting store must not
+        //   appear as committed).  Roll back instr_count to before the fault.
+        struct PendingStoreInfo {
+            std::string line;
+            uint64_t    prior_count;
+            bool        prior_lv;
+            uint32_t    prior_lp, prior_li;
+            std::vector<std::string> after_queue;
+        };
+        static std::deque<PendingStoreInfo> pending_stores;
         // ───────────────────────────────────────────────────────────────────
 
-        // Flush pending store once the B-channel response has arrived.
-        // This must run even when nothing is retiring (FENCE stall cycles).
-        if (pstore_has) {
-            svBit resp_valid, resp_error, fence_in_pipe_unused;
-            dut->get_store_resp(&resp_valid, &resp_error, &fence_in_pipe_unused);
+        // Drain one B-channel response per callback invocation.
+        // Must run every cycle (not just when something is retiring) so we
+        // catch responses during pipeline stalls.
+        bool resp_consumed = false;
+        if (!pending_stores.empty()) {
+            svBit resp_valid, resp_error, unused_fence;
+            dut->get_store_resp(&resp_valid, &resp_error, &unused_fence);
             if (resp_valid) {
+                resp_consumed = true;
+                PendingStoreInfo& front = pending_stores.front();
                 if (!resp_error) {
-                    // Store completed OK — emit the buffered store line first,
-                    // then any instructions that were queued behind it.
-                    trace_file << pstore_line << std::endl;
-                    for (const auto& queued_line : pstore_queue) {
-                        trace_file << queued_line << std::endl;
+                    // Store completed OK — emit it then its after-queue.
+                    trace_file << front.line << std::endl;
+                    // During exit drain: the exit write is the last instruction
+                    // kv32sim logs. Any instructions in after_queue retired
+                    // after the exit write in the RTL pipeline but were never
+                    // executed by kv32sim (running=false).  Suppress them so
+                    // the traces stay in sync.  Also clear all remaining
+                    // pending stores (post-exit speculative writes).
+                    if (!exit_requested) {
+                        for (const auto& l : front.after_queue)
+                            trace_file << l << std::endl;
+                        pending_stores.pop_front();
+                    } else {
+                        pending_stores.clear();
+                        g_has_pending_stores = false;
+                        return;
                     }
                 } else {
-                    // Store faulted (SLVERR) — discard store and queued
-                    // instructions, roll back count to before the store.
-                    instr_count = pstore_count;
-                    last_valid  = pstore_lv;
-                    last_pc     = pstore_lp;
-                    last_instr  = pstore_li;
+                    // Store faulted (SLVERR) — discard this store and all
+                    // subsequent pending stores; roll back instr_count.
+                    instr_count = front.prior_count;
+                    last_valid  = front.prior_lv;
+                    last_pc     = front.prior_lp;
+                    last_instr  = front.prior_li;
+                    pending_stores.clear();
+                    g_has_pending_stores = false;
+                    return; // skip any coincidentally-retiring instruction
                 }
-                pstore_queue.clear();
-                pstore_has = false;
             }
         }
+        // Update file-scope drain flag so the simulation loop knows whether
+        // to keep running extra cycles after exit_requested fires.
+        g_has_pending_stores = !pending_stores.empty();
 
         if (!wb_valid_val || !retire_instr) {
+            return;
+        }
+
+        // During exit drain (exit_requested already set): we only need the
+        // B-channel flush above.  Do not log any new instruction retirements
+        // — those are just the infinite-loop nops that run after the exit
+        // store and should not appear in the trace.
+        if (exit_requested) {
             return;
         }
 
@@ -367,60 +402,52 @@ static void dump_instruction_trace(
         int padding_needed = 72 - base_line.length();
         if (padding_needed < 2) padding_needed = 2;  // At least 2 spaces
 
-        // For store instructions: check whether a FENCE is currently anywhere
-        // in the pipeline (IF, ID, EX, or MEM stage).  If so, fence_stall will
-        // fire before any subsequent instruction can retire, making it safe to
-        // hold this store's trace line and decide later whether to commit it
-        // (B-channel OK) or discard it (B-channel SLVERR).
+        // For every store instruction, wait for the AXI B-channel before
+        // deciding whether to emit it (OK) or discard it (SLVERR).
         //
-        // Checking the IF stage is necessary at high MEM_READ_LATENCY: the
-        // I-cache may still be filling the FENCE instruction when the preceding
-        // store exits WB, so fence_in_mem alone is not sufficient.
+        // If resp_valid is already true this cycle AND we have not yet
+        // consumed a response this callback (i.e. pending_stores was empty
+        // before this instruction retired), this response belongs to the
+        // current store — resolve immediately.
         //
-        // If the B-channel has already arrived this cycle (resp_valid=true),
-        // resolve immediately without buffering regardless of fence position.
+        // Otherwise push the store onto pending_stores; it will be resolved
+        // on a future callback cycle.
         if (mem_write_wb) {
-            svBit fence_in_pipe, resp_valid, resp_error;
-            dut->get_store_resp(&resp_valid, &resp_error, &fence_in_pipe);
-            if (resp_valid) {
-                // B-channel arrived on the same cycle as the store retired.
-                // Decide immediately: emit on OK, discard on SLVERR.
-                if (!resp_error) {
-                    trace_file << base_line << std::string(padding_needed, ' ') << "; " << disasm_str << std::endl;
-                } else {
-                    instr_count = prior_count;
-                    last_valid  = prior_lv;
-                    last_pc     = prior_lp;
-                    last_instr  = prior_li;
+            if (!resp_consumed) {
+                svBit unused_fence, resp_valid, resp_error;
+                dut->get_store_resp(&resp_valid, &resp_error, &unused_fence);
+                if (resp_valid && pending_stores.empty()) {
+                    // B-channel arrived same cycle as the store retired.
+                    if (!resp_error) {
+                        trace_file << base_line << std::string(padding_needed, ' ') << "; " << disasm_str << std::endl;
+                    } else {
+                        instr_count = prior_count;
+                        last_valid  = prior_lv;
+                        last_pc     = prior_lp;
+                        last_instr  = prior_li;
+                    }
+                    return;
                 }
-                return;
             }
-            if (fence_in_pipe) {
-                // FENCE is in the pipeline — buffer this store's trace line.
-                // NOTE: fence_stall only fires once FENCE reaches MEM, so
-                // instructions between the sw and the FENCE (e.g. addi/bne
-                // in a loop) can still retire before the B-channel arrives.
-                // Those instructions are held in pstore_queue and emitted
-                // after the store line when the B-channel response comes in.
-                pstore_count = prior_count;
-                pstore_lv    = prior_lv;
-                pstore_lp    = prior_lp;
-                pstore_li    = prior_li;
-                pstore_line  = base_line + std::string(padding_needed, ' ') + "; " + disasm_str;
-                pstore_has   = true;
-                return; // do not write to trace file yet
-            }
-            // No FENCE following and B-channel not yet here for a normal store
-            // (e.g. store to a peripheral with non-zero write latency) — the
-            // store committed without a fault, emit its trace line directly.
+            // B-channel not yet confirmed — push onto FIFO.
+            PendingStoreInfo info;
+            info.line        = base_line + std::string(padding_needed, ' ') + "; " + disasm_str;
+            info.prior_count = prior_count;
+            info.prior_lv    = prior_lv;
+            info.prior_lp    = prior_lp;
+            info.prior_li    = prior_li;
+            pending_stores.push_back(std::move(info));
+            return;
         }
 
-        // If a store is still pending (B-channel not yet confirmed), queue this
-        // instruction so it is emitted after the store line in program order.
-        if (pstore_has) {
-            pstore_queue.push_back(base_line + std::string(padding_needed, ' ') + "; " + disasm_str);
+        // Non-store instruction: if any store is still pending, append to
+        // the most-recent pending store's after_queue so it is emitted in
+        // program order after that store.  Otherwise emit directly.
+        const std::string full_line = base_line + std::string(padding_needed, ' ') + "; " + disasm_str;
+        if (!pending_stores.empty()) {
+            pending_stores.back().after_queue.push_back(full_line);
         } else {
-            trace_file << base_line << std::string(padding_needed, ' ') << "; " << disasm_str << std::endl;
+            trace_file << full_line << std::endl;
         }
     } catch (...) {
         if (!debug_printed) {
@@ -675,7 +702,7 @@ int main(int argc, char** argv) {
     time_begin = std::chrono::steady_clock::now();
     #endif
 
-    while (!exit_requested &&
+    while ((!exit_requested || g_has_pending_stores) &&
            (max_instructions == 0 || (uint64_t)dut->instret_count < max_instructions)) {
         if (sigint_received) {
             std::cerr << "\n*** SIGINT received: dumping registers and exiting ***" << std::endl;
