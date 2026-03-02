@@ -103,7 +103,8 @@ SPIKE_DEVICES  = \
 
 # Verilator settings
 VERILATOR ?= verilator
-VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-UNSIGNED --trace --trace-fst --cc --exe --build
+VERILATOR_JOBS ?= 0
+VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-UNSIGNED --trace --trace-fst --cc --exe --build -j $(VERILATOR_JOBS)
 VERILATOR_FLAGS += -sv --timing
 VERILATOR_FLAGS += --top-module tb_kv32_soc
 VERILATOR_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM
