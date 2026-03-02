@@ -21,7 +21,7 @@ module ddr4_axi4_slave #(
     //-------------------------------------------------------------------------
     // DDR4 Memory Parameters
     //-------------------------------------------------------------------------
-    parameter DDR4_DENSITY_GB   = 4,              // Memory density in GB (1, 2, 4, 8, 16)
+    parameter DDR4_DENSITY_GB   = 1,              // Memory density in GB (1, 2, 4, 8, 16)
     parameter DDR4_DQ_WIDTH     = 64,             // Data width (x4, x8, x16, x32, x64)
     parameter DDR4_BANKS        = 16,             // Number of banks (16 for DDR4)
     parameter DDR4_ROWS         = 65536,          // Number of rows per bank

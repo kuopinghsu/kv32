@@ -1,7 +1,7 @@
 RISC-V 32-bit IMA Processor
 ============================
 
-K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMA support, featuring a 5-stage pipeline, AXI4-Lite interconnect, and both RTL and functional simulators.
+K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMA_Zicsr support, featuring a 5-stage pipeline, instruction cache, a 1-to-10 AXI4-Lite interconnect with nine on-chip peripherals, and both RTL and functional simulators.
 
 ## Features
 
@@ -15,55 +15,47 @@ K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IM
 - **Exceptions**: Illegal instruction, ECALL, EBREAK, load/store faults
 
 ### System Features
-- **Bus Interface**: AXI4-Lite interconnect with 4 slaves
-- **Memory**: 2MB RAM at 0x80000000 with DPI-C access for ELF loading
+- **Bus Interface**: AXI4-Lite 1-to-10 interconnect (single master, ten slaves)
+- **Memory**: 2MB RAM at `0x8000_0000` with DPI-C access for ELF loading
+- **Instruction Cache**: 2-way set-associative, 4 KB, 32-byte cache lines (configurable)
 - **Peripherals**:
-  - CLINT (Core Local Interruptor) for timer interrupts
-  - UART Rx/Tx (115200 baud)
-  - Magic addresses for console I/O and simulation control
+  - CLINT — timer (`mtime`/`mtimecmp`) and software interrupts
+  - PLIC — platform-level interrupt controller
+  - UART — high-speed serial I/O (up to 25 Mbaud)
+  - I2C — master controller
+  - SPI — master controller with 4 chip-selects
+  - GPIO — up to 128 configurable I/O pins
+  - Timer/PWM — four independent 32-bit timers
+  - DMA — memory-to-memory transfer engine
+  - Magic — simulation console output and exit control
 - **Simulation**:
-  - Verilator-based RTL simulation with VCD tracing
-  - Fast functional ISA simulator (kv32sim) with GDB support
+  - Verilator-based RTL simulation with FST/VCD tracing
+  - Fast functional ISA simulator (kv32sim) with GDB stub
   - ELF file loader for both simulators
 
 ## Memory Map
 
-| Device | Address Range | Size | Description |
-|--------|---------------|------|-------------|
-| **RAM** | `0x8000_0000 - 0x9FFF_FFFF` | 2MB (512MB space) | Main memory |
-| **CLINT** | `0x0200_0000 - 0x0200_FFFF` | 64KB | Timer and software interrupts |
-| **UART** | `0x0201_0000 - 0x0201_FFFF` | 64KB | Serial communication |
-| **SPI** | `0x0202_0000 - 0x0202_FFFF` | 64KB | SPI master controller |
-| **I2C** | `0x0203_0000 - 0x0203_FFFF` | 64KB | I2C master controller |
-| **Magic** | `0xFFFF_0000 - 0xFFFF_FFFF` | 64KB | Simulation control |
+| Slave | Device | Base Address | End Address | Size | Description |
+|-------|--------|--------------|-------------|------:|-------------|
+| 0 | **RAM** | `0x8000_0000` | `0x801F_FFFF` | 2 MB | Main memory |
+| 1 | **CLINT** | `0x0200_0000` | `0x020B_FFFF` | 768 KB | `mtime`, `mtimecmp`, software interrupt |
+| 2 | **PLIC** | `0x0C00_0000` | `0x0CFF_FFFF` | 16 MB | Platform-level interrupt controller |
+| 3 | **UART** | `0x2000_0000` | `0x2000_FFFF` | 64 KB | Serial I/O (up to 25 Mbaud) |
+| 4 | **I2C** | `0x2001_0000` | `0x2001_FFFF` | 64 KB | I2C master controller |
+| 5 | **SPI** | `0x2002_0000` | `0x2002_FFFF` | 64 KB | SPI master, 4 chip-selects |
+| 6 | **DMA** | `0x2003_0000` | `0x2003_0FFF` | 4 KB | Memory-to-memory DMA engine |
+| 7 | **GPIO** | `0x2004_0000` | `0x2004_FFFF` | 64 KB | Up to 128 configurable GPIO pins |
+| 8 | **Timer/PWM** | `0x2005_0000` | `0x2005_FFFF` | 64 KB | Four independent 32-bit timers/PWM |
+| 9 | **Magic** | `0xFFFF_0000` | `0xFFFF_FFFF` | 64 KB | Simulation console and exit control |
 
-### CLINT Registers
-- `0x0200_0000`: msip - Machine Software Interrupt Pending
-- `0x0200_4000`: mtimecmp - Timer Compare (64-bit)
-- `0x0200_BFF8`: mtime - Timer Counter (64-bit)
+### Magic Device Registers
 
-### UART Registers
-- `0x0201_0000`: TX Data Register (write to transmit)
-- `0x0201_0004`: RX Data Register (read received data)
-- `0x0201_0008`: Status Register (bit 0: TX busy)
+| Address | Name | Description |
+|---------|------|-------------|
+| `0xFFFF_FFF0` | `EXIT_MAGIC_ADDR` | Write any value to end simulation (exit code = value >> 1) |
+| `0xFFFF_FFF4` | `CONSOLE_MAGIC_ADDR` | Write a byte to emit a character to the simulator console |
 
-### SPI Registers
-- `0x0202_0000`: Control Register (enable, CPOL, CPHA, chip select)
-- `0x0202_0004`: Clock Divider (SCLK = CLK / (2 * (DIV + 1)))
-- `0x0202_0008`: TX Data Register (write to transmit)
-- `0x0202_000C`: RX Data Register (read received data)
-- `0x0202_0010`: Status Register (bit 0: busy, bit 1: TX ready, bit 2: RX valid)
-
-### I2C Registers
-- `0x0203_0000`: Control Register (enable, start, stop, read, ack)
-- `0x0203_0004`: Clock Divider (SCL period = CLK / (4 * (DIV + 1)))
-- `0x0203_0008`: TX Data Register (slave address or data byte)
-- `0x0203_000C`: RX Data Register (read received data)
-- `0x0203_0010`: Status Register (bit 0: busy, bit 1: TX ready, bit 2: RX valid, bit 3: ACK received)
-
-### Magic Addresses
-- `0xFFFFFFF0`: EXIT - Write exit code to terminate simulation
-- `0xFFFFFFF4`: CONSOLE - Write character to output console
+Refer to [docs/sdk_api_reference.adoc](docs/sdk_api_reference.adoc) and [docs/kv32_soc_datasheet.adoc](docs/kv32_soc_datasheet.adoc) for register-level details.
 
 ## Directory Structure
 
@@ -81,13 +73,18 @@ kv32/
 │   ├── axi_pkg.sv         # AXI definitions
 │   ├── axi_xbar.sv        # AXI crossbar/interconnect
 │   ├── axi_arbiter.sv     # AXI arbiter
-│   ├── axi_clint.sv       # CLINT with AXI wrapper
-│   ├── axi_uart.sv        # UART with AXI wrapper (includes TX/RX modules)
-│   ├── axi_spi.sv         # SPI master controller
+│   ├── kv32_icache.sv     # 2-way set-associative instruction cache
+│   ├── axi_clint.sv       # CLINT (mtime/mtimecmp/msip)
+│   ├── axi_plic.sv        # PLIC placeholder
+│   ├── axi_uart.sv        # UART with AXI wrapper
 │   ├── axi_i2c.sv         # I2C master controller
-│   ├── axi_magic.sv       # Magic addresses
+│   ├── axi_spi.sv         # SPI master controller
+│   ├── axi_dma.sv         # DMA engine
+│   ├── axi_gpio.sv        # GPIO controller
+│   ├── axi_timer.sv       # Timer/PWM
+│   ├── axi_magic.sv       # Simulation console and exit
 │   ├── mem_axi.sv         # Memory to AXI bridge (read/write)
-│   └── mem_axi_ro.sv      # Memory to AXI bridge (read-only)
+│   └── mem_axi_ro.sv      # Memory to AXI bridge (read-only, ICache bypass)
 ├── testbench/             # Testbench files
 │   ├── tb_kv32_soc.sv     # SystemVerilog wrapper
 │   ├── tb_kv32_soc.cpp    # Verilator C++ testbench
@@ -293,12 +290,14 @@ int main() {
 
 ## AXI4-Lite Interface
 
-The SoC uses AXI4-Lite protocol for all memory-mapped accesses:
+The SoC uses AXI4-Lite for all peripheral accesses. The instruction-fetch path additionally uses AXI4 burst transfers (INCR/WRAP) for cache-line fills.
+
 - **Address Width**: 32 bits
 - **Data Width**: 32 bits
-- **Byte Strobes**: 4 bits (supports byte/halfword/word access)
-- **Response Codes**: OKAY, DECERR
-- **Topology**: Multi-master (instruction + data) to multi-slave (4 devices)
+- **Byte Strobes**: 4 bits (byte/halfword/word access)
+- **Response Codes**: OKAY, DECERR (unmapped addresses)
+- **Topology**: single master → 10 slaves via `axi_xbar`
+- **Bursts**: INCR/WRAP supported on the instruction port (ICache line fills)
 
 ## Development
 
@@ -411,10 +410,10 @@ Additional documentation:
 ## Known Limitations
 
 - Single-issue, in-order pipeline
-- No caches (direct memory access)
-- No MMU/virtual memory
+- Instruction cache only — no data cache (D-cache); all data accesses go directly to the AXI bus
+- No MMU / virtual memory
 - No floating-point unit
-- Limited CSR implementation (M-mode only)
+- CSR support limited to M-mode
 
 ## License
 

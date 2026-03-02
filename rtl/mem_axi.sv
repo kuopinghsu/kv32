@@ -221,9 +221,11 @@ module mem_axi #(
         end
     end
 
-    // Accept B response whenever FIFO has space (no longer gated by axi_rvalid
-    // to prevent B starvation when reads and writes are interleaved).
-    assign axi_bready = !resp_fifo_full;
+    // Accept B response only when the FIFO has space AND the R channel is not
+    // also consuming a read response in this cycle.  The response FIFO has a
+    // single write port; allowing R and B to fire simultaneously would silently
+    // drop the B entry.  Gating axi_bready prevents that double-fire.
+    assign axi_bready = !resp_fifo_full && !axi_rvalid;
 
     // ========================================================================
     // mem_req_ready: Can accept new request when channels and FIFOs have space

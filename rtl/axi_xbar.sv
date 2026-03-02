@@ -332,11 +332,13 @@ module axi_xbar (
 
     // Decode error handling for unmapped read addresses
     localparam int DECODE_ERR_FIFO_DEPTH = 8;
-    logic [axi_pkg::AXI_ID_WIDTH-1:0] decode_err_id_fifo [0:DECODE_ERR_FIFO_DEPTH-1];
+    logic [axi_pkg::AXI_ID_WIDTH-1:0] decode_err_id_fifo  [0:DECODE_ERR_FIFO_DEPTH-1];
+    logic [7:0]                        decode_err_len_fifo [0:DECODE_ERR_FIFO_DEPTH-1];
     logic [$clog2(DECODE_ERR_FIFO_DEPTH):0] decode_err_wr_ptr;
     logic [$clog2(DECODE_ERR_FIFO_DEPTH):0] decode_err_rd_ptr;
     logic decode_err_pending;
-    logic decode_err_push, decode_err_pop;
+    logic decode_err_push, decode_err_pop, decode_err_beat_accepted;
+    logic [7:0] decode_err_beat_cnt;  // beats sent so far for current burst
 
     // Push AR IDs into per-slave FIFOs on AR handshake; pop on R handshake.
     // This correctly handles multiple outstanding reads to the same slave
@@ -419,10 +421,14 @@ module axi_xbar (
     // decode_err_valid is set when the FIFO becomes non-empty (registered) and
     // cleared immediately when the response handshake completes (pop fires).
     logic decode_err_valid;
-    assign decode_err_pop = decode_err_valid && m_axi_rready &&
+    // A beat is accepted whenever decode_err is driving and rready is asserted
+    assign decode_err_beat_accepted = decode_err_valid && m_axi_rready &&
                             !(s0_axi_rvalid | s1_axi_rvalid | s2_axi_rvalid | s3_axi_rvalid |
                               s4_axi_rvalid | s5_axi_rvalid | s6_axi_rvalid | s7_axi_rvalid |
                               s8_axi_rvalid | s9_axi_rvalid);
+    // Pop the FIFO entry only after all arlen+1 beats have been delivered
+    assign decode_err_pop = decode_err_beat_accepted &&
+                            (decode_err_beat_cnt == decode_err_len_fifo[decode_err_rd_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]]);
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             decode_err_valid <= 1'b0;
@@ -437,15 +443,20 @@ module axi_xbar (
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            decode_err_wr_ptr <= '0;
-            decode_err_rd_ptr <= '0;
+            decode_err_wr_ptr  <= '0;
+            decode_err_rd_ptr  <= '0;
+            decode_err_beat_cnt <= '0;
         end else begin
             if (decode_err_push) begin
-                decode_err_id_fifo[decode_err_wr_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]] <= m_axi_arid;
+                decode_err_id_fifo [decode_err_wr_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]] <= m_axi_arid;
+                decode_err_len_fifo[decode_err_wr_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]] <= m_axi_arlen;
                 decode_err_wr_ptr <= decode_err_wr_ptr + 1;
             end
             if (decode_err_pop) begin
-                decode_err_rd_ptr <= decode_err_rd_ptr + 1;
+                decode_err_rd_ptr   <= decode_err_rd_ptr + 1;
+                decode_err_beat_cnt <= '0;  // reset counter for next transaction
+            end else if (decode_err_beat_accepted) begin
+                decode_err_beat_cnt <= decode_err_beat_cnt + 8'h1;
             end
         end
     end
@@ -1036,10 +1047,12 @@ module axi_xbar (
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = s9_ar_id_fifo[s9_ar_id_rd_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]];
         end else if (decode_err_valid) begin
-            // Generate decode error response for unmapped address
+            // Generate decode error response for unmapped address.
+            // Must send arlen+1 beats and assert RLAST only on the final beat
+            // to comply with AXI4 burst protocol.
             m_axi_rdata   = 32'hDEADBEEF;  // Debug pattern for decode errors
             m_axi_rresp   = 2'b10;  // SLVERR
-            m_axi_rlast   = 1'b1;
+            m_axi_rlast   = (decode_err_beat_cnt == decode_err_len_fifo[decode_err_rd_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]]);
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = decode_err_id_fifo[decode_err_rd_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]];
         end

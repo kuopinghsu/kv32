@@ -561,10 +561,12 @@ module kv32_icache #(
                     fill_pend_resp_r  <= 1'b1;
                     fill_pend_data_r  <= axi_rdata;
                     // fill_pend_req_r stays 0: no future beat tracking needed.
+                    `DEBUG2(("[ICACHE] fill_pend ACCEPT+CAPTURE: state=%0d fill_active=%b fill_word_cnt=%0d burst_comb=%0d axi_rdata=0x%h imem_req_addr=0x%h", state, fill_active_r, fill_word_cnt, fill_pend_burst_comb, axi_rdata, imem_req_addr));
                 end else begin
                     // Beat not yet arrived → record burst index and wait.
                     fill_pend_req_r   <= 1'b1;
                     fill_pend_burst_r <= fill_pend_burst_comb;
+                    `DEBUG2(("[ICACHE] fill_pend ACCEPT+WAIT: state=%0d fill_word_cnt=%0d burst_comb=%0d imem_req_addr=0x%h beat_now=%b rready=%b", state, fill_word_cnt, fill_pend_burst_comb, imem_req_addr, fill_pend_beat_now, axi_rready));
                 end
             end
 
@@ -573,6 +575,7 @@ module kv32_icache #(
                 fill_pend_req_r   <= 1'b0;
                 fill_pend_resp_r  <= 1'b1;
                 fill_pend_data_r  <= axi_rdata;
+                `DEBUG2(("[ICACHE] fill_pend_beat_for_req: fill_word_cnt=%0d burst_r=%0d axi_rdata=0x%h", fill_word_cnt, fill_pend_burst_r, axi_rdata));
             end
 
             // ---- Clear when fill-pending response is consumed by CPU ----
@@ -877,6 +880,7 @@ module kv32_icache #(
     assign axi_arburst = cache_enable ? AXI_BURST_WRAP : AXI_BURST_INCR;
     assign axi_arcache = 4'b0010;  // Normal non-cacheable bufferable
     assign axi_arprot  = 3'b100;   // Instruction access
+
     // Accept beats in S_MISS_R (before early restart) and S_FILL_REST /
     // S_RESP-with-fill-active (draining remaining beats after early restart).
     assign axi_rready  = (state == S_MISS_R) || (state == S_FILL_REST) ||
@@ -950,6 +954,14 @@ module kv32_icache #(
     //
     // Invariant: perf_req_cnt == perf_hit_cnt + perf_miss_cnt + perf_bypass_cnt
     // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (rst_n) begin
+            if (imem_resp_valid && (state == S_FILL_REST || state == S_RESP)) begin
+                `DEBUG2(("[ICACHE] RESP_OUT: state=%0d fill_active=%b fill_pend_resp=%b fill_pend_data=0x%h resp_data=0x%h axi_rdata=0x%h imem_resp_data=0x%h", state, fill_active_r, fill_pend_resp_r, fill_pend_data_r, resp_data_r, axi_rdata, imem_resp_data));
+            end
+        end
+    end
+
 `ifndef SYNTHESIS
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

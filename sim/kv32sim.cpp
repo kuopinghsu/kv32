@@ -977,12 +977,15 @@ void KV32Simulator::step() {
             write_mem(addr, value, 4);
             break; // SW
         }
-        if (!exception_occurred) {
-            trace_has_mem = true;
-            trace_mem_addr = addr;
-            trace_mem_val = value;
-            trace_is_store = true; // Store instruction
-        }
+        // Always record the store's mem trace info so the exception handler
+        // can emit a log_commit for bus-error stores (cause=7).  The RTL retires
+        // the store instruction before the AXI B-channel SLVERR comes back, so
+        // the store DOES appear in the RTL trace even when it faults.
+        // Misaligned stores (cause=6) are handled below — they are NOT logged.
+        trace_has_mem  = true;
+        trace_mem_addr = addr;
+        trace_mem_val  = value;
+        trace_is_store = true;
         break;
     }
     case 0x13: { // I-type ALU
@@ -1351,7 +1354,20 @@ void KV32Simulator::step() {
     // Note: no counter adjustment or untick here — counters/mtime stay consistent
     // with the trap handler's view (misaligned exceptions don't suppress mtime/minstret).
     if (exception_occurred) {
-        // Misaligned load/store (exception_occurred set inside read_mem/write_mem)
+        // exception_occurred is set by read_mem/write_mem for:
+        //   cause 5 (load access fault)  – load is NOT in the RTL trace (WB stalls
+        //                                   until the R response, wb_exception blocks retirement)
+        //   cause 6 (store misaligned)   – store is NOT in the RTL trace (EX-stage exception)
+        //   cause 7 (store access fault) – store IS in the RTL trace because the RTL
+        //                                   retires the store BEFORE the AXI B-channel
+        //                                   SLVERR comes back (deferred fault model).
+        // For cause 7 only: emit the trace entry for the faulting store so that
+        // the SW-sim trace stays aligned with the RTL trace.
+        if (read_csr(CSR_MCAUSE) == CAUSE_STORE_ACCESS) {
+            log_commit(exec_pc, inst, trace_rd, trace_rd_val, trace_has_mem,
+                       trace_mem_addr, trace_mem_val, trace_is_store,
+                       trace_is_csr, trace_csr_num);
+        }
         pc = exception_pc;
         exception_occurred = false;
     } else if (next_pc & 0x3) {

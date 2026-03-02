@@ -205,7 +205,10 @@ module axi_memory #(
                 wr_burst_err     <= 1'b0;
                 stat_aw_requests <= stat_aw_requests + 1;
                 stat_w_expected  <= stat_w_expected + (32'(axi_awlen) + 1);
-                `DEBUG2(("AXI_MEM: Write addr accepted addr=0x%h awlen=%0d", axi_awaddr, axi_awlen));
+                if (ENABLE_MEM_TRACE) begin
+                    $display("[AXI_MEM][WRITE] Write addr accepted addr=0x%h awlen=%0d",
+                             axi_awaddr, axi_awlen);
+                end
             end else if (write_addr_valid && axi_wvalid && write_can_accept) begin
                 // Track out-of-range address
                 if (write_addr_reg < BASE_ADDR || write_addr_reg >= (BASE_ADDR + MEM_SIZE))
@@ -217,7 +220,10 @@ module axi_memory #(
                     if (wr_burst_type == 2'b01)
                         write_addr_reg <= write_addr_reg + 4;
                 end
-                `DEBUG2(("AXI_MEM: Write data accepted addr=0x%h data=0x%h strb=0x%h wlast=%b", write_addr_reg, axi_wdata, axi_wstrb, axi_wlast));
+                if (ENABLE_MEM_TRACE) begin
+                    $display("[AXI_MEM][WRITE] Write data accepted addr=0x%h data=0x%h strb=0x%h wlast=%b",
+                             write_addr_reg, axi_wdata, axi_wstrb, axi_wlast);
+                end
             end
 
             // Handle simultaneous AW and B
@@ -284,17 +290,17 @@ module axi_memory #(
                 write_pipe[i].resp <= 2'b00;
             end
         end else begin
-`ifdef DEBUG
             // Debug: Monitor write pipeline state
-            static int prev_write_addr_valid = 0;
-            static int prev_write_pipe0_valid = 0;
-            if (write_addr_valid != prev_write_addr_valid || write_pipe[0].valid != prev_write_pipe0_valid) begin
-                `DEBUG2(("[DEBUG] AXI_MEM: write_addr_valid=%b write_pipe[0].valid=%b axi_bvalid=%b axi_bready=%b",
-                    write_addr_valid, write_pipe[0].valid, axi_bvalid, axi_bready));
-                prev_write_addr_valid = write_addr_valid;
-                prev_write_pipe0_valid = write_pipe[0].valid;
+            if (ENABLE_MEM_TRACE) begin
+                static logic prev_write_addr_valid = 1'b0;
+                static logic prev_write_pipe0_valid = 1'b0;
+                if (write_addr_valid != prev_write_addr_valid || write_pipe[0].valid != prev_write_pipe0_valid) begin
+                    $display("[AXI_MEM][WRITE] write_addr_valid=%b write_pipe[0].valid=%b axi_bvalid=%b axi_bready=%b",
+                    write_addr_valid, write_pipe[0].valid, axi_bvalid, axi_bready);
+                    prev_write_addr_valid = write_addr_valid;
+                    prev_write_pipe0_valid = write_pipe[0].valid;
+                end
             end
-`endif
             // Stage 0: Accept new write transaction
             // For burst writes, only enter pipeline on wlast to generate exactly one B response
             if (write_addr_valid && axi_wvalid && write_can_accept && axi_wlast) begin
@@ -378,7 +384,7 @@ module axi_memory #(
                 if (axi_wstrb[3]) mem[(base_addr + 3) & (MEM_SIZE-1)] <= axi_wdata[31:24];
 
                 if (ENABLE_MEM_TRACE) begin
-                    $display("[AXI_MEM WRITE] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
+                    $display("[AXI_MEM][WRITE] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
                              write_addr_reg, axi_wdata, axi_wstrb,
                              axi_wstrb[0] ? axi_wdata[7:0] : 8'hXX,
                              axi_wstrb[1] ? axi_wdata[15:8] : 8'hXX,
@@ -397,7 +403,7 @@ module axi_memory #(
                 if (write_pipe[MEM_WRITE_LATENCY-1].strb[3]) mem[(base_addr + 3) & (MEM_SIZE-1)] <= write_pipe[MEM_WRITE_LATENCY-1].data[31:24];
 
                 if (ENABLE_MEM_TRACE) begin
-                    $display("[AXI_MEM WRITE] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
+                    $display("[AXI_MEM][WRITE] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
                              write_pipe[MEM_WRITE_LATENCY-1].addr, write_pipe[MEM_WRITE_LATENCY-1].data,
                              write_pipe[MEM_WRITE_LATENCY-1].strb,
                              write_pipe[MEM_WRITE_LATENCY-1].strb[0] ? write_pipe[MEM_WRITE_LATENCY-1].data[7:0] : 8'hXX,
@@ -430,6 +436,34 @@ module axi_memory #(
     // Pipeline can accept if not all stages are full
     assign read_pipe_busy = (read_stages_occupied >= MAX_READ_STAGES);
     assign read_can_accept = MEM_DUAL_PORT ? !read_pipe_busy : (arb_read_grant && !read_pipe_busy);
+
+    // Combinatorial insert_pos: lowest-indexed pipeline stage available for a new
+    // beat after accounting for shift destinations this cycle.
+    //
+    // A stage is available only if:
+    //   (a) it is currently empty (valid == 0), AND
+    //   (b) the shift logic will NOT place data into it this very cycle.
+    //
+    // This is the same computation that the always_ff beat-load block uses, but
+    // exposed as a continuous signal so that axi_arready can be gated on it.
+    // Without this guard, arready can be asserted when all free stages are shift
+    // destinations (insert_pos == -1), causing the AR data beat to be silently
+    // dropped and the burst to start from the wrong (second-beat) address.
+    logic        read_pipe_has_slot;  // true when insert_pos_comb >= 0
+    int          insert_pos_comb;
+    always_comb begin
+        automatic logic shift_gate_open_c;
+        shift_gate_open_c  = !read_pipe[0].valid || axi_rready;
+        insert_pos_comb    = -1;
+        for (int i = MAX_READ_STAGES-1; i >= 0; i--) begin
+            automatic logic shift_dst_c;
+            shift_dst_c = shift_gate_open_c &&
+                          (i < MAX_READ_STAGES-1) && read_pipe[i+1].valid;
+            if (!read_pipe[i].valid && !shift_dst_c)
+                insert_pos_comb = i;
+        end
+        read_pipe_has_slot = (insert_pos_comb >= 0);
+    end
 
     // ============================================================================
     // Burst Expansion State Machine
@@ -470,7 +504,7 @@ module axi_memory #(
                     burst_addr <= axi_araddr + 32'd4;
                 end
                 burst_remaining <= axi_arlen;  // beats remaining after first
-            end else if (burst_active && !read_pipe_busy) begin
+            end else if (burst_active && !read_pipe_busy && read_pipe_has_slot) begin
                 // Issue the next burst beat when pipeline has space
                 burst_remaining <= burst_remaining - 8'h1;
                 if (burst_remaining == 8'h1) begin
@@ -487,9 +521,10 @@ module axi_memory #(
         end
     end
 
-    // Pipeline can accept new AR only when not expanding a burst
-    // AXI read address ready - accept if outstanding limit not reached AND pipeline has space
-    assign axi_arready = !read_limit_reached && !read_pipe_busy && !burst_active;
+    // Pipeline can accept new AR only when not expanding a burst AND a pipeline
+    // slot is truly available (not just !read_pipe_busy, which can be true even
+    // when insert_pos == -1 because all free stages are shift destinations).
+    assign axi_arready = !read_limit_reached && !read_pipe_busy && !burst_active && read_pipe_has_slot;
     // Track AR/R channel handshakes and outstanding reads
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -540,10 +575,36 @@ module axi_memory #(
                 read_pipe[i].resp <= 2'b00;
             end
         end else begin
-            // Find where new request should be inserted (first invalid stage from bottom)
-            automatic int insert_pos = -1;
+            // Find the lowest-numbered pipeline stage available for a new beat.
+            //
+            // A stage is available if:
+            //   (a) it is currently empty (valid == 0), AND
+            //   (b) the shift logic will NOT place data into it this very cycle.
+            //
+            // The shift fires when stage 0 is free or being consumed
+            // (!read_pipe[0].valid || axi_rready).  When the shift gate is open,
+            // every stage N where read_pipe[N+1].valid == 1 will receive
+            // read_pipe[N+1]'s data via an NBA assignment.  We must not also
+            // target stage N with a burst-load NBA, because in SystemVerilog the
+            // last NBA to a variable in a time-step wins – and the burst-load
+            // block comes BEFORE the shift block below, so the shift would
+            // silently overwrite the newly inserted data, losing that beat.
+            //
+            // We compute the LOWEST free, non-shift-destination stage.
+            automatic logic shift_gate_open;
+            automatic int insert_pos;
+            shift_gate_open = !read_pipe[0].valid || axi_rready;
+            insert_pos = -1;
             for (int i = MAX_READ_STAGES-1; i >= 0; i--) begin
-                if (!read_pipe[i].valid) insert_pos = i;
+                // This stage will be written by the shift if the gate is open
+                // and the stage above it currently holds valid data.
+                automatic logic shift_dst;
+                shift_dst = shift_gate_open &&
+                            (i < MAX_READ_STAGES-1) && read_pipe[i+1].valid;
+                // Accept this stage as insert_pos only when it is currently
+                // empty AND the shift is not also writing to it.
+                if (!read_pipe[i].valid && !shift_dst)
+                    insert_pos = i;  // keep iterating; we want the LOWEST index
             end
 
             // Shift pipeline forward (toward stage 0)
@@ -565,7 +626,7 @@ module axi_memory #(
             // Accept new request into available stage
             // Accepts both fresh AR handshakes (arvalid&&arready) and
             // burst continuation beats (burst_active && pipeline has space).
-            if ((axi_arvalid && axi_arready) || (burst_active && !read_pipe_busy)) begin
+            if ((axi_arvalid && axi_arready) || (burst_active && !read_pipe_busy && read_pipe_has_slot)) begin
                 automatic logic [31:0] raw_addr;
                 automatic logic        this_is_last;
                 automatic int          target_stage;
@@ -598,7 +659,7 @@ module axi_memory #(
                         read_pipe[target_stage].resp <= 2'b10;
                         read_pipe[target_stage].data <= 32'hDEADBEEF;
                         if (ENABLE_MEM_TRACE) begin
-                            $display("[AXI READ ERROR] addr=0x%08x out of range [0x%08x - 0x%08x]",
+                            $display("[AXI_MEM][READ][ERROR] addr=0x%08x out of range [0x%08x - 0x%08x]",
                                      raw_addr, BASE_ADDR, BASE_ADDR + MEM_SIZE);
                         end
                     end else begin
@@ -609,7 +670,7 @@ module axi_memory #(
                         read_pipe[target_stage].resp <= 2'b00;
                         read_pipe[target_stage].data <= read_value;
                         if (ENABLE_MEM_TRACE) begin
-                            $display("[AXI_MEM READ ] addr=0x%08x data=0x%08x [bytes: %02x %02x %02x %02x]",
+                            $display("[AXI_MEM][READ] addr=0x%08x data=0x%08x [bytes: %02x %02x %02x %02x]",
                                      raw_addr, read_value,
                                      mem[word_addr],
                                      mem[(word_addr + 1) & (MEM_SIZE-1)],
@@ -627,6 +688,15 @@ module axi_memory #(
     assign axi_rdata  = read_pipe[0].data;
     assign axi_rresp  = read_pipe[0].resp;
     assign axi_rlast  = read_pipe[0].valid && read_pipe[0].is_last;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            // empty
+        end else if (ENABLE_MEM_TRACE && burst_active) begin
+            $display("[AXI_MEM][PIPE] rvalid=%b rdata=0x%08h burst_active=%b burst_remaining=%0d pipe_valid=%b pipe_data=0x%08h",
+                axi_rvalid, axi_rdata, burst_active, burst_remaining, read_pipe[0].valid, read_pipe[0].data);
+        end
+    end
 
     // ============================================================================
     // One-Port Memory Arbitration (only used when DUAL_PORT=0)
@@ -697,7 +767,7 @@ module axi_memory #(
         if (masked_addr >= 0 && masked_addr < MEM_SIZE) begin
             mem[masked_addr] = data;
         end else if (ENABLE_MEM_TRACE) begin
-            $display("[DPI WRITE ERROR] addr=0x%08x masked=0x%08x OUT OF RANGE", addr, masked_addr);
+            $display("[AXI_MEM][WRITE][ERROR] addr=0x%08x masked=0x%08x OUT OF RANGE", addr, masked_addr);
         end
     endfunction
 

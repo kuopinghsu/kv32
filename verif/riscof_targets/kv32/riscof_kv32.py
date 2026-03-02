@@ -1,13 +1,6 @@
 import os
-import re
-import shutil
-import subprocess
-import shlex
+import glob
 import logging
-import random
-import string
-from string import Template
-import sys
 
 import riscof.utils as utils
 import riscof.constants as constants
@@ -16,171 +9,161 @@ from riscof.pluginTemplate import pluginTemplate
 logger = logging.getLogger()
 
 class kv32(pluginTemplate):
-    __model__ = "kv32"
+    __model__   = "kv32"
     __version__ = "1.0.0"
+
+    # -- Initialisation -------------------------------------------------------
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        config = kwargs.get('config')
-
-        if config is None:
-            print("Please enter input file paths in configuration.")
-            raise SystemExit(1)
-
-        # Get the directory where config.ini is located (riscof_targets directory)
-        # RISCOF runs from this directory, so relative paths are resolved from here
+        config     = kwargs.get('config')
         config_dir = os.getcwd()
 
-        # Resolve paths - if relative, make them relative to config directory
-        # If absolute, use as-is
-        pluginpath_raw = config['pluginpath']
-        if not os.path.isabs(pluginpath_raw):
-            self.pluginpath = os.path.abspath(os.path.join(config_dir, pluginpath_raw))
-        else:
-            self.pluginpath = os.path.abspath(pluginpath_raw)
+        if config is None:
+            logger.error("Config file is missing for kv32")
+            raise SystemExit(1)
 
-        self.num_jobs = str(config['jobs'] if 'jobs' in config else 1)
+        def _abspath(raw):
+            return os.path.abspath(raw if os.path.isabs(raw)
+                                   else os.path.join(config_dir, raw))
 
-        ispec_raw = config['ispec']
-        if not os.path.isabs(ispec_raw):
-            self.isa_spec = os.path.abspath(os.path.join(config_dir, ispec_raw))
-        else:
-            self.isa_spec = os.path.abspath(ispec_raw)
+        self.pluginpath    = _abspath(config['pluginpath'])
+        self.isa_spec      = _abspath(config['ispec'])
+        self.platform_spec = _abspath(config['pspec'])
+        self.num_jobs      = str(config.get('jobs', 1))
+        self.target_run    = config.get('target_run', '1') != '0'
+        self.project_root  = os.path.abspath(
+            os.path.join(self.pluginpath, '../../../'))
 
-        pspec_raw = config['pspec']
-        if not os.path.isabs(pspec_raw):
-            self.platform_spec = os.path.abspath(os.path.join(config_dir, pspec_raw))
-        else:
-            self.platform_spec = os.path.abspath(pspec_raw)
-
-        # Get paths from project root
-        self.project_root = os.path.abspath(os.path.join(self.pluginpath, '../../../'))
-
-        # Load environment configuration
-        env_config_path = os.path.join(self.project_root, 'env.config')
-        self.riscv_prefix = None
-        self.verilator_bin = None
-
-        self.spike_exe = 'spike'
-
-        if os.path.exists(env_config_path):
-            with open(env_config_path, 'r') as f:
+        # Defaults - overridden by env.config when present
+        self.riscv_prefix  = 'riscv32-unknown-elf-'
+        self.spike_exe     = 'spike'
+        self.verilator_bin = 'verilator'
+        env_config = os.path.join(self.project_root, 'env.config')
+        if os.path.exists(env_config):
+            with open(env_config) as f:
                 for line in f:
-                    line = line.strip()
-                    if line.startswith('RISCV_PREFIX='):
-                        self.riscv_prefix = line.split('=', 1)[1]
-                    elif line.startswith('VERILATOR='):
-                        self.verilator_bin = line.split('=', 1)[1]
-                    elif line.startswith('SPIKE='):
-                        self.spike_exe = line.split('=', 1)[1]
+                    k, _, v = line.strip().partition('=')
+                    if   k == 'RISCV_PREFIX': self.riscv_prefix  = v
+                    elif k == 'SPIKE':        self.spike_exe     = v
+                    elif k == 'VERILATOR':    self.verilator_bin = v
 
-        if not self.riscv_prefix:
-            self.riscv_prefix = 'riscv32-unknown-elf-'
-        if not self.verilator_bin:
-            self.verilator_bin = 'verilator'
+        self.objdump_exe = self.riscv_prefix + 'objdump'
 
-        # Path to Verilator executable
-        self.dut_exe = os.path.join(self.project_root, 'build/kv32soc')
+        # -- plugin-specific --------------------------------------------------
+        self.dut_exe = os.path.join(self.project_root, 'build', 'kv32soc')
+        # ---------------------------------------------------------------------
 
-        if 'target_run' in config and config['target_run']=='0':
-            self.target_run = False
-        else:
-            self.target_run = True
+        logger.debug("kv32 plugin initialized")
+
+    # -- RISCOF protocol ------------------------------------------------------
 
     def initialise(self, suite, work_dir, archtest_env):
-       self.work_dir = work_dir
-       self.suite_dir = suite
-
-       # Compile command using project's toolchain
-       self.compile_cmd = self.riscv_prefix + 'gcc -march={0} \
-         -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles -g\
-         -T '+self.pluginpath+'/env/link.ld\
-         -I '+self.pluginpath+'/env/\
-         -I ' + archtest_env + ' {2} -o {3} {4}'
+        self.suite        = suite
+        self.work_dir     = work_dir
+        self.archtest_env = archtest_env
+        self.objdump      = self.objdump_exe + ' -D'
 
     def build(self, isa_yaml, platform_yaml):
-      ispec = utils.load_yaml(isa_yaml)['hart0']
-      self.xlen = ('64' if 64 in ispec['supported_xlen'] else '32')
+        ispec     = utils.load_yaml(isa_yaml)['hart0']
+        self.xlen = '64' if 64 in ispec['supported_xlen'] else '32'
+        self.isa  = 'rv' + self.xlen
+        for s, k in [('i','I'),('m','M'),('a','A'),('f','F'),('d','D'),('c','C')]:
+            if k in ispec['ISA']: self.isa += s
+        if 'Zicsr'    in ispec['ISA']: self.isa += '_zicsr'
+        if 'Zifencei' in ispec['ISA']: self.isa += '_zifencei'
 
-      self.isa = 'rv' + self.xlen
-      if "I" in ispec["ISA"]:
-          self.isa += 'i'
-      if "M" in ispec["ISA"]:
-          self.isa += 'm'
-      if "A" in ispec["ISA"]:
-          self.isa += 'a'
-      if "F" in ispec["ISA"]:
-          self.isa += 'f'
-      if "D" in ispec["ISA"]:
-          self.isa += 'd'
-      if "C" in ispec["ISA"]:
-          self.isa += 'c'
-      if "Zicsr" in ispec["ISA"]:
-          self.isa += '_zicsr'
-      if "Zifencei" in ispec["ISA"]:
-          self.isa += '_zifencei'
+        # ISA string passed to the simulator (plugins may narrow it)
+        self.isa_sim = self.isa
 
-      self.compile_cmd = self.compile_cmd + ' -mabi=' + ('lp64 ' if 64 in ispec['supported_xlen'] else 'ilp32 ')
+        abi = 'lp64' if self.xlen == '64' else 'ilp32'
+        self.compile_cmd = (
+            self.riscv_prefix + 'gcc'
+            ' -march=' + self.isa.lower() + ' -mabi=' + abi +
+            ' -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles -g'
+            ' -T ' + self.pluginpath + '/env/link.ld'
+            ' -I ' + self.pluginpath + '/env/'
+            ' -I ' + self.archtest_env +
+            ' {0} -o {1} {2}'
+        )
+
+    # -- Simulator commands (plugin-specific) ---------------------------------
+
+    def _make_run_cmd(self, elf, sig_file):
+        return (
+            '{exe} {elf} --instructions=100000'
+            ' +signature={sig} +signature-granularity=4'
+        ).format(exe=self.dut_exe, elf=elf, sig=sig_file)
+
+    def _make_trace_cmd(self, elf, sig_file, trace_file):
+        # kv32soc writes trace via --trace --log; stdout+stderr to log
+        return (
+            '{exe} {elf} --instructions=100000'
+            ' +signature={sig} +signature-granularity=4'
+            ' --trace --log={trace}'
+            ' > {log} 2>&1'
+        ).format(exe=self.dut_exe, elf=elf,
+                 sig=sig_file, trace=trace_file,
+                 log=sig_file + '.log')
+
+    # -- Helpers (identical in all plugins) -----------------------------------
+
+    def _trace_file(self, test_dir, is_ref_role):
+        prefix = 'REF' if is_ref_role else 'DUT'
+        return os.path.join(test_dir, '{}-{}.trace'.format(prefix, self.__model__))
+
+    def _dut_trace_file(self, test_dir):
+        dut_dir = os.path.join(test_dir, '..', 'dut')
+        matches = sorted(glob.glob(os.path.join(dut_dir, 'DUT-*.trace')))
+        return matches[0] if matches else os.path.join(dut_dir, 'DUT.trace')
+
+    # -- Test runner (identical in all plugins) -------------------------------
 
     def runTests(self, testList):
-      if os.path.exists(self.work_dir + "/Makefile." + self.name[:-1]):
-            os.remove(self.work_dir + "/Makefile." + self.name[:-1])
+        make = utils.makeUtil(makefilePath=os.path.join(
+            self.work_dir, 'Makefile.' + self.name[:-1]))
+        make.makeCommand = 'make -j' + self.num_jobs
 
-      make = utils.makeUtil(makefilePath=os.path.join(self.work_dir, "Makefile." + self.name[:-1]))
-      make.makeCommand = 'make -k -j' + self.num_jobs
+        arch_test_trace  = os.environ.get('ARCH_TEST_TRACE', '0') == '1'
+        trace_compare_py = os.path.join(self.project_root, 'scripts', 'trace_compare.py')
+        is_ref_role      = 'Reference' in self.name
 
-      # Trace comparison support: enabled via ARCH_TEST_TRACE=1 env var (set by
-      # the Makefile when the user passes TRACE=1 on the command line).
-      arch_test_trace  = os.environ.get('ARCH_TEST_TRACE', '0') == '1'
-      trace_compare_py = os.path.join(self.project_root, 'scripts', 'trace_compare.py')
+        for testname in testList:
+            testentry = testList[testname]
+            test      = testentry['test_path']
+            test_dir  = testentry['work_dir']
+            elf       = os.path.join(test_dir, os.path.basename(test) + '.elf')
+            sig_file  = os.path.join(test_dir, self.name[:-1] + '.signature')
+            compile_macros = ' -D' + ' -D'.join(testentry['macros'])
 
-      for testname in testList:
-          testentry = testList[testname]
-          test = testentry['test_path']
-          test_dir = testentry['work_dir']
-          elf = os.path.join(test_dir, os.path.basename(test) + '.elf')
-          sig_file = os.path.join(test_dir, self.name[:-1] + ".signature")
+            cmd = self.compile_cmd.format(test, elf, compile_macros)
 
-          compile_macros = ' -D' + " -D".join(testentry['macros'])
-
-          # Compile command
-          cmd = self.compile_cmd.format(testentry['isa'].lower(), self.xlen, test, elf, compile_macros)
-
-          if self.target_run:
-            # Pass RISCOF_DEBUG environment variable if set
-            debug_prefix = ''
-            if os.environ.get('RISCOF_DEBUG', '0') == '1':
-                debug_prefix = 'export RISCOF_DEBUG=1; '
-
-            if arch_test_trace:
-                # When TRACE=1: generate the RTL instruction trace only.
-                # The comparison against the REF (kv32sim) trace is done by
-                # the REF plugin (riscof_kv32sim.py) once kv32sim has run,
-                # because kv32sim is the configured reference in config_rtl.ini.
-                rtl_trace_file = os.path.join(test_dir, 'DUT-kv32.trace')
-
-                # RTL sim generates signature + instruction trace
-                simcmd = (debug_prefix +
-                    '{0} {1} --instructions=100000 +signature={2} +signature-granularity=4'
-                    ' --trace --log={3} > {2}.log 2>&1').format(
-                        self.dut_exe, elf, sig_file, rtl_trace_file)
-
-                execute = '@cd {0}; {1}; {2};'.format(test_dir, cmd, simcmd)
+            if self.target_run:
+                if arch_test_trace:
+                    trace_file = self._trace_file(test_dir, is_ref_role)
+                    sim_cmd    = self._make_trace_cmd(elf, sig_file, trace_file)
+                    if is_ref_role:
+                        dut_trace = self._dut_trace_file(test_dir)
+                        cmp_log   = os.path.join(test_dir, '..', 'dut', 'trace_compare.log')
+                        cmp_cmd   = (
+                            '(python3 {py} {ref} {dut} >> {log} 2>&1'
+                            ' && echo TRACE_MATCH >> {log})'
+                            ' || echo TRACE_DIFFER >> {log}'
+                        ).format(py=trace_compare_py,
+                                 ref=trace_file, dut=dut_trace, log=cmp_log)
+                        execute = '@cd {d}; {c}; {s}; {cmp}'.format(
+                            d=test_dir, c=cmd, s=sim_cmd, cmp=cmp_cmd)
+                    else:
+                        execute = '@cd {d}; {c}; {s}'.format(
+                            d=test_dir, c=cmd, s=sim_cmd)
+                else:
+                    sim_cmd = self._make_run_cmd(elf, sig_file)
+                    execute = '@cd {d}; {c}; {s} &> {sig}.log'.format(
+                        d=test_dir, c=cmd, s=sim_cmd, sig=sig_file)
             else:
-                # Normal run: signature only
-                simcmd = (debug_prefix +
-                    '{0} {1} --instructions=100000 +signature={2}'
-                    ' +signature-granularity=4 > {2}.log 2>&1').format(
-                        self.dut_exe, elf, sig_file)
-                execute = '@cd {0}; {1}; {2};'.format(test_dir, cmd, simcmd)
-          else:
-            execute = 'echo "NO RUN"'
+                execute = 'echo "NO RUN"'
 
-          make.add_target(execute)
+            make.add_target(execute)
 
-      # Signature-only run is fast; 300 s default is fine.
-      make.execute_all(self.work_dir)
-
-      if not self.target_run:
-          raise SystemExit(0)
+        exec_timeout = 900 if arch_test_trace else 300
+        make.execute_all(self.work_dir, timeout=exec_timeout)

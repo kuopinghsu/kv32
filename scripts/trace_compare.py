@@ -416,15 +416,42 @@ def compare_traces(traces1, traces2, name1="Trace1", name2="Trace2"):
         return 1
 
     mismatches = 0
-    max_compare = min(len(traces1) - trace1_offset, len(traces2) - trace2_offset)
+    deferred_store_skips = 0  # RTL store entries skipped due to deferred fault
 
-    for i in range(max_compare):
-        t1 = traces1[i + trace1_offset]
-        t2 = traces2[i + trace2_offset]
+    # Use separate pointers so we can skip TGT (RTL) entries that represent
+    # deferred-fault stores.  In Spike's immediate-fault model the faulting
+    # store is never committed (not logged); in the RTL's deferred model it IS
+    # committed before the B-channel SLVERR arrives, so it appears in the RTL
+    # trace but not in Spike's.  Lookahead of 2 is enough (store + possible
+    # FENCE between commit and SLVERR detection), but use 4 for safety.
+    DEFERRED_STORE_LOOKAHEAD = 4
+    i1 = trace1_offset   # REF (Spike) pointer
+    i2 = trace2_offset   # TGT (RTL) pointer
+    entry_num = 0        # logical entry number for mismatch messages
+
+    while i1 < len(traces1) and i2 < len(traces2):
+        t1 = traces1[i1]
+        t2 = traces2[i2]
 
         pc_match    = t1['pc']    == t2['pc']
         instr_match = t1['instr'] == t2['instr']
 
+        # Spike vs RTL cross-format: skip RTL store entries for deferred bus
+        # faults.  RTL logs the faulting store before B-channel SLVERR arrives;
+        # Spike does not (store is never committed).  Detect by: PC mismatch +
+        # TGT is a store + looking ahead in TGT finds REF's current PC.
+        if not pc_match and cross_format and t2.get('is_store') and t2.get('trace_type') == 'rtl':
+            for skip in range(1, DEFERRED_STORE_LOOKAHEAD + 1):
+                if (i2 + skip < len(traces2) and
+                        traces2[i2 + skip]['pc'] == t1['pc']):
+                    deferred_store_skips += skip
+                    i2 += skip
+                    t2 = traces2[i2]
+                    pc_match    = t1['pc']    == t2['pc']
+                    instr_match = t1['instr'] == t2['instr']
+                    break
+
+        entry_num += 1
         reg_match, reg_skip_reason = _reg_match_result(t1, t2)
 
         # For AMO instructions (RV32A), spike logs the memory read value but
@@ -462,7 +489,7 @@ def compare_traces(traces1, traces2, name1="Trace1", name2="Trace2"):
         if not (pc_match and instr_match and reg_match and mem_match and csr_match):
             disasm1 = f" ; {t1['disasm']}" if t1.get('disasm') else ""
             disasm2 = f" ; {t2['disasm']}" if t2.get('disasm') else ""
-            print(f"\nMismatch at entry {i+1}:")
+            print(f"\nMismatch at entry {entry_num}:")
             print(f"  REF: PC=0x{t1['pc']:08x} INSTR=0x{t1['instr']:08x}{disasm1}")
             print(f"  TGT: PC=0x{t2['pc']:08x} INSTR=0x{t2['instr']:08x}{disasm2}")
 
@@ -492,8 +519,16 @@ def compare_traces(traces1, traces2, name1="Trace1", name2="Trace2"):
                 print("\n... stopping after 10 mismatches")
                 break
 
+        i1 += 1
+        i2 += 1
+
+    if deferred_store_skips > 0:
+        print(f"Note: skipped {deferred_store_skips} RTL deferred-fault store(s) "
+              f"not present in Spike trace (RTL deferred B-channel SLVERR model).")
+
     effective_trace1_len = len(traces1) - trace1_offset
-    effective_trace2_len = len(traces2) - trace2_offset
+    # Subtract deferred-store skips from TGT length for accurate "extra" reporting
+    effective_trace2_len = len(traces2) - trace2_offset - deferred_store_skips
     if mismatches == 0:
         if effective_trace1_len == effective_trace2_len:
             print(f"\n[PASS] Traces match perfectly!")
