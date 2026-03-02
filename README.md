@@ -33,6 +33,8 @@ K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IM
   - Fast functional ISA simulator (kv32sim) with GDB stub
   - ELF file loader for both simulators
 
+![Block Diagram](docs/kv32_soc_block_diagram.svg)
+
 ## Memory Map
 
 | Slave | Device | Base Address | End Address | Size | Description |

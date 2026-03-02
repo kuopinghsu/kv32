@@ -10,15 +10,18 @@
 
 /* verilator lint_off SYNCASYNCNET */
 module tb_kv32_soc #(
-    parameter int FAST_MUL         = 1,     // Multiply mode: 1=combinatorial, 0=serial
-    parameter int FAST_DIV         = 1,     // Division mode: 1=combinatorial, 0=serial
-    parameter int ICACHE_EN        = 1,     // I-cache: 1=enabled, 0=bypass
-    parameter int ICACHE_SIZE      = 4096,  // I-cache total bytes
-    parameter int ICACHE_LINE_SIZE = 32,    // Cache line size in bytes
-    parameter int ICACHE_WAYS      = 2,     // Cache associativity
-    parameter int USE_CJTAG        = 1,     // JTAG mode: 0=JTAG, 1=cJTAG
-    parameter int JTAG_IDCODE      = 32'h1DEAD3FF,  // JTAG device ID
-    parameter int GPIO_NUM_PINS    = 4      // Number of GPIO pins (1-128)
+    parameter int FAST_MUL          = 1,    // Multiply mode: 1=combinatorial, 0=serial
+    parameter int FAST_DIV          = 1,    // Division mode: 1=combinatorial, 0=serial
+    parameter int ICACHE_EN         = 1,    // I-cache: 1=enabled, 0=bypass
+    parameter int ICACHE_SIZE       = 4096, // I-cache total bytes
+    parameter int ICACHE_LINE_SIZE  = 32,   // Cache line size in bytes
+    parameter int ICACHE_WAYS       = 2,    // Cache associativity
+    parameter int USE_CJTAG         = 1,    // JTAG mode: 0=JTAG, 1=cJTAG
+    parameter int JTAG_IDCODE       = 32'h1DEAD3FF,  // JTAG device ID
+    parameter int GPIO_NUM_PINS     = 4,    // Number of GPIO pins (1-128)
+    parameter int MEM_READ_LATENCY  = 1,    // External memory read latency (cycles)
+    parameter int MEM_WRITE_LATENCY = 1,    // External memory write latency (cycles)
+    parameter int MEM_DUAL_PORT     = 1     // External memory dual-port mode
 ) (
     input wire clk,
     input wire rst_n,
@@ -227,8 +230,8 @@ module tb_kv32_soc #(
         .DATA_WIDTH(32),
         .MEM_SIZE(2 * 1024 * 1024),
         .BASE_ADDR(32'h80000000),
-        .MEM_READ_LATENCY(1),
-        .MEM_WRITE_LATENCY(1),
+        .MEM_READ_LATENCY(MEM_READ_LATENCY),
+        .MEM_WRITE_LATENCY(MEM_WRITE_LATENCY),
         .MAX_OUTSTANDING_READS(16),
         .MAX_OUTSTANDING_WRITES(16),
     `ifdef DEBUG_LEVEL_2
@@ -236,7 +239,7 @@ module tb_kv32_soc #(
     `else
         .ENABLE_MEM_TRACE(0),
     `endif
-        .MEM_DUAL_PORT(1)
+        .MEM_DUAL_PORT(MEM_DUAL_PORT)
     ) ext_mem (
         .clk(clk),
         .rst_n(rst_n),
@@ -437,17 +440,30 @@ module tb_kv32_soc #(
     endfunction
 
     // Returns the AXI B-channel (write-response) signals and whether a FENCE
-    // instruction is currently sitting in the MEM stage.  Used by the trace
-    // generator to implement RISC-V precise-exception semantics: a store whose
-    // B-channel comes back SLVERR must not appear in the committed trace.
+    // instruction is anywhere in the pipeline (IF through MEM).  Used by the
+    // trace generator to implement RISC-V precise-exception semantics: a store
+    // whose B-channel comes back SLVERR must not appear in the committed trace.
+    //
+    // fence_in_pipe covers the IF stage too because at high MEM_READ_LATENCY
+    // the I-cache may still be filling the FENCE instruction when the preceding
+    // store retires from WB.  Once FENCE reaches MEM the fence_stall signal
+    // prevents any further retirements until the store-buffer B-channel drains,
+    // so buffering the store at any of these stages is safe.
     function void get_store_resp(
-        output bit resp_valid,    // B-channel beat valid (store completed)
-        output bit resp_error,    // B-channel SLVERR
-        output bit fence_in_mem   // FENCE is in MEM stage (stalls until B-ch)
+        output bit resp_valid,     // B-channel beat valid (store completed)
+        output bit resp_error,     // B-channel SLVERR
+        output bit fence_in_pipe   // FENCE is somewhere in IF/ID/EX/MEM
     );
         resp_valid  = dut.dmem_resp_valid && dut.dmem_resp_is_write;
         resp_error  = dut.dmem_resp_error;
-        fence_in_mem = dut.core.is_fence_mem && dut.core.mem_valid;
+        // IF stage: instruction word presented at IF→ID boundary is FENCE
+        // (opcode 0001111, funct3 000 for plain FENCE)
+        fence_in_pipe = (dut.core.if_valid
+                             && dut.core.instr_if[6:0]  == 7'b0001111
+                             && dut.core.instr_if[14:12] == 3'b000)
+                      | (dut.core.is_fence_id  && dut.core.id_valid)
+                      | (dut.core.is_fence_ex  && dut.core.ex_valid)
+                      | (dut.core.is_fence_mem && dut.core.mem_valid);
     endfunction
 
     function void get_mem_signals(

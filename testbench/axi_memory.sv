@@ -434,7 +434,7 @@ module axi_memory #(
     end
 
     // Pipeline can accept if not all stages are full
-    assign read_pipe_busy = (read_stages_occupied >= MAX_READ_STAGES);
+    assign read_pipe_busy = (32'(read_stages_occupied) >= MAX_READ_STAGES);
     assign read_can_accept = MEM_DUAL_PORT ? !read_pipe_busy : (arb_read_grant && !read_pipe_busy);
 
     // Combinatorial insert_pos: lowest-indexed pipeline stage available for a new

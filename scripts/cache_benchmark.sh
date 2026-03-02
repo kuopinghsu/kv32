@@ -17,8 +17,7 @@ cd "$PROJ_DIR"
 
 NCPU=$(nproc 2>/dev/null || echo 4)
 
-# Store results OUTSIDE build/ because `make clean` does `rm -rf build/`
-RESULTS_DIR="$PROJ_DIR/docs/cache_bench_results"
+RESULTS_DIR="$PROJ_DIR/build/cache_bench_results"
 mkdir -p "$RESULTS_DIR"
 
 CSV="$RESULTS_DIR/results.csv"
@@ -57,20 +56,36 @@ echo ""
 # Parse metrics from a simulation log file
 parse_metrics() {
   local logfile="$1"
-  total_cycles=$(grep -oP 'Total cycles :\s+\K[0-9]+'           "$logfile" || echo "0")
-  instructions=$(grep -oP 'Instructions :\s+\K[0-9]+'           "$logfile" || echo "0")
-  exec_cycles=$(grep -oP 'Execution cycles :\s+\K[0-9]+'        "$logfile" || echo "0")
-  stall_cycles=$(grep -oP 'Stall cycles :\s+\K[0-9]+'           "$logfile" || echo "0")
-  stall_pct=$(grep -oP 'Stall cycles :\s+[0-9]+ \(\K[0-9.]+'   "$logfile" || echo "0")
-  cpi=$(grep -oP 'CPI :\s+\K[0-9.]+'                            "$logfile" || echo "0")
-  ar_requests=$(grep -oP 'AR Requests \(Master\) :\s+\K[0-9]+'  "$logfile" || echo "0")
-  r_responses=$(grep -oP 'R Responses \(Slave\) :\s+\K[0-9]+'   "$logfile" || echo "0")
-  fetch_lookups=$(grep -oP 'Fetch lookups :\s+\K[0-9]+'         "$logfile" || echo "0")
-  cache_hits=$(grep -oP 'Cache hits :\s+\K[0-9]+'               "$logfile" || echo "0")
-  cache_misses=$(grep -oP 'Cache misses :\s+\K[0-9]+'           "$logfile" || echo "0")
-  hit_rate=$(grep -oP 'Cache hits :\s+[0-9]+ \(\K[0-9.]+'       "$logfile" || echo "0")
-  bypass_fetches=$(grep -oP 'Bypass fetches :\s+\K[0-9]+'       "$logfile" || echo "0")
-  cache_fills=$(grep -oP 'Cache-line fills :\s+\K[0-9]+'        "$logfile" || echo "0")
+  total_cycles=$(perl -ne 'print $1 if /Total cycles\s*:\s*([0-9]+)/'          "$logfile" || echo "0")
+  instructions=$(perl -ne 'print $1 if /Instructions\s*:\s*([0-9]+)/'          "$logfile" || echo "0")
+  exec_cycles=$(perl -ne 'print $1 if /Execution cycles\s*:\s*([0-9]+)/'       "$logfile" || echo "0")
+  stall_cycles=$(perl -ne 'print $1 if /Stall cycles\s*:\s*([0-9]+)/'          "$logfile" || echo "0")
+  stall_pct=$(perl -ne 'print $1 if /Stall cycles\s*:\s*[0-9]+\s*\(([0-9.]+)/' "$logfile" || echo "0")
+  cpi=$(perl -ne 'print $1 if /CPI\s*:\s*([0-9.]+)/'                           "$logfile" || echo "0")
+  ar_requests=$(perl -ne 'print $1 if /AR Requests \(Master\)\s*:\s*([0-9]+)/' "$logfile" || echo "0")
+  r_responses=$(perl -ne 'print $1 if /R Responses \(Slave\)\s*:\s*([0-9]+)/'  "$logfile" || echo "0")
+  fetch_lookups=$(perl -ne 'print $1 if /Fetch lookups\s*:\s*([0-9]+)/'        "$logfile" || echo "0")
+  cache_hits=$(perl -ne 'print $1 if /Cache hits\s*:\s*([0-9]+)/'              "$logfile" || echo "0")
+  cache_misses=$(perl -ne 'print $1 if /Cache misses\s*:\s*([0-9]+)/'          "$logfile" || echo "0")
+  hit_rate=$(perl -ne 'print $1 if /Cache hits\s*:\s*[0-9]+\s*\(([0-9.]+)/'   "$logfile" || echo "0")
+  bypass_fetches=$(perl -ne 'print $1 if /Bypass fetches\s*:\s*([0-9]+)/'      "$logfile" || echo "0")
+  cache_fills=$(perl -ne 'print $1 if /Cache-line fills\s*:\s*([0-9]+)/'       "$logfile" || echo "0")
+
+  # Default to "0" if perl returned empty string
+  total_cycles=${total_cycles:-0}
+  instructions=${instructions:-0}
+  exec_cycles=${exec_cycles:-0}
+  stall_cycles=${stall_cycles:-0}
+  stall_pct=${stall_pct:-0}
+  cpi=${cpi:-0}
+  ar_requests=${ar_requests:-0}
+  r_responses=${r_responses:-0}
+  fetch_lookups=${fetch_lookups:-0}
+  cache_hits=${cache_hits:-0}
+  cache_misses=${cache_misses:-0}
+  hit_rate=${hit_rate:-0}
+  bypass_fetches=${bypass_fetches:-0}
+  cache_fills=${cache_fills:-0}
 }
 
 for CSIZE in "${CACHE_SIZES[@]}"; do

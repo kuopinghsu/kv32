@@ -209,8 +209,8 @@ static void dump_instruction_trace(
         // Flush pending store once the B-channel response has arrived.
         // This must run even when nothing is retiring (FENCE stall cycles).
         if (pstore_has) {
-            svBit resp_valid, resp_error, fence_in_mem_unused;
-            dut->get_store_resp(&resp_valid, &resp_error, &fence_in_mem_unused);
+            svBit resp_valid, resp_error, fence_in_pipe_unused;
+            dut->get_store_resp(&resp_valid, &resp_error, &fence_in_pipe_unused);
             if (resp_valid) {
                 if (!resp_error) {
                     // Store completed OK — emit the buffered line
@@ -354,18 +354,38 @@ static void dump_instruction_trace(
         int padding_needed = 72 - base_line.length();
         if (padding_needed < 2) padding_needed = 2;  // At least 2 spaces
 
-        // For store instructions: check whether a FENCE is currently in the
-        // MEM stage.  If so, the pipeline will stall until the B-channel
-        // response arrives, guaranteeing no other instruction can retire in
-        // the meantime.  Buffer this store's line and decide later whether to
-        // commit it (B-channel OK) or discard it (B-channel SLVERR).
+        // For store instructions: check whether a FENCE is currently anywhere
+        // in the pipeline (IF, ID, EX, or MEM stage).  If so, fence_stall will
+        // fire before any subsequent instruction can retire, making it safe to
+        // hold this store's trace line and decide later whether to commit it
+        // (B-channel OK) or discard it (B-channel SLVERR).
+        //
+        // Checking the IF stage is necessary at high MEM_READ_LATENCY: the
+        // I-cache may still be filling the FENCE instruction when the preceding
+        // store exits WB, so fence_in_mem alone is not sufficient.
+        //
+        // If the B-channel has already arrived this cycle (resp_valid=true),
+        // resolve immediately without buffering regardless of fence position.
         if (mem_write_wb) {
-            svBit fence_in_mem, _rv, _re;
-            dut->get_store_resp(&_rv, &_re, &fence_in_mem);
-            if (fence_in_mem) {
-                // A FENCE is in MEM right behind this store.  The pipeline will
-                // stall until the B-channel response arrives, so nothing else
-                // can retire before we decide to commit or discard this entry.
+            svBit fence_in_pipe, resp_valid, resp_error;
+            dut->get_store_resp(&resp_valid, &resp_error, &fence_in_pipe);
+            if (resp_valid) {
+                // B-channel arrived on the same cycle as the store retired.
+                // Decide immediately: emit on OK, discard on SLVERR.
+                if (!resp_error) {
+                    trace_file << base_line << std::string(padding_needed, ' ') << "; " << disasm_str << std::endl;
+                } else {
+                    instr_count = prior_count;
+                    last_valid  = prior_lv;
+                    last_pc     = prior_lp;
+                    last_instr  = prior_li;
+                }
+                return;
+            }
+            if (fence_in_pipe) {
+                // FENCE is in the pipeline — buffer this store's trace line.
+                // The fence_stall will hold off subsequent retirements until
+                // the B-channel arrives, so the buffer is safe to hold.
                 pstore_count = prior_count;
                 pstore_lv    = prior_lv;
                 pstore_lp    = prior_lp;
@@ -374,6 +394,9 @@ static void dump_instruction_trace(
                 pstore_has   = true;
                 return; // do not write to trace file yet
             }
+            // No FENCE following and B-channel not yet here for a normal store
+            // (e.g. store to a peripheral with non-zero write latency) — the
+            // store committed without a fault, emit its trace line directly.
         }
 
         trace_file << base_line << std::string(padding_needed, ' ') << "; " << disasm_str << std::endl;

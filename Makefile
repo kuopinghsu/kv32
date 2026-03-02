@@ -150,6 +150,14 @@ ifdef FAST_DIV
   VERILATOR_FLAGS += -pvalue+FAST_DIV=$(FAST_DIV)
 endif
 
+# External memory latency and port parameters
+MEM_READ_LATENCY  ?= 1
+MEM_WRITE_LATENCY ?= 1
+MEM_DUAL_PORT     ?= 1
+VERILATOR_FLAGS += -pvalue+MEM_READ_LATENCY=$(MEM_READ_LATENCY)
+VERILATOR_FLAGS += -pvalue+MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY)
+VERILATOR_FLAGS += -pvalue+MEM_DUAL_PORT=$(MEM_DUAL_PORT)
+
 # I-cache defaults (set before ifdef blocks so ?= assignments take effect)
 ICACHE_EN    ?= 1
 ICACHE_SIZE  ?= 4096
@@ -180,7 +188,7 @@ COVERAGE     ?= 0
 DEBUG        ?=
 # Pass I-cache parameters to C++ testbench for stats reporting
 VERILATOR_FLAGS += -CFLAGS "-DICACHE_EN=$(ICACHE_EN) -DICACHE_SIZE=$(ICACHE_SIZE) -DICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) -DICACHE_WAYS=$(ICACHE_WAYS)"
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) COVERAGE=$(COVERAGE)
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) COVERAGE=$(COVERAGE) MEM_READ_LATENCY=$(MEM_READ_LATENCY) MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY) MEM_DUAL_PORT=$(MEM_DUAL_PORT)
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
 
 # RTL source files
@@ -211,6 +219,19 @@ BUILD_TARGET = $(BUILD_DIR)/kv32soc
 all: rtl-all sim-all compare-all spike-all freertos-compare-simple
 	@make -f Makefile TRACE=1 arch-test-all
 	@make -f Makefile TRACE=1 arch-test-sim
+
+# Verify memory interface
+verify_mem:
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=4 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=1 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=1 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=4 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=0 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=0 compare-all rtl-all
 
 # Build RTL with Verilator
 build-rtl: $(BUILD_TARGET)

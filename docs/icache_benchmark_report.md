@@ -1,8 +1,8 @@
 # KV32 Instruction Cache Benchmark Report
 
-**Generated**: 2026-03-02  
-**Benchmarks**: Dhrystone (`dhry`), CoreMark (`coremark`)  
-**Sweep**: 36 cache configurations × 2 benchmarks = 72 simulation runs  
+**Generated**: 2026-03-02
+**Benchmarks**: Dhrystone (`dhry`), CoreMark (`coremark`)
+**Sweep**: 36 cache configurations × 2 benchmarks = 72 simulation runs
 **Raw data**: `build/cache_bench_results/results.csv`
 
 ---

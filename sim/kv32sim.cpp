@@ -1358,16 +1358,10 @@ void KV32Simulator::step() {
         //   cause 5 (load access fault)  – load is NOT in the RTL trace (WB stalls
         //                                   until the R response, wb_exception blocks retirement)
         //   cause 6 (store misaligned)   – store is NOT in the RTL trace (EX-stage exception)
-        //   cause 7 (store access fault) – store IS in the RTL trace because the RTL
-        //                                   retires the store BEFORE the AXI B-channel
-        //                                   SLVERR comes back (deferred fault model).
-        // For cause 7 only: emit the trace entry for the faulting store so that
-        // the SW-sim trace stays aligned with the RTL trace.
-        if (read_csr(CSR_MCAUSE) == CAUSE_STORE_ACCESS) {
-            log_commit(exec_pc, inst, trace_rd, trace_rd_val, trace_has_mem,
-                       trace_mem_addr, trace_mem_val, trace_is_store,
-                       trace_is_csr, trace_csr_num);
-        }
+        //   cause 7 (store access fault) – store is NOT in the RTL trace; the RTL
+        //                                   takes the exception before retiring the store
+        //                                   (the B-channel SLVERR blocks retirement).
+        // Faulting instructions are never logged — the trace only contains committed instructions.
         pc = exception_pc;
         exception_occurred = false;
     } else if (next_pc & 0x3) {
