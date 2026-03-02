@@ -472,7 +472,7 @@ module axi_xbar (
             // Capture ID when AW handshake occurs
             if (m_axi_awvalid && m_axi_awready) begin
                 w_id_reg <= m_axi_awid;
-                `DEBUG2(("XBAR: AW captured id=%0d", m_axi_awid));
+                `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AW captured id=%0d", m_axi_awid));
             end
         end
     end
@@ -481,11 +481,13 @@ module axi_xbar (
     // Read ID tracking for debug - tracks outstanding read transactions
     localparam int ID_FIFO_DEPTH = 16;
     logic [3:0] r_sel_next;
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [axi_pkg::AXI_ID_WIDTH-1:0] r_id_fifo [0:ID_FIFO_DEPTH-1];
     logic [3:0] r_sel_fifo [0:ID_FIFO_DEPTH-1];
     logic [$clog2(ID_FIFO_DEPTH):0] r_id_wr_ptr;
     logic [$clog2(ID_FIFO_DEPTH):0] r_id_rd_ptr;
     logic [$clog2(ID_FIFO_DEPTH):0] r_fifo_count;
+    /* verilator lint_on UNUSEDSIGNAL */
 
     // FIFO management for read IDs (debug only)
     always_ff @(posedge clk or negedge rst_n) begin
@@ -498,12 +500,12 @@ module axi_xbar (
                 r_id_fifo[r_id_wr_ptr[$clog2(ID_FIFO_DEPTH)-1:0]] <= m_axi_arid;
                 r_sel_fifo[r_id_wr_ptr[$clog2(ID_FIFO_DEPTH)-1:0]] <= r_sel_next;
                 r_id_wr_ptr <= r_id_wr_ptr + 1;
-                `DEBUG2(("XBAR: AR FIFO push id=%0d sel=%0d fifo_count=%0d->%0d", m_axi_arid, r_sel_next, r_id_wr_ptr - r_id_rd_ptr, r_id_wr_ptr + 1 - r_id_rd_ptr));
+                `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AR FIFO push id=%0d sel=%0d fifo_count=%0d->%0d", m_axi_arid, r_sel_next, r_id_wr_ptr - r_id_rd_ptr, r_id_wr_ptr + 1 - r_id_rd_ptr));
             end
             // Pop ID when R handshake occurs
             if (m_axi_rvalid && m_axi_rready) begin
                 r_id_rd_ptr <= r_id_rd_ptr + 1;
-                `DEBUG2(("XBAR: R FIFO pop id=%0d fifo_count=%0d->%0d", m_axi_rid, r_id_wr_ptr - r_id_rd_ptr, r_id_wr_ptr - (r_id_rd_ptr + 1)));
+                `DEBUG2(`DBG_GRP_AXI, ("[XBAR] R FIFO pop id=%0d fifo_count=%0d->%0d", m_axi_rid, r_id_wr_ptr - r_id_rd_ptr, r_id_wr_ptr - (r_id_rd_ptr + 1)));
             end
         end
     end
@@ -541,11 +543,11 @@ module axi_xbar (
 
     always @(posedge clk) begin
         if (m_axi_arvalid) begin
-            `DEBUG2(("[DEBUG] AXI_XBAR AR: addr=0x%h sel=%b%b%b%b%b%b%b%b%b%b",
+            `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AR: addr=0x%h sel=%b%b%b%b%b%b%b%b%b%b",
                 m_axi_araddr, sel_s9_ar, sel_s8_ar, sel_s7_ar, sel_s6_ar, sel_s5_ar, sel_s4_ar, sel_s3_ar, sel_s2_ar, sel_s1_ar, sel_s0_ar));
         end
         if (m_axi_awvalid) begin
-            `DEBUG2(("[DEBUG] AXI_XBAR AW: addr=0x%h sel=%b%b%b%b%b%b%b%b%b%b awready=%b w_transaction_active=%b",
+            `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AW: addr=0x%h sel=%b%b%b%b%b%b%b%b%b%b awready=%b w_transaction_active=%b",
                 m_axi_awaddr, sel_s9_aw, sel_s8_aw, sel_s7_aw, sel_s6_aw, sel_s5_aw, sel_s4_aw, sel_s3_aw, sel_s2_aw, sel_s1_aw, sel_s0_aw,
                 m_axi_awready, w_transaction_active));
         end
@@ -669,19 +671,19 @@ module axi_xbar (
                     // transition directly to new transaction (stay active).
                     w_sel <= w_sel_next;
                     w_transaction_active <= 1'b1;
-                    `DEBUG2(("XBAR: B+AW simultaneous: w_sel=%0d addr=0x%h", w_sel_next, m_axi_awaddr));
+                    `DEBUG2(`DBG_GRP_AXI, ("[XBAR] B+AW simultaneous: w_sel=%0d addr=0x%h", w_sel_next, m_axi_awaddr));
                     if (w_sel_next == 4'd10) begin
                         write_decode_err_w_done <= 1'b0;
                     end
                 end else begin
                     w_transaction_active <= 1'b0;
-                    `DEBUG2(("XBAR: B complete, w_transaction_active cleared"));
+                    `DEBUG2(`DBG_GRP_AXI, ("[XBAR] B complete, w_transaction_active cleared"));
                 end
             end else if (m_axi_awvalid && !w_transaction_active) begin
                 // New AW with no competing B this cycle
                 w_sel <= w_sel_next;
                 w_transaction_active <= 1'b1;
-                `DEBUG2(("XBAR: Captured w_sel=%0d from AW addr=0x%h", w_sel_next, m_axi_awaddr));
+                `DEBUG2(`DBG_GRP_AXI, ("[XBAR] Captured w_sel=%0d from AW addr=0x%h", w_sel_next, m_axi_awaddr));
                 if (w_sel_next == 4'd10) begin
                     write_decode_err_w_done <= 1'b0;
                 end
@@ -706,7 +708,7 @@ module axi_xbar (
 
     always @(posedge clk) begin
         if (m_axi_wvalid && m_axi_wready) begin
-            `DEBUG2(("[DEBUG] XBAR W handshake: w_sel=%0d active_w_dest=%0d",
+            `DEBUG2(`DBG_GRP_AXI, ("[XBAR] W handshake: w_sel=%0d active_w_dest=%0d",
                      w_sel, active_w_dest));
         end
     end

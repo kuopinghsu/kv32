@@ -103,7 +103,7 @@ module jtag_tap #(
             state <= TEST_LOGIC_RESET;
         end else begin
             state <= state_next;
-            `DEBUG2(("[%0t] TAP: tck_i posedge, tms_i=%b, state=%0d->%0d",
+            `DEBUG2(`DBG_GRP_JTAG, ("[%0t] TAP: tck_i posedge, tms_i=%b, state=%0d->%0d",
                    $time, tms_i, state, state_next));
         end
     end
@@ -153,19 +153,19 @@ module jtag_tap #(
                     // Load current instruction for readback
                     // Note: IEEE 1149.1 requires bits [1:0] = 01, but we implement full readback
                     ir_shift <= ir_reg;
-                    `DEBUG2(("[%0t] TAP: CAPTURE_IR, loading ir_reg=%b (%h) into ir_shift",
+                    `DEBUG2(`DBG_GRP_JTAG, ("[%0t] TAP: CAPTURE_IR, loading ir_reg=%b (%h) into ir_shift",
                            $time, ir_reg, ir_reg));
                 end
 
                 SHIFT_IR: begin
                     ir_shift <= {tdi_i, ir_shift[IR_LEN-1:1]};
-                    `DEBUG2(("[%0t] TAP: SHIFT_IR, tdi_i=%b, ir_shift=%b -> %b",
+                    `DEBUG2(`DBG_GRP_JTAG, ("[%0t] TAP: SHIFT_IR, tdi_i=%b, ir_shift=%b -> %b",
                            $time, tdi_i, ir_shift, {tdi_i, ir_shift[IR_LEN-1:1]}));
                 end
 
                 UPDATE_IR: begin
                     ir_reg <= ir_shift;
-                    `DEBUG2(("[%0t] TAP: UPDATE_IR, ir_reg=%b -> %b (%h)",
+                    `DEBUG2(`DBG_GRP_JTAG, ("[%0t] TAP: UPDATE_IR, ir_reg=%b -> %b (%h)",
                            $time, ir_reg, ir_shift, ir_shift));
                 end
 

@@ -169,7 +169,7 @@ module kv32_csr (
         end else begin
             prev_irq_pending <= irq_pending;
             if (irq_pending && !prev_irq_pending) begin
-                `DEBUG2(("[CSR] irq_pending asserted: cause=0x%h mie=0x%h mip=0x%h mie_en=%b",
+                `DEBUG2(`DBG_GRP_CSR, ("irq_pending asserted: cause=0x%h mie=0x%h mip=0x%h mie_en=%b",
                        irq_cause, mie, mip, mie_en));
             end
         end
@@ -274,12 +274,12 @@ module kv32_csr (
                 mstatus[7]     <= mstatus[3];   // MPIE <= MIE
                 mstatus[3]     <= 1'b0;         // MIE  <= 0
                 mstatus[12:11] <= 2'b11;        // MPP  <= M-mode (machine-mode only)
-                `DEBUG2(("[CSR] Exception: mcause=0x%h mepc=0x%h mstatus.MIE: %b->0", {27'd0, exception_cause}, exception_pc, mstatus[3]));
+                `DEBUG2(`DBG_GRP_CSR, ("Exception: mcause=0x%h mepc=0x%h mstatus.MIE: %b->0", {27'd0, exception_cause}, exception_pc, mstatus[3]));
             // Interrupt handling (asynchronous - save PC+4 of next instruction)
             end else if (irq_pending) begin
                 mepc          <= interrupt_pc;  // PC+4 for interrupts
                 mcause        <= irq_cause;
-                `DEBUG2(("[CSR] Interrupt: mcause=0x%h mepc=0x%h mstatus.MIE: %b->0", irq_cause, interrupt_pc, mstatus[3]));
+                `DEBUG2(`DBG_GRP_CSR, ("Interrupt: mcause=0x%h mepc=0x%h mstatus.MIE: %b->0", irq_cause, interrupt_pc, mstatus[3]));
                 mtval         <= 32'd0;
                 mstatus[7]    <= mstatus[3];
                 mstatus[3]    <= 1'b0;
@@ -292,11 +292,11 @@ module kv32_csr (
                 case (csr_addr)
                     CSR_MSTATUS: begin
                         mstatus  <= csr_wdata_final & 32'h0000_1888;
-                        `DEBUG2(("[CSR] Writing MSTATUS: 0x%h -> 0x%h", mstatus, csr_wdata_final & 32'h0000_1888));
+                        `DEBUG2(`DBG_GRP_CSR, ("Writing MSTATUS: 0x%h -> 0x%h", mstatus, csr_wdata_final & 32'h0000_1888));
                     end
                     CSR_MIE: begin
                         mie <= csr_wdata_final & 32'h0000_0888;
-                        `DEBUG2(("[CSR] Writing MIE: 0x%h -> 0x%h", mie, csr_wdata_final & 32'h0000_0888));
+                        `DEBUG2(`DBG_GRP_CSR, ("Writing MIE: 0x%h -> 0x%h", mie, csr_wdata_final & 32'h0000_0888));
                     end
                     CSR_MTVEC:     mtvec_r  <= {csr_wdata_final[31:2], 2'b00};
                     CSR_MSCRATCH:  mscratch <= csr_wdata_final;

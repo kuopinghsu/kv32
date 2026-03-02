@@ -144,7 +144,7 @@ module axi_clint (
         end else begin
             prev_software_irq <= software_irq;
             if (software_irq != prev_software_irq) begin
-                `DEBUG2(("[CLINT] software_irq changed: %b -> %b (msip[0]=%b)",
+                `DEBUG2(`DBG_GRP_CLINT, ("software_irq changed: %b -> %b (msip[0]=%b)",
                        prev_software_irq, software_irq, msip[0]));
             end
         end
@@ -193,7 +193,7 @@ module axi_clint (
             // Handle write response
             if (axi_bvalid && axi_bready) begin
                 axi_bvalid <= 1'b0;
-                `DEBUG2(("[CLINT] Write response consumed"));
+                `DEBUG2(`DBG_GRP_CLINT, ("Write response consumed"));
             end
 
 `ifndef SYNTHESIS
@@ -214,14 +214,14 @@ module axi_clint (
 
             // Accept write when both AW and W channels are valid
             if (axi_awvalid && axi_wvalid && axi_awready && axi_wready) begin
-                `DEBUG2(("[CLINT] Write transaction: addr=0x%h data=0x%h strb=0x%h",
+                `DEBUG2(`DBG_GRP_CLINT, ("Write transaction: addr=0x%h data=0x%h strb=0x%h",
                        axi_awaddr, axi_wdata, axi_wstrb));
 
                 // Write to CLINT registers
                 case (write_addr_offset)
                     MSIP_OFFSET: begin
                         msip <= axi_wdata;
-                        `DEBUG2(("[CLINT] Writing MSIP: 0x%h -> 0x%h", msip, axi_wdata));
+                        `DEBUG2(`DBG_GRP_CLINT, ("Writing MSIP: 0x%h -> 0x%h", msip, axi_wdata));
                     end
                     MTIMECMP_OFFSET: begin
                         if (axi_wstrb[0]) mtimecmp[7:0]   <= axi_wdata[7:0];
@@ -271,12 +271,12 @@ module axi_clint (
             // Handle read response
             if (axi_rvalid && axi_rready) begin
                 axi_rvalid <= 1'b0;
-                `DEBUG2(("[CLINT] Read response consumed"));
+                `DEBUG2(`DBG_GRP_CLINT, ("Read response consumed"));
             end
 
             // Accept read when AR channel is valid
             if (axi_arvalid && axi_arready) begin
-                `DEBUG2(("[CLINT] Read transaction: addr=0x%h", axi_araddr));
+                `DEBUG2(`DBG_GRP_CLINT, ("Read transaction: addr=0x%h", axi_araddr));
 
                 // Read from CLINT registers
                 case (read_addr_offset)

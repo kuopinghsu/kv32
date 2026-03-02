@@ -268,7 +268,7 @@ module axi_i2c #(
                         // Trigger READ operation directly (not through TX FIFO)
                         if (axi_wdata[3] && !busy && i2c_enable)
                             ctrl_read_trigger <= 1'b1;
-                        `DEBUG2(("[I2C] CTRL write: data=0x%02h, enable=%b, start=%b, stop=%b",
+                        `DEBUG2(`DBG_GRP_I2C, ("CTRL write: data=0x%02h, enable=%b, start=%b, stop=%b",
                                axi_wdata[7:0], axi_wdata[0], axi_wdata[1], axi_wdata[2]));
                     end
                     DIV_OFFSET: clk_div <= axi_wdata[15:0];
@@ -369,18 +369,18 @@ module axi_i2c #(
                         state    <= START;
                         busy     <= 1'b1;
                         tx_ready <= 1'b0;
-                        `DEBUG2(("[I2C] START command"));
+                        `DEBUG2(`DBG_GRP_I2C, ("START command"));
                     end else if (tx_valid && i2c_enable) begin
                         shift_reg <= tx_data;
                         state     <= read_cmd ? READ : WRITE;
                         busy      <= 1'b1;
                         tx_ready  <= 1'b0;
                         // tx_valid is combinational; txf_pop or ctrl_read_trigger auto-clears
-                        `DEBUG2(("[I2C] TX byte 0x%02h, mode=%s", tx_data, read_cmd ? "READ" : "WRITE"));
+                        `DEBUG2(`DBG_GRP_I2C, ("TX byte 0x%02h, mode=%s", tx_data, read_cmd ? "READ" : "WRITE"));
                     end else if (stop_cmd && i2c_enable) begin
                         state    <= STOP;
                         busy     <= 1'b1;
-                        `DEBUG2(("[I2C] STOP command"));
+                        `DEBUG2(`DBG_GRP_I2C, ("STOP command"));
                     end
                 end
 
@@ -465,7 +465,7 @@ module axi_i2c #(
                                     rx_data     <= shift_reg;  // capture byte
                                     rxf_push_r  <= 1'b1;       // push to RX FIFO next cycle
                                     state       <= ACK_SEND;
-                                    `DEBUG2(("[I2C] READ byte captured: 0x%02h", shift_reg));
+                                    `DEBUG2(`DBG_GRP_I2C, ("READ byte captured: 0x%02h", shift_reg));
                                 end
                             end
                         endcase
@@ -488,7 +488,7 @@ module axi_i2c #(
                             2'b10: begin  // SCL high - sample ACK
                                 ack_received <= ~i2c_sda_i;  // ACK=0, NACK=1
                                 scl_phase    <= 2'b11;
-                                `DEBUG2(("[I2C] ACK_CHECK: sda_i=%b, ack=%b", i2c_sda_i, ~i2c_sda_i));
+                                `DEBUG2(`DBG_GRP_I2C, ("ACK_CHECK: sda_i=%b, ack=%b", i2c_sda_i, ~i2c_sda_i));
                             end
                             2'b11: begin  // SCL falling - lower SCL before returning to IDLE
                                 i2c_scl_o <= 1'b0;

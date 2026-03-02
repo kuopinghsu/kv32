@@ -71,6 +71,9 @@ add_files -norecurse $proj_root/rtl/mem_axi_ro.sv
 # I-cache
 add_files -norecurse $proj_root/rtl/kv32_icache.sv
 
+# Power manager
+add_files -norecurse $proj_root/rtl/kv32_pm.sv
+
 # JTAG / Debug
 add_files -norecurse [glob $proj_root/rtl/jtag/*.sv]
 add_files -norecurse $proj_root/rtl/kv32_dtm.sv

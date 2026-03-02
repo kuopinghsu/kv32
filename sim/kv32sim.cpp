@@ -1228,7 +1228,69 @@ void KV32Simulator::step() {
                 trace_rd = -1;
                 trace_rd_val = new_mstatus;
                 next_pc = csr_mepc;
-            }
+            } else if (csr_addr == 0x105) {
+                // WFI — Wait For Interrupt
+                //
+                // The RTL stalls WFI in EX until irq_pending fires, then flushes it
+                // (never retires it).  mepc is set to WFI+4 so that MRET after the
+                // handler returns to the instruction after WFI.
+                //
+                // Simulator model:
+                //   1. Undo the inst/cycle counters incremented at top of step()
+                //      (WFI does not retire in RTL).
+                //   2. Advance pc to WFI+4 so that take_trap() stores WFI+4 in mepc.
+                //   3. Spin: tick devices each iteration, check for a pending+enabled
+                //      interrupt, then take it.  We accumulate mcycle ticks to model
+                //      the time the core spends in the WFI stall.
+                //   4. Return without logging (RTL never emits a trace entry for WFI).
+                inst_count--;
+                csr_minstret--;
+                untick_slaves(); // undo the initial tick from the top of step()
+
+                // Pre-advance pc so take_trap() saves mepc = WFI+4.
+                pc = exec_pc + 4;
+
+                // Spin until a machine-mode interrupt becomes pending and enabled.
+                while (running) {
+                    tick_slaves();
+                    csr_mcycle++;   // count idle cycles
+
+                    // ── Update MIP from all interrupt sources ────────────────
+                    {
+                        uint32_t ps = 0;
+                        if (uart->get_irq())  ps |= (1u << 1);
+                        if (spi->get_irq())   ps |= (1u << 2);
+                        if (i2c->get_irq())   ps |= (1u << 3);
+                        if (dma->get_irq())   ps |= (1u << KV_PLIC_SRC_DMA);
+                        if (gpio->get_irq())  ps |= (1u << KV_PLIC_SRC_GPIO);
+                        if (timer->get_irq()) ps |= (1u << KV_PLIC_SRC_TIMER);
+                        plic->update_irq_sources(ps);
+                    }
+                    if (clint->get_timer_interrupt())
+                        csr_mip |= (1u << 7); else csr_mip &= ~(1u << 7);
+                    if (clint->get_software_interrupt())
+                        csr_mip |= (1u << 3); else csr_mip &= ~(1u << 3);
+                    if (plic->get_external_interrupt())
+                        csr_mip |= (1u << 11); else csr_mip &= ~(1u << 11);
+
+                    // WFI wakes on any pending interrupt when MIE=1.
+                    uint32_t mie_bit = (csr_mstatus >> 3) & 1;
+                    if (!mie_bit) continue;     // Globally disabled — keep waiting
+
+                    uint32_t pending = csr_mip & csr_mie;
+                    if (!pending) continue;     // No enabled interrupt yet
+
+                    // Take the highest-priority pending interrupt.
+                    // take_trap() sets: pc = mtvec, mepc = exec_pc+4 (already set above),
+                    //                   mcause, mtval, mstatus (MPIE=MIE, MIE=0, MPP=M).
+                    if      (pending & (1u << 11)) take_trap(CAUSE_MACHINE_EXTERNAL_INT, 0);
+                    else if (pending & (1u <<  7)) take_trap(CAUSE_MACHINE_TIMER_INT,    0);
+                    else if (pending & (1u <<  3)) take_trap(CAUSE_MACHINE_SOFTWARE_INT, 0);
+                    break;
+                }
+                // WFI itself is not traced (matches RTL: instruction gets flushed, not retired).
+                return;
+            } // else if (csr_addr == 0x105) — WFI
         } else {
             // CSR instructions (Zicsr extension)
             //

@@ -13,24 +13,102 @@ package kv32_pkg;
     // ========================================================================
     // Debug Display Macros
     // ========================================================================
-    // Usage:
-    //   `DEBUG1(("[INFO] Critical event: value=0x%h", value))
-    //   `DEBUG2(("[VERBOSE] Internal state: x=%d y=%d", x, y))
+    // DEBUG1(msg)             — always shown when DEBUG_LEVEL_1 is enabled.
+    //                           No group filtering; use for critical events.
     //
-    // Note: Use double parentheses for arguments to handle variable arg lists
+    // DEBUG2(grp, msg)        — shown only when DEBUG_LEVEL_2 is enabled AND
+    //                           bit DBG_GRP_<grp> is set in DEBUG_GROUP.
+    //                           Pass the bare group suffix token:
+    //
+    //   `DEBUG1(("[IRQ] Interrupt: cause=0x%h", cause))
+    //   `DEBUG2(WFI,   ("wfi_stall=%b icache_idle=%b", wfi_stall, icache_idle_i))
+    //   `DEBUG2(FETCH, ("[FETCH_REQ] pc=0x%h outstanding=%0d", pc, out))
+    //   `DEBUG2(AXI,   ("arvalid=%b arready=%b", arvalid, arready))
+    //
+    // Filtering — override DEBUG_GROUP at elaboration time:
+    //   +define+DEBUG_GROUP=32'h0000_0040   // WFI only  (bit 6)
+    //   +define+DEBUG_GROUP=32'h0000_0003   // FETCH+PIPE (bits 0-1)
+    //   +define+DEBUG_GROUP=32'hFFFF_FFFF   // all groups (default)
+    //
+    // From the Makefile: make DEBUG=2 DEBUG_GROUP=40 rtl-<test>
+    //
+    // Note: Use double parentheses for msg arguments (variadic macro workaround)
     // ========================================================================
 
+    // ── Debug group bit indices ─────────────────────────────────────────────
+    `define DBG_GRP_FETCH   0   // Instruction fetch, PC tracking, IB
+    `define DBG_GRP_PIPE    1   // Pipeline stalls and stage flushes
+    `define DBG_GRP_EX      2   // Execute stage (ALU, branch, forward)
+    `define DBG_GRP_MEM     3   // Memory stage (load/store, AMO, LR/SC)
+    `define DBG_GRP_CSR     4   // CSR read/write
+    `define DBG_GRP_IRQ     5   // Interrupts and exceptions
+    `define DBG_GRP_WFI     6   // WFI / power management
+    `define DBG_GRP_AXI     7   // AXI bus transactions
+    `define DBG_GRP_REG     8   // Register file write-back and forwarding
+    `define DBG_GRP_JTAG    9   // JTAG / DTM / debug module
+    `define DBG_GRP_CLINT  10   // CLINT timer/software interrupt
+    `define DBG_GRP_GPIO   11   // GPIO peripheral
+    `define DBG_GRP_I2C    12   // I2C peripheral
+    `define DBG_GRP_ICACHE 13   // I-Cache state machine
+    `define DBG_GRP_ALU    14   // ALU operations
+    `define DBG_GRP_SB     15   // Store buffer
+
+`ifndef SYNTHESIS
+    // ── Display name strings (6-char fixed width for aligned output) ─────────
+    // ── Group name lookup (maps bit-index → 6-char display name) ──────────
+    // Used by the DEBUG2 macro to prefix each message with [GROUP ].
+    function automatic string dbg_grp_name(int unsigned idx);
+        case (idx)
+            `DBG_GRP_FETCH:  return "FETCH ";
+            `DBG_GRP_PIPE:   return "PIPE  ";
+            `DBG_GRP_EX:     return "EX    ";
+            `DBG_GRP_MEM:    return "MEM   ";
+            `DBG_GRP_CSR:    return "CSR   ";
+            `DBG_GRP_IRQ:    return "IRQ   ";
+            `DBG_GRP_WFI:    return "WFI   ";
+            `DBG_GRP_AXI:    return "AXI   ";
+            `DBG_GRP_REG:    return "REG   ";
+            `DBG_GRP_JTAG:   return "JTAG  ";
+            `DBG_GRP_CLINT:  return "CLINT ";
+            `DBG_GRP_GPIO:   return "GPIO  ";
+            `DBG_GRP_I2C:    return "I2C   ";
+            `DBG_GRP_ICACHE: return "ICACHE";
+            `DBG_GRP_ALU:    return "ALU   ";
+            `DBG_GRP_SB:     return "SB    ";
+            default:         return "?     ";
+        endcase
+    endfunction
+`endif // SYNTHESIS
+
+    // ── Default DEBUG_GROUP: all groups enabled ──────────────────────────────
+    `ifndef DEBUG_GROUP
+        `define DEBUG_GROUP 32'hFFFF_FFFF
+    `endif
+
+`ifdef SYNTHESIS
+    `define DEBUG1(msg)
+`else
 `ifdef DEBUG_LEVEL_1
-    `define DEBUG1(msg) $display("[DEBUG] ", $sformatf msg)
+    `define DEBUG1(msg) $display("[DBG1] %s", $sformatf msg)
 `else
     `define DEBUG1(msg)
 `endif
+`endif // SYNTHESIS
 
-`ifdef DEBUG_LEVEL_2
-    `define DEBUG2(msg) $display("[DEBUG] ", $sformatf msg)
+`ifdef SYNTHESIS
+    `define DEBUG2(grp, msg)
 `else
-    `define DEBUG2(msg)
+`ifdef DEBUG_LEVEL_2
+    // grp must be one of the `DBG_GRP_* integer defines, e.g. `DBG_GRP_WFI.
+    // The corresponding bit in DEBUG_GROUP must be set for the message to print.
+    // Output format: [GROUP ] message
+    `define DEBUG2(grp, msg) \
+        if (|((`DEBUG_GROUP >> (grp)) & 32'h1)) \
+            $display("[%s] %s", kv32_pkg::dbg_grp_name(grp), $sformatf msg)
+`else
+    `define DEBUG2(grp, msg)
 `endif
+`endif // SYNTHESIS
 
     // Opcodes
     typedef enum logic [6:0] {

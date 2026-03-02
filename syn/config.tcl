@@ -47,6 +47,7 @@ set RTL_FILES [list \
     "$RTL_ROOT/mem_axi.sv" \
     "$RTL_ROOT/mem_axi_ro.sv" \
     "$RTL_ROOT/kv32_icache.sv" \
+    "$RTL_ROOT/kv32_pm.sv" \
     "$RTL_ROOT/kv32_soc.sv" \
 ]
 

@@ -226,6 +226,124 @@ static int test8_fifo_irq_transfer(void)
     return pass ? 0 : -1;
 }
 
+/* ════════════════════════════════════════════════════════════════════
+ * Test 9: WFI-based large FIFO transfer
+ *
+ * Demonstrates low-power WFI operation: the CPU issues a WFI instruction
+ * after each TX burst and sleeps until the UART RX interrupt fires.
+ * The clock-gating power manager (kv32_pm) gates the core clock during
+ * the WFI idle period, waking the core only when an IRQ is pending.
+ *
+ * Transfer: 1 KB (1024 bytes) via internal hardware loopback.
+ * TX method: 16-byte FIFO bursts (poll TX_BUSY).
+ * RX method: interrupt-driven (PLIC → UART RX IRQ) + WFI idle wait.
+ * ═══════════════════════════════════════════════════════════════════ */
+#define T9_SIZE  1024u
+
+static volatile uint8_t  t9_rx_buf[T9_SIZE];
+static volatile uint32_t t9_rx_count    = 0;
+static volatile uint32_t t9_rx_overflow = 0;
+static volatile uint32_t t9_wfi_count   = 0;  /* how many times WFI woke up */
+
+static void t9_mei_handler(uint32_t cause)
+{
+    (void)cause;
+    uint32_t src = kv_plic_claim();
+    if (src == (uint32_t)KV_PLIC_SRC_UART) {
+        /* drain the entire RX FIFO in one handler invocation */
+        while (kv_uart_rx_ready()) {
+            uint8_t b = (uint8_t)(KV_UART_DATA & 0xFFu);
+            if (t9_rx_count < T9_SIZE)
+                t9_rx_buf[t9_rx_count++] = b;
+            else
+                t9_rx_overflow++;
+        }
+    }
+    kv_plic_complete(src);
+}
+
+static int test9_wfi_large_transfer(void)
+{
+    print("[TEST 9] WFI-based Large FIFO Transfer (1 KB, low-power idle)\n");
+    print("  Transfer : 1024 bytes loopback echo\n");
+    print("  TX method: 16-byte FIFO bursts (polls TX_BUSY)\n");
+    print("  RX method: interrupt-driven (PLIC -> UART RX IRQ) + WFI sleep\n\n");
+
+    /* ── enable internal loopback so TX bytes echo back to RX ───────────── */
+    kv_uart_loopback_enable();
+
+    /* ── flush residual bytes ────────────────────────────────────────────── */
+    t8_flush_uart();   /* reuse the flush helper from test 8 */
+
+    /* ── interrupt setup ─────────────────────────────────────────────────── */
+    t9_rx_count    = 0;
+    t9_rx_overflow = 0;
+    t9_wfi_count   = 0;
+    kv_irq_register(KV_CAUSE_MEI, t9_mei_handler);
+    kv_plic_init_source(KV_PLIC_SRC_UART, 1);  /* priority=1, enable src, threshold=0, MEIE */
+    kv_uart_irq_enable(KV_UART_IE_RX_READY);   /* assert IRQ while RX FIFO non-empty */
+    kv_irq_enable();
+
+    /* ── TX: push 1024 bytes in 16-byte bursts; after each burst use WFI ── */
+    uint32_t tx_sent   = 0;
+    uint32_t tx_bursts = 0;
+    uint32_t t_start   = (uint32_t)kv_clint_mtime();
+
+    while (tx_sent < T9_SIZE) {
+        /* Send one 16-byte burst */
+        uint32_t burst = 0;
+        while (burst < 16u && tx_sent < T9_SIZE) {
+            if (!kv_uart_tx_busy()) {
+                KV_UART_DATA = (uint32_t)(tx_sent & 0xFFu);
+                tx_sent++;
+                burst++;
+            }
+        }
+        tx_bursts++;
+
+        /* Sleep until the echo arrives in the RX FIFO (or any other IRQ).
+         * kv32_pm gates the core clock while we wait, saving dynamic power.
+         * The loop ensures we don't exit early if the RX IRQ fired before
+         * WFI was entered (the wfi below would simply retire immediately). */
+        while (t9_rx_count < tx_sent) {
+            kv_wfi();           /* low-power wait for UART RX interrupt */
+            t9_wfi_count++;
+        }
+    }
+
+    uint32_t t_end = (uint32_t)kv_clint_mtime();
+
+    /* ── cleanup ─────────────────────────────────────────────────────────── */
+    kv_uart_irq_disable(KV_UART_IE_RX_READY);
+    kv_irq_disable();
+    kv_plic_disable_source(KV_PLIC_SRC_UART);
+    kv_uart_loopback_disable();
+
+    /* ── verify received data ────────────────────────────────────────────── */
+    uint32_t errors = 0;
+    for (uint32_t i = 0; i < T9_SIZE; i++) {
+        if (t9_rx_buf[i] != (uint8_t)(i & 0xFFu))
+            errors++;
+    }
+
+    uint32_t lvl = KV_UART_LEVEL;
+    uint32_t txf = (lvl >> 9) & 0x1Fu;
+    uint32_t rxf =  lvl        & 0x1Fu;
+
+    print("  TX bursts sent  : "); print_dec(tx_bursts);       print("\n");
+    print("  RX received     : "); print_dec(t9_rx_count);     print("\n");
+    print("  RX errors       : "); print_dec(errors);          print("\n");
+    print("  RX overflows    : "); print_dec(t9_rx_overflow);  print("\n");
+    print("  WFI wake-ups    : "); print_dec(t9_wfi_count);    print("\n");
+    print("  Cycles elapsed  : "); print_dec(t_end - t_start); print("\n");
+    print("  TX FIFO level   : "); print_dec(txf); print("/16\n");
+    print("  RX FIFO level   : "); print_dec(rxf); print("/16\n");
+
+    int pass = (errors == 0 && t9_rx_overflow == 0 && t9_rx_count == T9_SIZE);
+    print(pass ? "  Result: PASS\n\n" : "  Result: FAIL\n\n");
+    return pass ? 0 : -1;
+}
+
 int main(void)
 {
     /* Initialise UART – baud_div=4 gives 12.5 Mbaud at 100 MHz */
@@ -327,10 +445,13 @@ int main(void)
     /* Test 8: FIFO burst TX + IRQ-driven RX */
     int t8 = (test8_fifo_irq_transfer() == 0) ? 1 : 0;
 
-    int passed = t1 + t2 + t3 + t4 + t5 + t6 + t7 + t8;
+    /* Test 9: WFI-based large FIFO transfer (low-power idle) */
+    int t9 = (test9_wfi_large_transfer() == 0) ? 1 : 0;
+
+    int passed = t1 + t2 + t3 + t4 + t5 + t6 + t7 + t8 + t9;
     print("========================================\n");
-    print("  Summary: "); print_dec((uint32_t)passed); print("/8 tests PASSED\n");
+    print("  Summary: "); print_dec((uint32_t)passed); print("/9 tests PASSED\n");
     print("========================================\n\n");
     print("UART hardware test complete.\n");
-    return (passed == 8) ? 0 : 1;
+    return (passed == 9) ? 0 : 1;
 }

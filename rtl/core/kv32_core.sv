@@ -93,6 +93,10 @@ module kv32_core #(
     output logic [1:0]  icache_cmo_op,      // CMO operation (FLUSH_ALL=11 or INVAL=00)
     output logic [31:0] icache_cmo_addr,    // CMO target address (cbo.inval) or 0 (fence.i)
     input  logic        icache_cmo_ready,   // Icache ready to accept CMO
+    input  logic        icache_idle_i,      // ICache has no AXI transaction in-flight (S_IDLE)
+
+    // WFI / Power Management
+    output logic        core_sleep_o,       // WFI stalling with all outstanding requests drained
 
     // Debug Interface
     input  logic        dbg_halt_req_i,      // Debug halt request
@@ -194,8 +198,9 @@ module kv32_core #(
             cycles_since_retire <= 32'd0;
             timeout_error_reg <= 1'b0;
         end else begin
-            if (retire_instr || (wb_valid && !mem_wb_stall)) begin
+            if (retire_instr || (wb_valid && !mem_wb_stall) || wfi_stall) begin
                 // Reset counter when instruction retires OR WB advances to new instruction
+                // or when waiting in WFI (normal low-power state, not a deadlock)
                 cycles_since_retire <= 32'd0;
             end else if (started_retiring && !timeout_error_reg) begin
                 // Only count after first instruction and before timeout
@@ -273,6 +278,7 @@ module kv32_core #(
     logic        is_fence_id;
     logic        is_fence_i_id;  // FENCE.I: also flush icache
     logic        is_cbo_id;      // Zicbom CBO: cache block operation
+    logic        is_wfi_id;      // WFI instruction in ID stage
     logic        id_ex_stall;
     logic        id_flush;
 
@@ -319,6 +325,9 @@ module kv32_core #(
     logic        is_fence_ex;
     logic        is_fence_i_ex;  // FENCE.I in EX stage
     logic        is_cbo_ex;      // CBO in EX stage
+    logic        is_wfi_ex;      // WFI instruction in EX stage
+    logic        wfi_active;     // WFI is stalling in EX (waiting for interrupt)
+    logic        wfi_stall;      // WFI stall: hold pipeline until interrupt fires
     logic [31:0] alu_result_ex;
     logic        alu_ready;
     logic        branch_taken;
@@ -571,8 +580,13 @@ module kv32_core #(
     // IF stage outputs
     assign if_valid = imem_resp_valid && !if_flush && !ib_resp_discard;
     assign instr_if = if_valid ? imem_resp_data : 32'h00000013; // NOP on invalid
-    // Consume responses when pipeline not stalled OR when discarding flushed requests
-    assign imem_resp_ready = !if_id_stall || ib_resp_discard;
+    // Consume responses when pipeline not stalled OR when discarding flushed requests.
+    // Also force-accept during WFI stall: the WFI instruction is already in EX,
+    // so any in-flight fetch response is for a post-WFI instruction that won't
+    // execute until after the interrupt fires.  Consuming it (as a discard via
+    // if_flush=1 while wfi_stall=1) drains ib_outstanding to zero, letting
+    // core_sleep_o assert and the clock gate engage.
+    assign imem_resp_ready = !if_id_stall || ib_resp_discard || wfi_stall;
 
     // Early-branch-target fetch:
     //   On the same cycle branch_taken=1, override imem_req_addr with
@@ -650,6 +664,7 @@ module kv32_core #(
     // completes in the same cycle regardless.
     assign imem_req_valid_comb = ib_can_accept && !non_branch_flush &&
                                  !fetch_issued_for_effective_pc &&
+                                 !wfi_active &&          // stop new fetches during WFI
                                  imem_req_ready;
 
     assign imem_req_valid = imem_req_valid_comb;
@@ -672,28 +687,28 @@ module kv32_core #(
         if (rst_n) begin
             // Track fetch request issuance
             if (imem_req_valid && imem_req_ready) begin
-                `DEBUG2(("[FETCH_REQ] Issued: pc=0x%h, outstanding=%0d->%0d, can_accept=%b",
+                `DEBUG2(`DBG_GRP_FETCH, ("[REQ] Issued: pc=0x%h, outstanding=%0d->%0d, can_accept=%b",
                        imem_req_addr, ib_outstanding, ib_outstanding + 1'b1, ib_can_accept));
             end else if (imem_req_valid && !imem_req_ready) begin
-                `DEBUG2(("[FETCH_REQ] Blocked: pc=0x%h, outstanding=%0d, can_accept=%b, imem_req_ready=%b",
+                `DEBUG2(`DBG_GRP_FETCH, ("[REQ] Blocked: pc=0x%h, outstanding=%0d, can_accept=%b, imem_req_ready=%b",
                        imem_req_addr, ib_outstanding, ib_can_accept, imem_req_ready));
             end else if (!imem_req_valid && ib_can_accept && !non_branch_flush) begin
-                `DEBUG2(("[FETCH_REQ] Suppressed: pc=0x%h already fetched (last=0x%h valid=%b)",
+                `DEBUG2(`DBG_GRP_FETCH, ("[REQ] Suppressed: pc=0x%h already fetched (last=0x%h valid=%b)",
                        imem_req_addr, last_issued_fetch_pc, last_issued_valid));
             end else if (!imem_req_valid && !ib_can_accept) begin
-                `DEBUG2(("[FETCH_REQ] IB Full: pc=0x%h, outstanding=%0d, can_accept=%b",
+                `DEBUG2(`DBG_GRP_FETCH, ("[REQ] IB Full: pc=0x%h, outstanding=%0d, can_accept=%b",
                        imem_req_addr, ib_outstanding, ib_can_accept));
             end else if (!imem_req_valid && non_branch_flush) begin
-                `DEBUG2(("[FETCH_REQ] Flushed(exc/irq): pc=0x%h, non_branch_flush=%b", pc_if, non_branch_flush));
+                `DEBUG2(`DBG_GRP_FETCH, ("[REQ] Flushed(exc/irq): pc=0x%h, non_branch_flush=%b", pc_if, non_branch_flush));
             end
 
             // Track fetch response arrival
             if (imem_resp_valid) begin
                 if (ib_resp_discard) begin
-                    `DEBUG2(("[FETCH_RESP] Arrived (DISCARD): pc=0x%h, data=0x%h, error=%b, outstanding=%0d",
+                    `DEBUG2(`DBG_GRP_FETCH, ("[RESP] Arrived (DISCARD): pc=0x%h, data=0x%h, error=%b, outstanding=%0d",
                            ib_resp_pc, imem_resp_data, imem_resp_error, ib_outstanding));
                 end else begin
-                    `DEBUG2(("[FETCH_RESP] Arrived (VALID): pc=0x%h, data=0x%h, error=%b, outstanding=%0d",
+                    `DEBUG2(`DBG_GRP_FETCH, ("[RESP] Arrived (VALID): pc=0x%h, data=0x%h, error=%b, outstanding=%0d",
                            ib_resp_pc, imem_resp_data, imem_resp_error, ib_outstanding));
                 end
             end
@@ -701,23 +716,23 @@ module kv32_core #(
             // Track fetch response consumption
             if (imem_resp_valid && imem_resp_ready) begin
                 if (ib_resp_discard) begin
-                    `DEBUG2(("[FETCH_CONSUME] Discarded: pc=0x%h, if_flush=%b, ib_resp_discard=%b",
+                    `DEBUG2(`DBG_GRP_FETCH, ("[CONSUME] Discarded: pc=0x%h, if_flush=%b, ib_resp_discard=%b",
                            ib_resp_pc, if_flush, ib_resp_discard));
                 end else if (!if_id_stall) begin
-                    `DEBUG2(("[FETCH_CONSUME] Consumed: pc=0x%h, instr=0x%h, advancing to ID",
+                    `DEBUG2(`DBG_GRP_FETCH, ("[CONSUME] Consumed: pc=0x%h, instr=0x%h, advancing to ID",
                            ib_resp_pc, imem_resp_data));
                 end else begin
-                    `DEBUG2(("[FETCH_CONSUME] Stalled: pc=0x%h, if_id_stall=%b",
+                    `DEBUG2(`DBG_GRP_FETCH, ("[CONSUME] Stalled: pc=0x%h, if_id_stall=%b",
                            ib_resp_pc, if_id_stall));
                 end
             end else if (imem_resp_valid && !imem_resp_ready) begin
-                `DEBUG2(("[FETCH_CONSUME] Held: pc=0x%h, if_id_stall=%b, resp_ready=%b",
+                `DEBUG2(`DBG_GRP_FETCH, ("[CONSUME] Held: pc=0x%h, if_id_stall=%b, resp_ready=%b",
                        ib_resp_pc, if_id_stall, imem_resp_ready));
             end
 
             // Track IF stage state
             if (if_valid && !if_id_stall) begin
-                `DEBUG2(("[FETCH_IF] Valid instruction ready: pc=0x%h, instr=0x%h, outstanding=%0d",
+                `DEBUG2(`DBG_GRP_FETCH, ("[IF] Valid instruction ready: pc=0x%h, instr=0x%h, outstanding=%0d",
                        ib_resp_pc, instr_if, ib_outstanding));
             end
         end
@@ -738,14 +753,14 @@ module kv32_core #(
             // on cycle N+1 when pc_if settles to branch_target.
             last_issued_fetch_pc <= imem_req_addr;
             last_issued_valid    <= 1'b1;
-            `DEBUG2(("[FETCH_PC] Issued for pc=0x%h (branch_early=%b)",
+            `DEBUG2(`DBG_GRP_FETCH, ("[PC] Issued for pc=0x%h (branch_early=%b)",
                    imem_req_addr, branch_taken && !branch_flushed));
         end else if (if_flush || (ib_outstanding == '0 && !imem_resp_valid)) begin
             // Flush without a simultaneous new issue: allow re-fetch.
             // Also clear when IB is empty and no response is arriving — nothing
             // is in-flight, so last_issued_valid would permanently block fetches.
             last_issued_valid <= 1'b0;
-            `DEBUG2(("[FETCH_PC] Flush/empty: clearing issue-tracking, pc=0x%h flush=%b out=%0d",
+            `DEBUG2(`DBG_GRP_FETCH, ("[PC] Flush/empty: clearing issue-tracking, pc=0x%h flush=%b out=%0d",
                    pc_if, if_flush, ib_outstanding));
         end
         // No change otherwise: stall or sequential with pending response.
@@ -789,18 +804,18 @@ module kv32_core #(
             end else if (wb_exception || exception || irq_pending) begin
                 // Exception or interrupt: jump to trap handler
                 pc_if <= mtvec;
-                `DEBUG2(("[FETCH_PC] EXCEPTION/IRQ: pc=0x%h -> mtvec=0x%h (exc=%b wb_exc=%b irq=%b), outstanding=%0d",
+                `DEBUG2(`DBG_GRP_FETCH, ("[PC] EXCEPTION/IRQ: pc=0x%h -> mtvec=0x%h (exc=%b wb_exc=%b irq=%b), outstanding=%0d",
                        pc_if, mtvec, exception, wb_exception, irq_pending, ib_outstanding));
             end else if (is_mret_ex) begin
                 // Return from trap: jump to saved exception PC
                 pc_if <= mepc;
-                `DEBUG2(("[FETCH_PC] MRET: pc=0x%h -> mepc=0x%h, outstanding=%0d", pc_if, mepc, ib_outstanding));
+                `DEBUG2(`DBG_GRP_FETCH, ("[PC] MRET: pc=0x%h -> mepc=0x%h, outstanding=%0d", pc_if, mepc, ib_outstanding));
             end else if (branch_taken && !branch_flushed) begin
                 // Branch/jump taken: update to target address.
                 // Guard with !branch_flushed to avoid re-redirecting on stall cycles
                 // (branch_flushed prevents duplicate flushes when branch stays in EX).
                 pc_if <= branch_target;
-                `DEBUG2(("[FETCH_PC] BRANCH: pc=0x%h -> target=0x%h, outstanding=%0d",
+                `DEBUG2(`DBG_GRP_FETCH, ("[PC] BRANCH: pc=0x%h -> target=0x%h, outstanding=%0d",
                        pc_if, branch_target, ib_outstanding));
             end else if (fence_i_committing || cbo_committing) begin
                 // FENCE.I / CBO.INVAL commits: reset fetch pointer to instr+4.
@@ -817,7 +832,7 @@ module kv32_core #(
                     // In the dedup_consuming case imem_req_addr==pc_next (pc_if+4),
                     // so we advance by 8 (next after the issued address).
                     pc_if <= imem_req_addr + 32'd4;
-                    `DEBUG2(("[FETCH_PC] Sequential: pc=0x%h -> 0x%h (issued=0x%h), outstanding=%0d",
+                    `DEBUG2(`DBG_GRP_FETCH, ("[PC] Sequential: pc=0x%h -> 0x%h (issued=0x%h), outstanding=%0d",
                            pc_if, imem_req_addr + 32'd4, imem_req_addr, ib_outstanding));
                 end else if (!imem_req_valid && dedup_consumed) begin
                     // Response for pc_if was consumed but no new fetch was issued.
@@ -837,11 +852,11 @@ module kv32_core #(
                     // the next cycle via the normal imem_req_ready && imem_req_valid
                     // path when the bus becomes free.
                     pc_if <= pc_next;
-                    `DEBUG2(("[FETCH_PC] Consumed(no-issue): pc=0x%h -> 0x%h, outstanding=%0d (imem_ready=%b)",
+                    `DEBUG2(`DBG_GRP_FETCH, ("[PC] Consumed(no-issue): pc=0x%h -> 0x%h, outstanding=%0d (imem_ready=%b)",
                            pc_if, pc_next, ib_outstanding, imem_req_ready));
                 end else if (imem_req_valid && !imem_req_ready) begin
                     // PC update blocked by memory system backpressure
-                    `DEBUG2(("[FETCH_PC] BLOCKED: pc=0x%h (imem ready=0), outstanding=%0d",
+                    `DEBUG2(`DBG_GRP_FETCH, ("[PC] BLOCKED: pc=0x%h (imem ready=0), outstanding=%0d",
                            pc_if, ib_outstanding));
                 end
             end
@@ -870,7 +885,7 @@ module kv32_core #(
             id_valid  <= 1'b0;
             instr_access_fault_id <= 1'b0;
             if (if_flush || id_flush) begin
-                `DEBUG2(("[FETCH_PIPE] IF/ID flush - if_flush=%b id_flush=%b", if_flush, id_flush));
+                `DEBUG2(`DBG_GRP_FETCH, ("[PIPE] IF/ID flush - if_flush=%b id_flush=%b", if_flush, id_flush));
             end
         end else if (!if_id_stall && if_valid) begin
             // Only update when pipeline advances AND we have a valid instruction
@@ -878,15 +893,15 @@ module kv32_core #(
             instr_id  <= instr_if;
             id_valid  <= 1'b1;
             instr_access_fault_id <= imem_resp_valid && imem_resp_error;
-            `DEBUG2(("[FETCH_PIPE] IF->ID: pc=0x%h instr=0x%h error=%b outstanding=%0d",
+            `DEBUG2(`DBG_GRP_FETCH, ("[PIPE] IF->ID: pc=0x%h instr=0x%h error=%b outstanding=%0d",
                    ib_resp_pc, instr_if, imem_resp_error, ib_outstanding));
         end else if (!if_id_stall && !if_valid) begin
             // Pipeline advances but no valid instruction, insert bubble
             id_valid <= 1'b0;
-            `DEBUG2(("[FETCH_PIPE] IF->ID: BUBBLE (no valid instruction), outstanding=%0d", ib_outstanding));
+            `DEBUG2(`DBG_GRP_FETCH, ("[PIPE] IF->ID: BUBBLE (no valid instruction), outstanding=%0d", ib_outstanding));
         end else if (if_id_stall && if_valid) begin
             // Valid instruction but pipeline stalled
-            `DEBUG2(("[FETCH_PIPE] IF/ID STALL: pc=0x%h instr=0x%h, outstanding=%0d",
+            `DEBUG2(`DBG_GRP_FETCH, ("[PIPE] IF/ID STALL: pc=0x%h instr=0x%h, outstanding=%0d",
                    ib_resp_pc, instr_if, ib_outstanding));
         end
     end
@@ -927,7 +942,8 @@ module kv32_core #(
         .amo_op(amo_op_id),
         .is_fence(is_fence_id),
         .is_fence_i(is_fence_i_id),
-        .is_cbo(is_cbo_id)
+        .is_cbo(is_cbo_id),
+        .is_wfi(is_wfi_id)
     );
 
     // Register File (32 x 32-bit registers)
@@ -969,23 +985,23 @@ module kv32_core #(
     `ifdef DEBUG
     always_ff @(posedge clk) begin
         if (rst_n && reg_we_wb && retire_instr && (rd_addr_wb != 5'd0)) begin
-            `DEBUG2(("[REG_WRITE] PC=0x%h instr=0x%h rd=x%0d we=%b retire=%b data=0x%h (from %s)",
+            `DEBUG2(`DBG_GRP_REG, ("[REG_WRITE] PC=0x%h instr=0x%h rd=x%0d we=%b retire=%b data=0x%h (from %s)",
                    pc_wb, instr_wb, rd_addr_wb, reg_we_wb, retire_instr,
                    wb_write_data,
                    mem_read_wb ? "mem" : (csr_op_wb != 3'd0 ? "csr" : "alu")));
         end
         if (rst_n && wb_valid && reg_we_wb && !retire_instr && (rd_addr_wb != 5'd0)) begin
-            `DEBUG2(("[REG_WRITE_BLOCKED] PC=0x%h instr=0x%h rd=x%0d: we=%b but retire=%b (reg not written)",
+            `DEBUG2(`DBG_GRP_REG, ("[REG_WRITE_BLOCKED] PC=0x%h instr=0x%h rd=x%0d: we=%b but retire=%b (reg not written)",
                    pc_wb, instr_wb, rd_addr_wb, reg_we_wb, retire_instr));
-            `DEBUG2(("[REG_WRITE_BLOCKED]   retire_base=%b wb_valid=%b wb_except=%b pc_match=%b instr_match=%b",
+            `DEBUG2(`DBG_GRP_REG, ("[REG_WRITE_BLOCKED]   retire_base=%b wb_valid=%b wb_except=%b pc_match=%b instr_match=%b",
                    wb_valid && !wb_exception, wb_valid, wb_exception,
                    pc_wb == last_retired_pc, instr_wb == last_retired_instr));
-            `DEBUG2(("[REG_WRITE_BLOCKED]   Value would be 0x%h (from %s), but available for forwarding",
+            `DEBUG2(`DBG_GRP_REG, ("[REG_WRITE_BLOCKED]   Value would be 0x%h (from %s), but available for forwarding",
                      wb_write_data,
                      mem_read_wb ? "mem" : (csr_op_wb != 3'd0 ? "csr" : "alu")));
         end
         if (rst_n && wb_valid && (rd_addr_wb != 5'd0) && !reg_we_wb) begin
-            `DEBUG2(("[REG_NO_WRITE] PC=0x%h instr=0x%h rd=x%0d we=%b valid=%b mem_read=%b fault=%b",
+            `DEBUG2(`DBG_GRP_REG, ("[REG_NO_WRITE] PC=0x%h instr=0x%h rd=x%0d we=%b valid=%b mem_read=%b fault=%b",
                    pc_wb, instr_wb, rd_addr_wb, reg_we_wb, wb_valid, mem_read_wb, data_access_fault_wb));
         end
     end
@@ -1083,24 +1099,24 @@ module kv32_core #(
         if (rst_n && id_valid && !id_ex_stall && !id_flush) begin
             // MEM->ID forwarding fired for rs1
             if (reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs1_addr == rd_addr_mem)) begin
-                `DEBUG2(("[ID_FWD_MEM->rs1] PC=0x%h rs1=x%0d rd_mem=x%0d wb_write_data_next=0x%h csr_op_mem=%0d mem_read_mem=%b alu_result_mem=0x%h",
+                `DEBUG2(`DBG_GRP_REG, ("[ID_FWD_MEM->rs1] PC=0x%h rs1=x%0d rd_mem=x%0d wb_write_data_next=0x%h csr_op_mem=%0d mem_read_mem=%b alu_result_mem=0x%h",
                        pc_id, rs1_addr, rd_addr_mem, wb_write_data_next, csr_op_mem, mem_read_mem, alu_result_mem));
             end
             // WB->ID forwarding fired for rs1 (only when MEM doesn't match)
             if (reg_we_wb && (rd_addr_wb != 5'd0) && (rs1_addr == rd_addr_wb) &&
                 !(reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs1_addr == rd_addr_mem))) begin
-                `DEBUG2(("[ID_FWD_WB->rs1] PC=0x%h rs1=x%0d rd_wb=x%0d wb_write_data=0x%h",
+                `DEBUG2(`DBG_GRP_REG, ("[ID_FWD_WB->rs1] PC=0x%h rs1=x%0d rd_wb=x%0d wb_write_data=0x%h",
                        pc_id, rs1_addr, rd_addr_wb, wb_write_data));
             end
             // MEM->ID forwarding fired for rs2
             if (reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs2_addr == rd_addr_mem)) begin
-                `DEBUG2(("[ID_FWD_MEM->rs2] PC=0x%h rs2=x%0d rd_mem=x%0d wb_write_data_next=0x%h csr_op_mem=%0d mem_read_mem=%b alu_result_mem=0x%h",
+                `DEBUG2(`DBG_GRP_REG, ("[ID_FWD_MEM->rs2] PC=0x%h rs2=x%0d rd_mem=x%0d wb_write_data_next=0x%h csr_op_mem=%0d mem_read_mem=%b alu_result_mem=0x%h",
                        pc_id, rs2_addr, rd_addr_mem, wb_write_data_next, csr_op_mem, mem_read_mem, alu_result_mem));
             end
             // WB->ID forwarding fired for rs2 (only when MEM doesn't match)
             if (reg_we_wb && (rd_addr_wb != 5'd0) && (rs2_addr == rd_addr_wb) &&
                 !(reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs2_addr == rd_addr_mem))) begin
-                `DEBUG2(("[ID_FWD_WB->rs2] PC=0x%h rs2=x%0d rd_wb=x%0d wb_write_data=0x%h",
+                `DEBUG2(`DBG_GRP_REG, ("[ID_FWD_WB->rs2] PC=0x%h rs2=x%0d rd_wb=x%0d wb_write_data=0x%h",
                        pc_id, rs2_addr, rd_addr_wb, wb_write_data));
             end
         end
@@ -1136,7 +1152,7 @@ module kv32_core #(
     // Debug stall signals
     always @(posedge clk) begin
         if (if_id_stall || id_ex_stall || ex_mem_stall || mem_wb_stall) begin
-            `DEBUG2(("STALL: if_id=%b id_ex=%b ex_mem=%b mem_wb=%b | load_use=%b alu_ready=%b ex_valid=%b",
+            `DEBUG2(`DBG_GRP_PIPE, ("[STALL] if_id=%b id_ex=%b ex_mem=%b mem_wb=%b | load_use=%b alu_ready=%b ex_valid=%b",
                    if_id_stall, id_ex_stall, ex_mem_stall, mem_wb_stall, load_use_hazard, alu_ready, ex_valid));
         end
     end
@@ -1181,6 +1197,7 @@ module kv32_core #(
             is_fence_ex   <= 1'b0;
             is_fence_i_ex <= 1'b0;
             is_cbo_ex     <= 1'b0;
+            is_wfi_ex     <= 1'b0;
             ex_valid      <= 1'b0;
         end else if (ex_flush) begin
             // Branch misprediction or exception: flush pipeline stage
@@ -1200,7 +1217,8 @@ module kv32_core #(
             is_mret_ex   <= 1'b0;
             is_ecall_ex  <= 1'b0;
             is_ebreak_ex <= 1'b0;
-            `DEBUG2(("Cycle %0t: ID/EX flush - ex_flush=%b, blocking PC=0x%h instr=0x%h", $time, ex_flush, pc_id, instr_id));
+            is_wfi_ex    <= 1'b0;
+            `DEBUG2(`DBG_GRP_PIPE, ("Cycle %0t: ID/EX flush - ex_flush=%b, blocking PC=0x%h instr=0x%h", $time, ex_flush, pc_id, instr_id));
         end else if (if_id_stall && !downstream_stall) begin
             // IF/ID stalled (e.g., load-use hazard) but EX can advance: inject bubble
             // ID is not advancing, but EX will move to MEM, so we need a NOP in EX
@@ -1211,6 +1229,7 @@ module kv32_core #(
             jal_ex       <= 1'b0;
             jalr_ex      <= 1'b0;
             system_ex    <= 1'b0;
+            is_wfi_ex    <= 1'b0;
             ex_valid     <= 1'b0;
         end else if (downstream_stall) begin
             // Downstream stall: hold current EX contents
@@ -1249,6 +1268,7 @@ module kv32_core #(
             is_fence_ex   <= 1'b0;
             is_fence_i_ex <= 1'b0;
             is_cbo_ex     <= 1'b0;
+            is_wfi_ex     <= 1'b0;
             ex_valid      <= 1'b0;
         end else if (!id_ex_stall) begin
             pc_ex         <= pc_id;
@@ -1284,9 +1304,10 @@ module kv32_core #(
             is_fence_ex   <= is_fence_id;
             is_fence_i_ex <= is_fence_i_id;
             is_cbo_ex     <= is_cbo_id;
+            is_wfi_ex     <= is_wfi_id;
             ex_valid      <= id_valid;
             if (id_valid) begin
-                `DEBUG2(("Cycle %0t: ID->EX pc=0x%h instr=0x%h rd=%0d mem_w=%b mem_r=%b id_valid=%b ex_valid_next=%b",
+                `DEBUG2(`DBG_GRP_PIPE, ("Cycle %0t: ID->EX pc=0x%h instr=0x%h rd=%0d mem_w=%b mem_r=%b id_valid=%b ex_valid_next=%b",
                        $time, pc_id, instr_id, rd_addr_id, mem_write_id, mem_read_id, id_valid, id_valid));
             end
         end
@@ -1356,14 +1377,14 @@ module kv32_core #(
 
     always_ff @(posedge clk) begin
         if (rst_n && ex_valid && (forward_a != 2'd0) && (rs1_addr_ex != 5'd0)) begin
-            `DEBUG2(("[REG_FORWARD] PC=0x%h rs1=%0d forward_a=%0d rs1_data_ex=0x%h alu_result_mem=0x%h alu_result_wb=0x%h",
+            `DEBUG2(`DBG_GRP_REG, ("[REG_FORWARD] PC=0x%h rs1=%0d forward_a=%0d rs1_data_ex=0x%h alu_result_mem=0x%h alu_result_wb=0x%h",
                  pc_ex, rs1_addr_ex, forward_a, rs1_data_ex, alu_result_mem, alu_result_wb));
-            `DEBUG2(("[REG_FORWARD] MEM: pc=0x%h rd=%0d we=%b | WB: pc=0x%h rd=%0d we=%b retire=%b",
+            `DEBUG2(`DBG_GRP_REG, ("[REG_FORWARD] MEM: pc=0x%h rd=%0d we=%b | WB: pc=0x%h rd=%0d we=%b retire=%b",
                  pc_mem, rd_addr_mem, reg_we_mem, pc_wb, rd_addr_wb, reg_we_wb, retire_instr));
         end
         // Debug: log operand values when no forwarding fires (forward_a=0), filtered for rs1=x15
         if (rst_n && ex_valid && (forward_a == 2'd0) && (rs1_addr_ex == 5'd15)) begin
-            `DEBUG2(("[EX_NOFWD] PC=0x%h rs1=x15 rs1_data_ex=0x%h rs2_addr=%0d rs2_data_ex=0x%h | MEM: pc=0x%h rd=%0d | WB: pc=0x%h rd=%0d",
+            `DEBUG2(`DBG_GRP_EX, ("[EX_NOFWD] PC=0x%h rs1=x15 rs1_data_ex=0x%h rs2_addr=%0d rs2_data_ex=0x%h | MEM: pc=0x%h rd=%0d | WB: pc=0x%h rd=%0d",
                  pc_ex, rs1_data_ex, rs2_addr_ex, rs2_data_ex, pc_mem, rd_addr_mem, pc_wb, rd_addr_wb));
         end
     end
@@ -1398,7 +1419,7 @@ module kv32_core #(
 
     always_ff @(posedge clk) begin
         if (rst_n && ex_valid && (rd_addr_ex != 5'd0)) begin
-            `DEBUG2(("[ALU_OPERANDS] PC=0x%h instr=0x%h rd=%0d alu_op=%0d operand_a=0x%h operand_b=0x%h rs1_fwd=0x%h imm=0x%h ready=%b",
+            `DEBUG2(`DBG_GRP_EX, ("[ALU_OPERANDS] PC=0x%h instr=0x%h rd=%0d alu_op=%0d operand_a=0x%h operand_b=0x%h rs1_fwd=0x%h imm=0x%h ready=%b",
                    pc_ex, instr_ex, rd_addr_ex, alu_op_ex, alu_operand_a, alu_operand_b, rs1_forwarded, imm_ex, alu_ready));
         end
     end
@@ -1441,7 +1462,7 @@ module kv32_core #(
     // Debug: Log branch decisions
     always @(posedge clk) begin
         if (branch_ex && ex_valid) begin
-            `DEBUG2(("Branch @ PC=0x%h: rs1=0x%h rs2=0x%h op=%0d cond=%b taken=%b fwd_a=%0d fwd_b=%0d",
+            `DEBUG2(`DBG_GRP_EX, ("[BRANCH] PC=0x%h: rs1=0x%h rs2=0x%h op=%0d cond=%b taken=%b fwd_a=%0d fwd_b=%0d",
                    pc_ex, rs1_forwarded, rs2_forwarded, branch_op_ex, branch_cond, branch_taken, forward_a, forward_b));
         end
     end
@@ -1459,11 +1480,11 @@ module kv32_core #(
         end else begin
             branch_taken_prev <= branch_taken;
             if (branch_taken && !branch_taken_prev) begin
-                `DEBUG2(("[BRANCH] Branch taken: pc_ex=0x%h instr_ex=0x%h target=0x%h (br=%b cond=%b jal=%b jalr=%b) ex_valid=%b",
+                `DEBUG2(`DBG_GRP_EX, ("[BRANCH] Branch taken: pc_ex=0x%h instr_ex=0x%h target=0x%h (br=%b cond=%b jal=%b jalr=%b) ex_valid=%b",
                        pc_ex, instr_ex, branch_target, branch_ex, branch_cond, jal_ex, jalr_ex, ex_valid));
             end
             if (!branch_taken && branch_taken_prev) begin
-                `DEBUG2(("[BRANCH] Branch cleared: pc_ex=0x%h instr_ex=0x%h ex_valid=%b branch_flushed=%b",
+                `DEBUG2(`DBG_GRP_EX, ("[BRANCH] Branch cleared: pc_ex=0x%h instr_ex=0x%h ex_valid=%b branch_flushed=%b",
                        pc_ex, instr_ex, ex_valid, branch_flushed));
             end
         end
@@ -1482,13 +1503,13 @@ module kv32_core #(
             // branch_flushed=1 is actually committed on the same cycle
             // the branch fires (not clobbered by the else-if reset).
             branch_flushed <= 1'b1;
-            `DEBUG2(("[BRANCH_FLUSH] Setting branch_flushed for pc_ex=0x%h target=0x%h",
+            `DEBUG2(`DBG_GRP_EX, ("[BRANCH_FLUSH] Setting branch_flushed for pc_ex=0x%h target=0x%h",
                    pc_ex, branch_target));
         end else if (!id_ex_stall && !downstream_stall && !load_use_hazard) begin
             // Priority 2: RESET when a new instruction enters EX.
             branch_flushed <= 1'b0;
             if (branch_flushed) begin
-                `DEBUG2(("[BRANCH_FLUSH] Resetting branch_flushed (new instr entering EX)"));
+                `DEBUG2(`DBG_GRP_EX, ("[BRANCH_FLUSH] Resetting branch_flushed (new instr entering EX)"));
             end
         end
     end
@@ -1518,6 +1539,27 @@ module kv32_core #(
     assign id_ex_stall = !alu_ready && ex_valid;
 
     // ============================================================================
+    // WFI Stall Logic
+    // ============================================================================
+    // When WFI reaches EX stage, stall the pipeline until an interrupt becomes
+    // pending.  When irq_pending fires, ex_flush clears WFI from EX and PC jumps
+    // to the interrupt handler.  mepc = pc_ex + 4 so that MRET resumes at WFI+4.
+    assign wfi_active = is_wfi_ex && ex_valid;
+    assign wfi_stall  = wfi_active && !irq_pending && !exception;
+
+`ifdef DEBUG_LEVEL_2
+    always_ff @(posedge clk) begin
+        if (wfi_active) begin
+            `DEBUG2(`DBG_GRP_WFI, ("wfi_stall=%b irq_pending=%b exception=%b",
+                     wfi_stall, irq_pending, exception));
+            `DEBUG2(`DBG_GRP_WFI, ("  ib_outstanding=%0d imem_resp_valid=%b sb_store_pending=%b icache_idle_i=%b",
+                     ib_outstanding, imem_resp_valid, sb_store_pending, icache_idle_i));
+            `DEBUG2(`DBG_GRP_WFI, ("  => core_sleep_o=%b", core_sleep_o));
+        end
+    end
+`endif
+
+    // ============================================================================
     // Pipeline Flush Control
     // ============================================================================
     // Flush signals clear invalid instructions from pipeline stages:
@@ -1535,7 +1577,7 @@ module kv32_core #(
     // MEM flush: Only on interrupts and WB-stage exceptions (see note below).
     //   Synchronous EX exceptions must NOT flush MEM because the MEM instruction
     //   is older in program order and must be allowed to retire.
-    assign if_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush;
+    assign if_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush || wfi_stall;
     assign id_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex;
     assign ex_flush = irq_pending || wb_exception;
     // MEM flush: Only on interrupts (must drain for re-execution after MRET) and
@@ -1556,15 +1598,15 @@ module kv32_core #(
         if (rst_n) begin
             if (if_flush) begin
                 if (branch_taken && !branch_flushed) begin
-                    `DEBUG2(("[FETCH_FLUSH] Branch mispredict: pc_ex=0x%h target=0x%h, outstanding=%0d",
+                    `DEBUG2(`DBG_GRP_FETCH, ("[FLUSH] Branch mispredict: pc_ex=0x%h target=0x%h, outstanding=%0d",
                            pc_ex, branch_target, ib_outstanding));
                 end else if (exception) begin
-                    `DEBUG2(("[FETCH_FLUSH] Exception: pc_ex=0x%h cause=%0d, outstanding=%0d",
+                    `DEBUG2(`DBG_GRP_FETCH, ("[FLUSH] Exception: pc_ex=0x%h cause=%0d, outstanding=%0d",
                            pc_ex, exception_cause, ib_outstanding));
                 end
             end
             if (wb_exception) begin
-                `DEBUG2(("[FETCH_FLUSH] WB Exception: pc_wb=0x%h cause=%0d, outstanding=%0d",
+                `DEBUG2(`DBG_GRP_FETCH, ("[FLUSH] WB Exception: pc_wb=0x%h cause=%0d, outstanding=%0d",
                        pc_wb, wb_exception_cause, ib_outstanding));
             end
             if (irq_pending) begin
@@ -1619,7 +1661,8 @@ module kv32_core #(
         end else if (mem_valid) begin
             interrupt_pc = pc_mem;   // MEM stage is oldest un-committed
         end else if (ex_valid) begin
-            interrupt_pc = pc_ex;    // EX stage (no valid instruction in MEM)
+            // For WFI: mepc = WFI+4 so that MRET returns to the instruction after WFI.
+            interrupt_pc = is_wfi_ex ? (pc_ex + 32'd4) : pc_ex;
         end else if (id_valid) begin
             interrupt_pc = pc_id;    // ID stage
         end else if (ib_outstanding > 0 || imem_resp_valid) begin
@@ -1733,7 +1776,7 @@ module kv32_core #(
                 // alu_result_final already contains PC+4 for JAL/JALR
                 alu_result_mem <= alu_result_final;
                 if ((jal_ex || jalr_ex) && ex_valid) begin
-                    `DEBUG2(("JAL/JALR @ PC=0x%h, return_addr=0x%h, rd=%0d",
+                    `DEBUG2(`DBG_GRP_EX, ("JAL/JALR @ PC=0x%h, return_addr=0x%h, rd=%0d",
                            pc_ex, pc_ex + 32'd4, rd_addr_ex));
                 end
                 rs1_data_mem  <= rs1_forwarded;
@@ -1763,7 +1806,7 @@ module kv32_core #(
                 is_mret_mem   <= is_mret_ex && !exception && !irq_pending && !wb_exception;
                 mem_valid     <= ex_valid && !exception && !irq_pending && !wb_exception;
                 if (ex_valid) begin
-                    `DEBUG2(("Cycle %0t: EX->MEM pc=0x%h instr=0x%h ex_valid=%b mem_valid_next=%b",
+                    `DEBUG2(`DBG_GRP_PIPE, ("Cycle %0t: EX->MEM pc=0x%h instr=0x%h ex_valid=%b mem_valid_next=%b",
                            $time, pc_ex, instr_ex, ex_valid, ex_valid && !exception && !irq_pending && !wb_exception));
                 end
                 // data_access_fault_mem is cleared each time a new instruction enters MEM.
@@ -1885,11 +1928,11 @@ module kv32_core #(
     // Debug: Track store/load requests and store buffer state
     always_ff @(posedge clk) begin
         if (mem_write_mem && mem_valid) begin
-            `DEBUG2(("[SB_DEBUG] STORE in MEM: pc=0x%h valid=%b ready=%b accepted=%b pending=%b",
+            `DEBUG2(`DBG_GRP_SB, ("[SB] STORE in MEM: pc=0x%h valid=%b ready=%b accepted=%b pending=%b",
                    pc_mem, store_req_valid, sb_cpu_ready, store_req_valid && sb_cpu_ready, sb_store_pending));
         end
         if (mem_read_mem && mem_valid) begin
-            `DEBUG2(("[SB_DEBUG] LOAD in MEM: pc=0x%h addr=0x%h addr_hit=%b load_req_valid=%b load_req_issued=%b",
+            `DEBUG2(`DBG_GRP_SB, ("[SB] LOAD in MEM: pc=0x%h addr=0x%h addr_hit=%b load_req_valid=%b load_req_issued=%b",
                    pc_mem, alu_result_mem, sb_addr_hit, load_req_valid, load_req_issued));
         end
     end
@@ -2070,19 +2113,19 @@ module kv32_core #(
             lr_valid <= 1'b0;
         end else if (is_amo_mem && mem_valid && (amo_op_mem == AMO_LR)) begin
             // LR: Set reservation on the address
-            `DEBUG2(("[LR/SC] Setting reservation: addr=0x%h PC=0x%h", alu_result_mem, pc_mem));
+            `DEBUG2(`DBG_GRP_MEM, ("[LR/SC] Setting reservation: addr=0x%h PC=0x%h", alu_result_mem, pc_mem));
             lr_valid <= 1'b1;
             lr_addr  <= alu_result_mem;
         end else if (is_amo_mem && mem_valid && (amo_op_mem == AMO_SC)) begin
             // SC: Clear reservation after attempt
-            `DEBUG2(("[LR/SC] SC clearing reservation: lr_valid=%b lr_addr=0x%h sc_addr=0x%h PC=0x%h", lr_valid, lr_addr, alu_result_mem, pc_mem));
+            `DEBUG2(`DBG_GRP_MEM, ("[LR/SC] SC clearing reservation: lr_valid=%b lr_addr=0x%h sc_addr=0x%h PC=0x%h", lr_valid, lr_addr, alu_result_mem, pc_mem));
             lr_valid <= 1'b0;
         end else if (mem_write_mem && mem_valid && !is_amo_mem && lr_valid) begin
             // Normal store to reserved address (or overlapping word) clears reservation
             // RISC-V spec: reservation granularity is implementation-defined, typically a cache line
             // We use word-level granularity: clear if store overlaps the reserved word
             if (alu_result_mem[31:2] == lr_addr[31:2]) begin  // Same word
-                `DEBUG2(("[LR/SC] Store to reserved address clearing reservation: store_addr=0x%h lr_addr=0x%h PC=0x%h", alu_result_mem, lr_addr, pc_mem));
+                `DEBUG2(`DBG_GRP_MEM, ("[LR/SC] Store to reserved address clearing reservation: store_addr=0x%h lr_addr=0x%h PC=0x%h", alu_result_mem, lr_addr, pc_mem));
                 lr_valid <= 1'b0;
             end
         end
@@ -2109,25 +2152,25 @@ module kv32_core #(
                     if (is_amo_mem && mem_valid && !amo_started) begin
                         // AMO instruction entering MEM stage
                         amo_started <= 1'b1;  // Mark that we've started this AMO
-                        `DEBUG2(("[AMO] Starting AMO op=%0d PC=0x%h addr=0x%h", amo_op_mem, pc_mem, alu_result_mem));
+                        `DEBUG2(`DBG_GRP_MEM, ("[AMO] Starting AMO op=%0d PC=0x%h addr=0x%h", amo_op_mem, pc_mem, alu_result_mem));
                         if (amo_op_mem == AMO_LR) begin
                             // LR: Just read, no write phase
                             amo_state <= AMO_READ;
                             amo_addr  <= alu_result_mem;
                         end else if (amo_op_mem == AMO_SC) begin
                             // SC: Check reservation before proceeding
-                            `DEBUG2(("[LR/SC] SC checking: lr_valid=%b lr_addr=0x%h sc_addr=0x%h match=%b PC=0x%h",
+                            `DEBUG2(`DBG_GRP_MEM, ("[LR/SC] SC checking: lr_valid=%b lr_addr=0x%h sc_addr=0x%h match=%b PC=0x%h",
                                    lr_valid, lr_addr, alu_result_mem, (lr_valid && (lr_addr == alu_result_mem)), pc_mem));
                             if (lr_valid && (lr_addr == alu_result_mem)) begin
                                 // Reservation valid: proceed with write
-                                `DEBUG2(("[LR/SC] SC proceeding with write"));
+                                `DEBUG2(`DBG_GRP_MEM, ("[LR/SC] SC proceeding with write"));
                                 sc_success <= 1'b1;  // Save success status
                                 amo_state <= AMO_WRITE;
                                 amo_addr  <= alu_result_mem;
                                 amo_read_data <= 32'd0;  // SC doesn't need read data
                             end else begin
                                 // Reservation invalid: fail immediately (no memory access)
-                                `DEBUG2(("[LR/SC] SC FAILED - reservation invalid"));
+                                `DEBUG2(`DBG_GRP_MEM, ("[LR/SC] SC FAILED - reservation invalid"));
                                 sc_success <= 1'b0;  // Save failure status
                                 amo_state <= AMO_IDLE;
                                 amo_read_data <= 32'd1;  // Return 1 = failure
@@ -2147,8 +2190,8 @@ module kv32_core #(
                     // store buffer draining before our actual read completes.
                     if (dmem_resp_valid && !dmem_resp_is_write && amo_req_issued) begin
                         amo_read_data <= dmem_resp_data;
-                        `DEBUG2(("[AMO] READ complete addr=0x%h data=0x%h", amo_addr, dmem_resp_data));
-                        `DEBUG2(("[AMO] Result will be: amo_result_comb=0x%h (from amo_read_data_next)", dmem_resp_data));
+                        `DEBUG2(`DBG_GRP_MEM, ("[AMO] READ complete addr=0x%h data=0x%h", amo_addr, dmem_resp_data));
+                        `DEBUG2(`DBG_GRP_MEM, ("[AMO] Result will be: amo_result_comb=0x%h (from amo_read_data_next)", dmem_resp_data));
                         if (amo_op_mem == AMO_LR) begin
                             // LR: Complete (no write phase)
                             amo_state <= AMO_IDLE;
@@ -2162,8 +2205,8 @@ module kv32_core #(
                 AMO_WRITE: begin
                     // Waiting for write response
                     if (dmem_resp_valid && dmem_resp_is_write) begin
-                        `DEBUG2(("[AMO] WRITE complete addr=0x%h, amo_read_data still=0x%h", amo_addr, amo_read_data));
-                        `DEBUG2(("[AMO] Completing: amo_result=0x%h will be written to rd", amo_read_data));
+                        `DEBUG2(`DBG_GRP_MEM, ("[AMO] WRITE complete addr=0x%h, amo_read_data still=0x%h", amo_addr, amo_read_data));
+                        `DEBUG2(`DBG_GRP_MEM, ("[AMO] Completing: amo_result=0x%h will be written to rd", amo_read_data));
                         amo_state <= AMO_IDLE;
                     end
                 end
@@ -2349,7 +2392,7 @@ module kv32_core #(
     assign amo_in_progress = (amo_state != AMO_IDLE) ||  // Currently processing
                               (is_amo_mem && mem_valid && !amo_started);  // Just entering, not started yet
 
-    assign ex_mem_stall = mem_wb_stall || (load_req_valid && !dmem_req_ready) || (amo_mem_req && !dmem_req_ready);
+    assign ex_mem_stall = mem_wb_stall || wfi_stall || (load_req_valid && !dmem_req_ready) || (amo_mem_req && !dmem_req_ready);
     // Combine all MEM->WB stall conditions (load_stall and store_stall defined above for forwarding)
     // fence_stall: stall until store buffer drains (fence ordering guarantee)
     assign fence_stall  = is_fence_mem && mem_valid && sb_store_pending;
@@ -2408,7 +2451,7 @@ module kv32_core #(
     // Debug mem/wb stall reasons
     always @(posedge clk) begin
         if (mem_wb_stall) begin
-            `DEBUG2(("MEM_WB_STALL: mem_read=%b mem_write=%b | load_issued=%b dmem_resp=%b sb_ready=%b mem_valid=%b",
+            `DEBUG2(`DBG_GRP_MEM, ("[WB_STALL] mem_read=%b mem_write=%b | load_issued=%b dmem_resp=%b sb_ready=%b mem_valid=%b",
                    mem_read_mem, mem_write_mem, load_req_issued, dmem_resp_valid, sb_cpu_ready, mem_valid));
         end
     end
@@ -2602,11 +2645,11 @@ module kv32_core #(
 
     always_ff @(posedge clk) begin
         if (mem_valid && is_amo_mem) begin
-            `DEBUG2(("[AMO_WB] PC=0x%h is_amo_mem=%b amo_result=0x%h mem_data_wb_next=0x%h amo_state=%0d",
+            `DEBUG2(`DBG_GRP_MEM, ("[AMO_WB] PC=0x%h is_amo_mem=%b amo_result=0x%h mem_data_wb_next=0x%h amo_state=%0d",
                    pc_mem, is_amo_mem, amo_result, mem_data_wb_next, amo_state));
             // Show when AMO completes and data will be latched
             if (amo_state == AMO_IDLE || (amo_state == AMO_WRITE && dmem_resp_valid)) begin
-                `DEBUG2(("[AMO_FINAL] PC=0x%h amo_complete: amo_read_data=0x%h amo_result=0x%h mem_data_wb_next=0x%h",
+                `DEBUG2(`DBG_GRP_MEM, ("[AMO_FINAL] PC=0x%h amo_complete: amo_read_data=0x%h amo_result=0x%h mem_data_wb_next=0x%h",
                        pc_mem, amo_read_data, amo_result, mem_data_wb_next));
             end
         end
@@ -2663,11 +2706,11 @@ module kv32_core #(
             reg_we_wb     <= reg_we_mem && !(mem_read_mem && (data_access_fault_mem || load_fault_direct))
                                         && !irq_pending && !wb_exception;
             if (reg_we_mem && (mem_read_mem && data_access_fault_mem)) begin
-                `DEBUG2(("[WB_REG_WE_CLEAR] PC=0x%h instr=0x%h rd=%0d: Clearing reg_we due to faulting load",
+                `DEBUG2(`DBG_GRP_MEM, ("[WB_REG_WE_CLEAR] PC=0x%h instr=0x%h rd=%0d: Clearing reg_we due to faulting load",
                        pc_mem, instr_mem, rd_addr_mem));
             end
             if (reg_we_mem && !mem_read_mem && !mem_write_mem && data_access_fault_mem) begin
-                `DEBUG2(("[WB_DEBUG] Non-memory instr with fault flag: PC=0x%h instr=0x%h rd=%0d rd_data=0x%h fault=%b",
+                `DEBUG2(`DBG_GRP_MEM, ("[WB_DEBUG] Non-memory instr with fault flag: PC=0x%h instr=0x%h rd=%0d rd_data=0x%h fault=%b",
                        pc_mem, instr_mem, rd_addr_mem, alu_result_mem, data_access_fault_mem));
             end
             mem_read_wb   <= mem_read_mem;
@@ -2687,15 +2730,15 @@ module kv32_core #(
             //   store_fault_via_fence : B-channel SLVERR latched and consumed by FENCE
             data_access_fault_wb <= data_access_fault_mem || load_fault_direct || store_fault_via_fence;
             if (mem_valid) begin
-                `DEBUG2(("Cycle %0t: MEM->WB pc=0x%h instr=0x%h mem_valid=%b wb_valid_next=%b",
+                `DEBUG2(`DBG_GRP_PIPE, ("Cycle %0t: MEM->WB pc=0x%h instr=0x%h mem_valid=%b wb_valid_next=%b",
                        $time, pc_mem, instr_mem, mem_valid, mem_valid));
                 if (mem_read_mem) begin
-                    `DEBUG2(("[LOAD_DATA] pc=0x%h addr=0x%h mem_data_wb_next=0x%h dmem_resp_valid=%b dmem_resp_data=0x%h dmem_resp_valid_buf=%b dmem_resp_data_buf=0x%h",
+                    `DEBUG2(`DBG_GRP_MEM, ("[LOAD_DATA] pc=0x%h addr=0x%h mem_data_wb_next=0x%h dmem_resp_valid=%b dmem_resp_data=0x%h dmem_resp_valid_buf=%b dmem_resp_data_buf=0x%h",
                            pc_mem, alu_result_mem, mem_data_wb_next, dmem_resp_valid, dmem_resp_data, dmem_resp_valid_buf, dmem_resp_data_buf));
                 end
             end
         end else if (mem_valid) begin
-            `DEBUG2(("Cycle %0t: MEM->WB STALLED pc=0x%h mem_wb_stall=%b mem_read=%b mem_write=%b dmem_resp_valid_buf=%b dmem_req_ready=%b",
+            `DEBUG2(`DBG_GRP_PIPE, ("Cycle %0t: MEM->WB STALLED pc=0x%h mem_wb_stall=%b mem_read=%b mem_write=%b dmem_resp_valid_buf=%b dmem_req_ready=%b",
                    $time, pc_mem, mem_wb_stall, mem_read_mem, mem_write_mem, dmem_resp_valid_buf, dmem_req_ready));
             // When a WB exception fires while MEM is stalled, WB would keep
             // data_access_fault_wb=1 across cycles (the stall prevents the normal
@@ -2708,7 +2751,7 @@ module kv32_core #(
             // Clear reg_we after instruction retires to prevent stale forwarding
             if (retire_instr && reg_we_wb) begin
                 reg_we_wb <= 1'b0;
-                `DEBUG2(("[REG_WE_CLEAR] PC=0x%h instr=0x%h rd=x%0d: Cleared reg_we after retirement (pipeline stalled)",
+                `DEBUG2(`DBG_GRP_REG, ("[REG_WE_CLEAR] PC=0x%h instr=0x%h rd=x%0d: Cleared reg_we after retirement (pipeline stalled)",
                        pc_wb, instr_wb, rd_addr_wb));
             end
         end
@@ -2742,17 +2785,17 @@ module kv32_core #(
             if (retire_instr) begin
                 `DEBUG1(("RETIRE: PC=0x%h instr=0x%h cycle=%0d, gap=%0d", pc_wb, instr_wb, cycle_counter, cycle_counter - last_cycle_counter));
                 if (reg_we_wb && (rd_addr_wb != 5'd0)) begin
-                    `DEBUG2(("RETIRE:   Writing rd=x%0d with 0x%h", rd_addr_wb,
+                    `DEBUG2(`DBG_GRP_PIPE, ("[RETIRE] Writing rd=x%0d with 0x%h", rd_addr_wb,
                            wb_write_data));
                 end
                 last_cycle_counter <= cycle_counter;
             end else if (wb_valid && wb_exception) begin
-                `DEBUG2(("WB_EXCEPTION: PC=0x%h cause=%0d cycle=%0d", pc_wb, wb_exception_cause, cycle_counter));
+                `DEBUG2(`DBG_GRP_IRQ, ("[WB_EXCEPTION] PC=0x%h cause=%0d cycle=%0d", pc_wb, wb_exception_cause, cycle_counter));
             end else if (wb_valid && !retire_instr && reg_we_wb && (rd_addr_wb != 5'd0)) begin
                 // WB stage valid but not retiring (duplicate)
-                `DEBUG2(("[RETIRE_SKIP] PC=0x%h instr=0x%h rd=x%0d: Not retiring (duplicate detection)",
+                `DEBUG2(`DBG_GRP_PIPE, ("[RETIRE_SKIP] PC=0x%h instr=0x%h rd=x%0d: Not retiring (duplicate detection)",
                        pc_wb, instr_wb, rd_addr_wb));
-                `DEBUG2(("[RETIRE_SKIP]   retire_base=%b last_pc=0x%h last_instr=0x%h",
+                `DEBUG2(`DBG_GRP_PIPE, ("[RETIRE_SKIP]   retire_base=%b last_pc=0x%h last_instr=0x%h",
                        retire_instr_base, last_retired_pc, last_retired_instr));
             end
         end
@@ -3371,6 +3414,14 @@ module kv32_core #(
     assign _unused_ok_while1 = &{1'b0, is_while1_loop};
 
 `endif // ASSERTION
+
+    // core_sleep_o: asserted when WFI is stalling in EX and all outstanding
+    // memory requests have drained (IB empty, store buffer empty).
+    // Used by kv32_pm to gate the core clock for low-power WFI idle.
+    assign core_sleep_o = wfi_stall &&
+                          (ib_outstanding == '0) && !imem_resp_valid &&
+                          !sb_store_pending &&
+                          icache_idle_i;
 
     // Signals assigned by CSR/pipeline but not subsequently consumed in this module
     logic _unused_ok_misc;

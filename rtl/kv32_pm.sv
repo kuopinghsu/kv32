@@ -35,6 +35,7 @@
 
 module kv32_pm (
     input  logic clk_i,           // System clock (ungated)
+    input  logic rst_n,           // Active-low asynchronous reset
 
     // Sleep request from kv32_core (asserted during WFI idle)
     input  logic sleep_req_i,     // core_sleep_o from kv32_core
@@ -49,11 +50,38 @@ module kv32_pm (
 );
 
     // =========================================================================
-    // Clock Enable Combinational Logic
+    // Wake-interrupt Latch (ungated clock domain)
+    // =========================================================================
+    // Problem: interrupt sources may produce a single-cycle pulse on the
+    // ungated system clock.  If the pulse arrives while the gated clock is
+    // held low, the core never sees a rising edge, MIP is never updated, and
+    // the core stays asleep forever.
+    //
+    // Solution: a flip-flop clocked on the UNGATED system clock captures any
+    // interrupt pulse and holds clk_en=1 until the core has fully woken up
+    // (sleep_req_i deasserts).  The latch clears itself one cycle after the
+    // core de-asserts sleep_req_i, which guarantees the gated clock delivers
+    // at least one edge to the core's interrupt-sampling logic.
+    logic irq_wake_pending;
+
+    always_ff @(posedge clk_i or negedge rst_n) begin
+        if (!rst_n) begin
+            irq_wake_pending <= 1'b0;
+        end else begin
+            if (!sleep_req_i)
+                irq_wake_pending <= 1'b0;          // Core is awake — clear the latch
+            else if (timer_irq_i | external_irq_i | software_irq_i)
+                irq_wake_pending <= 1'b1;          // Capture edge/level while sleeping
+        end
+    end
+
+    // =========================================================================
+    // Clock Enable Logic
     // =========================================================================
     // Clock is enabled when:
     //   1. Core is not requesting sleep (normal run / WFI not yet entered)
-    //   2. Any interrupt source is pending (wake-up from WFI)
+    //   2. Any interrupt source is currently asserted (level wake)
+    //   3. A previous interrupt pulse was captured (irq_wake_pending)
     //
     // The enable signal is sampled on the falling edge of clk_i by the ICG
     // latch so that no glitches propagate to the gated clock output.
@@ -62,7 +90,8 @@ module kv32_pm (
     assign clk_en = !sleep_req_i
                   | timer_irq_i
                   | external_irq_i
-                  | software_irq_i;
+                  | software_irq_i
+                  | irq_wake_pending;
 
 `ifdef SYNTHESIS
     // =========================================================================

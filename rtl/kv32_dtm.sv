@@ -454,7 +454,7 @@ module kv32_dtm #(
             case (ir_i)
                 IR_IDCODE: begin
                     idcode_shift <= IDCODE;
-                    `DEBUG2(("[%0t] DTM: CAPTURE_DR IDCODE, loading %h", $time, IDCODE));
+                    `DEBUG2(`DBG_GRP_JTAG, ("[%0t] DTM: CAPTURE_DR IDCODE, loading %h", $time, IDCODE));
                 end
                 IR_DTMCS: begin
                     dtmcs_shift <= DTMCS_VALUE;
@@ -528,7 +528,7 @@ module kv32_dtm #(
             case (ir_i)
                 IR_IDCODE: begin
                     idcode_shift  <= {tdi_i, idcode_shift[31:1]};
-                    `DEBUG2(("[%0t] DTM: SHIFT_DR IDCODE, tdo=%b, idcode_shift=%h -> %h",
+                    `DEBUG2(`DBG_GRP_JTAG, ("[%0t] DTM: SHIFT_DR IDCODE, tdo=%b, idcode_shift=%h -> %h",
                            $time, idcode_shift[0], idcode_shift, {tdi_i, idcode_shift[31:1]}));
                 end
                 IR_DTMCS: begin

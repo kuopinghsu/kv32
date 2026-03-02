@@ -521,6 +521,13 @@ module kv32_soc #(
     logic        dbg_ndmreset;        // Non-debug module reset (should reset CPU + peripherals)
     logic        dbg_hartreset;       // Hart reset (should reset CPU only)
 
+    // ========================================================================
+    // WFI / Power Management Signals
+    // ========================================================================
+    logic        core_sleep;          // kv32_core is idle in WFI (all requests drained)
+    logic        core_clk;            // Gated clock supplied to kv32_core by kv32_pm
+    logic        icache_idle;         // ICache has no AXI transaction in-flight
+
     // Tie off debug memory interface (not yet implemented - would need AXI master)
     assign dbg_mem_ready = 1'b0;
     assign dbg_mem_rdata = 32'h0;
@@ -537,6 +544,23 @@ module kv32_soc #(
     // uart_irq / spi_irq / i2c_irq are connected to PLIC sources 1/2/3
 
     // ========================================================================
+    // Power Manager Instance (kv32_pm)
+    // ========================================================================
+    // Gates the clock to kv32_core when the core executes WFI and all
+    // outstanding instruction-fetch and store-buffer traffic has drained.
+    // The CLINT and PLIC continue running on the ungated system clock so
+    // that interrupts can wake the core.
+    kv32_pm u_kv32_pm (
+        .clk_i         (clk),
+        .rst_n         (rst_n),
+        .sleep_req_i   (core_sleep),
+        .timer_irq_i   (timer_irq),
+        .external_irq_i(external_irq),
+        .software_irq_i(software_irq),
+        .gated_clk_o   (core_clk)
+    );
+
+    // ========================================================================
     // RV32IMA Processor Core Instance
     // ========================================================================
     // 5-stage pipelined RISC-V core implementing RV32IMA ISA
@@ -548,7 +572,7 @@ module kv32_soc #(
         .FAST_MUL(FAST_MUL),
         .FAST_DIV(FAST_DIV)
     ) core (
-        .clk(clk),
+        .clk(core_clk),
         .rst_n(rst_n),
 
         .imem_req_valid(imem_req_valid),
@@ -585,6 +609,10 @@ module kv32_soc #(
         .icache_cmo_op(core_cmo_op),
         .icache_cmo_addr(core_cmo_addr),
         .icache_cmo_ready(core_cmo_ready),
+        .icache_idle_i   (icache_idle),
+
+        // WFI / Power Management
+        .core_sleep_o(core_sleep),
 
         // Debug interface
         .dbg_halt_req_i(dbg_halt_req),
@@ -620,15 +648,17 @@ module kv32_soc #(
 
             // CMO interface: connect core directly to icache.
             logic        icache_cmo_ready_w;
+            logic        icache_idle_w;
 
             assign core_cmo_ready = icache_cmo_ready_w;
+            assign icache_idle    = icache_idle_w;
 
             kv32_icache #(
                 .CACHE_SIZE     (ICACHE_SIZE),
                 .CACHE_LINE_SIZE(ICACHE_LINE_SIZE),
                 .CACHE_WAYS     (ICACHE_WAYS)
             ) icache (
-                .clk    (clk),
+                .clk    (core_clk),
                 .rst_n  (rst_n),
 
                 // CPU side
@@ -662,7 +692,10 @@ module kv32_soc #(
                 .cmo_valid  (core_cmo_valid),
                 .cmo_addr   (core_cmo_addr),
                 .cmo_op     (core_cmo_op),
-                .cmo_ready  (icache_cmo_ready_w)
+                .cmo_ready  (icache_cmo_ready_w),
+
+                // Power management
+                .icache_idle(icache_idle_w)
 `ifndef SYNTHESIS
                 ,.perf_req_cnt    (icache_perf_req_cnt)
                 ,.perf_hit_cnt    (icache_perf_hit_cnt)
@@ -718,6 +751,10 @@ module kv32_soc #(
 
             // No icache: CMO requests have nowhere to go; ack immediately
             assign core_cmo_ready  = 1'b1;
+            // No icache: simple bridge has no AXI burst in-flight during WFI
+            // (imem_req_valid is inhibited; !imem_resp_valid in core_sleep_o
+            // already covers any last in-flight single-beat response).
+            assign icache_idle     = 1'b1;
 `ifndef SYNTHESIS
             assign icache_perf_req_cnt    = '0;
             assign icache_perf_hit_cnt    = '0;

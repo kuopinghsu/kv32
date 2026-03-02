@@ -99,6 +99,28 @@ static inline int kv_irq_source_is_enabled(uint32_t mask)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ * Wait For Interrupt (WFI)
+ * ══════════════════════════════════════════════════════════════════ */
+
+/* Suspend execution until an interrupt becomes pending.
+ *
+ * The processor stalls in the WFI instruction until any enabled interrupt
+ * fires.  Upon wake-up the interrupt handler is entered and execution
+ * resumes at WFI+4 after the handler returns (MRET).
+ *
+ * Typical usage: call kv_irq_enable() first, then spin calling kv_wfi()
+ * inside an idle loop so that the core clocks are gated between events.
+ *
+ *   kv_irq_enable();
+ *   while (!done)
+ *       kv_wfi();
+ */
+static inline void kv_wfi(void)
+{
+    asm volatile("wfi");
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  * Handler registration
  * ══════════════════════════════════════════════════════════════════ */
 

@@ -227,14 +227,14 @@ module axi_gpio #(
         end else begin
             irq_prev <= irq;
             if (irq && !irq_prev) begin
-                `DEBUG2(("[GPIO] IRQ asserted"));
+                `DEBUG2(`DBG_GRP_GPIO, ("IRQ asserted"));
                 for (int b = 0; b < NUM_REG_BANKS; b++) begin
                     if (|(ie_r[b] & int_pending[b])) begin
-                        `DEBUG2(("[GPIO]   Bank%0d: ie=0x%h pending=0x%h is=0x%h", b, ie_r[b], int_pending[b], is_r[b]));
+                        `DEBUG2(`DBG_GRP_GPIO, ("Bank%0d: ie=0x%h pending=0x%h is=0x%h", b, ie_r[b], int_pending[b], is_r[b]));
                     end
                 end
             end else if (!irq && irq_prev) begin
-                `DEBUG2(("[GPIO] IRQ deasserted"));
+                `DEBUG2(`DBG_GRP_GPIO, ("IRQ deasserted"));
             end
         end
     end
@@ -261,9 +261,7 @@ module axi_gpio #(
             if (aw_hs && w_hs && !axi_bvalid) begin
                 axi_bvalid <= 1'b1;
                 axi_bresp  <= wr_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
-                `ifdef DEBUG
-                `DEBUG2(("[GPIO] Write complete: addr=0x%h", axi_awaddr));
-                `endif
+                `DEBUG2(`DBG_GRP_GPIO, ("Write complete: addr=0x%h", axi_awaddr));
             end else if (axi_bready) begin
                 axi_bvalid <= 1'b0;
             end
@@ -285,9 +283,7 @@ module axi_gpio #(
                 axi_rvalid <= 1'b1;
                 axi_rdata  <= rdata_next;
                 axi_rresp  <= rd_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
-                `ifdef DEBUG
-                `DEBUG2(("[GPIO] Read: addr=0x%h data=0x%h", axi_araddr, rdata_next));
-                `endif
+                `DEBUG2(`DBG_GRP_GPIO, ("Read: addr=0x%h data=0x%h", axi_araddr, rdata_next));
             end else if (axi_rready) begin
                 axi_rvalid <= 1'b0;
             end
@@ -353,23 +349,19 @@ module axi_gpio #(
                     loopback_r[bank]  <= '0;       // Default: loopback disabled
                 end else begin
                     // Edge detection updates status register
-                    `ifdef DEBUG
                     if (|edge_detected[bank]) begin
-                        `DEBUG2(("[GPIO] Bank%0d Edge detected: edges=0x%h is_old=0x%h is_new=0x%h",
+                        `DEBUG2(`DBG_GRP_GPIO, ("Bank%0d Edge detected: edges=0x%h is_old=0x%h is_new=0x%h",
                                 bank, edge_detected[bank], is_r[bank], is_r[bank] | edge_detected[bank]));
                     end
-                    `endif
                     is_r[bank] <= is_r[bank] | edge_detected[bank];
 
                     // Register writes (only for matching bank)
                     if (aw_hs && w_hs && (wr_bank_sel == bank)) begin
-                        `ifdef DEBUG
                         if (wr_reg_sel < 10) begin
-                            `DEBUG2(("[GPIO] Bank%0d Write reg%0d (%s): wdata=0x%h", bank, wr_reg_sel, REG_NAMES[wr_reg_sel], axi_wdata));
+                            `DEBUG2(`DBG_GRP_GPIO, ("Bank%0d Write reg%0d (%s): wdata=0x%h", bank, wr_reg_sel, REG_NAMES[wr_reg_sel], axi_wdata));
                         end else begin
-                            `DEBUG2(("[GPIO] Bank%0d Write reg%0d: wdata=0x%h", bank, wr_reg_sel, axi_wdata));
+                            `DEBUG2(`DBG_GRP_GPIO, ("Bank%0d Write reg%0d: wdata=0x%h", bank, wr_reg_sel, axi_wdata));
                         end
-                        `endif
                         case (wr_reg_sel)
                             4'h0: data_out_r[bank] <= axi_wdata;                          // DATA_OUT
                             4'h1: data_out_r[bank] <= data_out_r[bank] | axi_wdata;      // SET (W1S)

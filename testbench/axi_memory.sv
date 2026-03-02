@@ -206,7 +206,7 @@ module axi_memory #(
                 stat_aw_requests <= stat_aw_requests + 1;
                 stat_w_expected  <= stat_w_expected + (32'(axi_awlen) + 1);
                 if (ENABLE_MEM_TRACE) begin
-                    $display("[AXI_MEM][WRITE] Write addr accepted addr=0x%h awlen=%0d",
+                    $display("[AXI_MEM][WR] Write addr accepted addr=0x%h awlen=%0d",
                              axi_awaddr, axi_awlen);
                 end
             end else if (write_addr_valid && axi_wvalid && write_can_accept) begin
@@ -221,7 +221,7 @@ module axi_memory #(
                         write_addr_reg <= write_addr_reg + 4;
                 end
                 if (ENABLE_MEM_TRACE) begin
-                    $display("[AXI_MEM][WRITE] Write data accepted addr=0x%h data=0x%h strb=0x%h wlast=%b",
+                    $display("[AXI_MEM][WR] Write data accepted addr=0x%h data=0x%h strb=0x%h wlast=%b",
                              write_addr_reg, axi_wdata, axi_wstrb, axi_wlast);
                 end
             end
@@ -305,7 +305,7 @@ module axi_memory #(
                 static logic prev_write_addr_valid = 1'b0;
                 static logic prev_write_pipe0_valid = 1'b0;
                 if (write_addr_valid != prev_write_addr_valid || write_pipe[0].valid != prev_write_pipe0_valid) begin
-                    $display("[AXI_MEM][WRITE] write_addr_valid=%b write_pipe[0].valid=%b axi_bvalid=%b axi_bready=%b",
+                    $display("[AXI_MEM][WR] write_addr_valid=%b write_pipe[0].valid=%b axi_bvalid=%b axi_bready=%b",
                              write_addr_valid, write_pipe[0].valid, axi_bvalid, axi_bready);
                     prev_write_addr_valid = write_addr_valid;
                     prev_write_pipe0_valid = write_pipe[0].valid;
@@ -396,7 +396,7 @@ module axi_memory #(
                 if (axi_wstrb[3]) mem[(base_addr + 3) & (MEM_SIZE-1)] <= axi_wdata[31:24];
 
                 if (ENABLE_MEM_TRACE) begin
-                    $display("[AXI_MEM][WRITE] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
+                    $display("[AXI_MEM][WR] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
                              write_addr_reg, axi_wdata, axi_wstrb,
                              axi_wstrb[0] ? axi_wdata[7:0] : 8'hXX,
                              axi_wstrb[1] ? axi_wdata[15:8] : 8'hXX,
@@ -419,7 +419,7 @@ module axi_memory #(
                 if (axi_wstrb[3]) mem[(base_addr + 3) & (MEM_SIZE-1)] <= axi_wdata[31:24];
 
                 if (ENABLE_MEM_TRACE) begin
-                    $display("[AXI_MEM][WRITE] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
+                    $display("[AXI_MEM][WR] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
                              write_addr_reg, axi_wdata, axi_wstrb,
                              axi_wstrb[0] ? axi_wdata[7:0] : 8'hXX,
                              axi_wstrb[1] ? axi_wdata[15:8] : 8'hXX,
@@ -674,7 +674,7 @@ module axi_memory #(
                         read_pipe[target_stage].resp <= 2'b10;
                         read_pipe[target_stage].data <= 32'hDEADBEEF;
                         if (ENABLE_MEM_TRACE) begin
-                            $display("[AXI_MEM][READ][ERROR] addr=0x%08x out of range [0x%08x - 0x%08x]",
+                            $display("[AXI_MEM][RD][ERROR] addr=0x%08x out of range [0x%08x - 0x%08x]",
                                      raw_addr, BASE_ADDR, BASE_ADDR + MEM_SIZE);
                         end
                     end else begin
@@ -685,7 +685,7 @@ module axi_memory #(
                         read_pipe[target_stage].resp <= 2'b00;
                         read_pipe[target_stage].data <= read_value;
                         if (ENABLE_MEM_TRACE) begin
-                            $display("[AXI_MEM][READ] addr=0x%08x data=0x%08x [bytes: %02x %02x %02x %02x]",
+                            $display("[AXI_MEM][RD] addr=0x%08x data=0x%08x [bytes: %02x %02x %02x %02x]",
                                      raw_addr, read_value,
                                      mem[word_addr],
                                      mem[(word_addr + 1) & (MEM_SIZE-1)],
@@ -782,7 +782,7 @@ module axi_memory #(
         if (masked_addr >= 0 && masked_addr < MEM_SIZE) begin
             mem[masked_addr] = data;
         end else if (ENABLE_MEM_TRACE) begin
-            $display("[AXI_MEM][WRITE][ERROR] addr=0x%08x masked=0x%08x OUT OF RANGE", addr, masked_addr);
+            $display("[AXI_MEM][WR][ERROR] addr=0x%08x masked=0x%08x OUT OF RANGE", addr, masked_addr);
         end
     endfunction
 

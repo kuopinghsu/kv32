@@ -122,6 +122,19 @@ else
 endif
 
 # Debug level (DEBUG=1 or DEBUG=2)
+# DEBUG_GROUP selects which debug groups to display (32-bit mask, default all).
+# Pass as C hex (0xNNNN), decimal, or use the named group constants below.
+#
+#   Named group bit values (combine with OR / addition):
+#     DBG_FETCH=1  DBG_PIPE=2   DBG_EX=4     DBG_MEM=8
+#     DBG_CSR=16   DBG_IRQ=32   DBG_WFI=64   DBG_AXI=128
+#     DBG_REG=256  DBG_JTAG=512 DBG_CLINT=1024 DBG_GPIO=2048
+#     DBG_I2C=4096 DBG_ICACHE=8192 DBG_ALU=16384 DBG_SB=32768
+#
+#   make DEBUG=2 DEBUG_GROUP=0x40    rtl-uart  # WFI only
+#   make DEBUG=2 DEBUG_GROUP=0x2040  rtl-uart  # WFI + ICACHE
+#   make DEBUG=2 DEBUG_GROUP=64      rtl-uart  # same as 0x40 (decimal)
+#   make DEBUG=2                     rtl-uart  # all groups (default)
 ifdef DEBUG
   ifeq ($(DEBUG),1)
     VERILATOR_FLAGS += +define+DEBUG 
@@ -132,6 +145,11 @@ ifdef DEBUG
     VERILATOR_FLAGS += +define+DEBUG_LEVEL_1
     VERILATOR_FLAGS += +define+DEBUG_LEVEL_2
     VERILATOR_FLAGS += -CFLAGS "-DDEBUG=2"
+    ifdef DEBUG_GROUP
+      # Convert 0xNNNN or decimal to plain decimal (SV accepts decimal; 0x prefix is C-only)
+      _DG_DEC := $(shell printf '%d' '$(DEBUG_GROUP)' 2>/dev/null || printf '%s' '$(DEBUG_GROUP)')
+      VERILATOR_FLAGS += +define+DEBUG_GROUP=$(_DG_DEC)
+    endif
   endif
 endif
 
@@ -186,9 +204,10 @@ FAST_MUL     ?= 1
 FAST_DIV     ?= 1
 COVERAGE     ?= 0
 DEBUG        ?=
+DEBUG_GROUP  ?=
 # Pass I-cache parameters to C++ testbench for stats reporting
 VERILATOR_FLAGS += -CFLAGS "-DICACHE_EN=$(ICACHE_EN) -DICACHE_SIZE=$(ICACHE_SIZE) -DICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) -DICACHE_WAYS=$(ICACHE_WAYS)"
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) COVERAGE=$(COVERAGE) MEM_READ_LATENCY=$(MEM_READ_LATENCY) MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY) MEM_DUAL_PORT=$(MEM_DUAL_PORT)
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP) COVERAGE=$(COVERAGE) MEM_READ_LATENCY=$(MEM_READ_LATENCY) MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY) MEM_DUAL_PORT=$(MEM_DUAL_PORT)
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
 
 # RTL source files
@@ -217,6 +236,8 @@ BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
 # Default target - run all tests
 all: rtl-all sim-all compare-all spike-all freertos-compare-simple
+	@echo "== FAST_DIV=0 FAST_MUL=0 compare-all rtl-all"
+	@make -f Makefile FAST_DIV=0 FAST_MUL=0 compare-all rtl-all
 	@make -f Makefile TRACE=1 arch-test-all
 	@make -f Makefile TRACE=1 arch-test-sim
 

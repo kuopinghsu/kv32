@@ -219,7 +219,7 @@ module jtag_top #(
     // Monitor JTAG/cJTAG activity
     `ifdef DEBUG
     always @(posedge tap_tck) begin
-        `DEBUG2(("[%0t] JTAG_TOP: TAP TCK posedge, TMS=%b TDI=%b TDO=%b",
+        `DEBUG2(`DBG_GRP_JTAG, ("[%0t] JTAG_TOP: TAP TCK posedge, TMS=%b TDI=%b TDO=%b",
                $time, tap_tms, tap_tdi, tap_tdo));
     end
     `endif

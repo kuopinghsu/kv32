@@ -95,7 +95,12 @@ module kv32_icache #(
     input  logic [31:0] axi_rdata,
     input  logic [1:0]  axi_rresp,
     input  logic        axi_rlast,
-    output logic        axi_rready
+    output logic        axi_rready,
+
+    // ICache idle status: no AXI transaction in-flight.
+    // Asserted when the state machine is in S_IDLE (no miss-fill burst active).
+    // Used by kv32_core to extend core_sleep_o for safe WFI clock gating.
+    output logic        icache_idle
 
 `ifndef SYNTHESIS
     ,
@@ -561,12 +566,12 @@ module kv32_icache #(
                     fill_pend_resp_r  <= 1'b1;
                     fill_pend_data_r  <= axi_rdata;
                     // fill_pend_req_r stays 0: no future beat tracking needed.
-                    `DEBUG2(("[ICACHE] fill_pend ACCEPT+CAPTURE: state=%0d fill_active=%b fill_word_cnt=%0d burst_comb=%0d axi_rdata=0x%h imem_req_addr=0x%h", state, fill_active_r, fill_word_cnt, fill_pend_burst_comb, axi_rdata, imem_req_addr));
+                    `DEBUG2(`DBG_GRP_ICACHE, ("fill_pend ACCEPT+CAPTURE: state=%0d fill_active=%b fill_word_cnt=%0d burst_comb=%0d axi_rdata=0x%h imem_req_addr=0x%h", state, fill_active_r, fill_word_cnt, fill_pend_burst_comb, axi_rdata, imem_req_addr));
                 end else begin
                     // Beat not yet arrived → record burst index and wait.
                     fill_pend_req_r   <= 1'b1;
                     fill_pend_burst_r <= fill_pend_burst_comb;
-                    `DEBUG2(("[ICACHE] fill_pend ACCEPT+WAIT: state=%0d fill_word_cnt=%0d burst_comb=%0d imem_req_addr=0x%h beat_now=%b rready=%b", state, fill_word_cnt, fill_pend_burst_comb, imem_req_addr, fill_pend_beat_now, axi_rready));
+                    `DEBUG2(`DBG_GRP_ICACHE, ("fill_pend ACCEPT+WAIT: state=%0d fill_word_cnt=%0d burst_comb=%0d imem_req_addr=0x%h beat_now=%b rready=%b", state, fill_word_cnt, fill_pend_burst_comb, imem_req_addr, fill_pend_beat_now, axi_rready));
                 end
             end
 
@@ -575,7 +580,7 @@ module kv32_icache #(
                 fill_pend_req_r   <= 1'b0;
                 fill_pend_resp_r  <= 1'b1;
                 fill_pend_data_r  <= axi_rdata;
-                `DEBUG2(("[ICACHE] fill_pend_beat_for_req: fill_word_cnt=%0d burst_r=%0d axi_rdata=0x%h", fill_word_cnt, fill_pend_burst_r, axi_rdata));
+                `DEBUG2(`DBG_GRP_ICACHE, ("fill_pend_beat_for_req: fill_word_cnt=%0d burst_r=%0d axi_rdata=0x%h", fill_word_cnt, fill_pend_burst_r, axi_rdata));
             end
 
             // ---- Clear when fill-pending response is consumed by CPU ----
@@ -874,6 +879,7 @@ module kv32_icache #(
     assign ar_addr_bypass = {req_addr_r[31:2], 2'b00};
 
     assign axi_arvalid = (state == S_MISS_AR);
+    assign icache_idle = (state == S_IDLE);
     assign axi_araddr  = cache_enable ? ar_addr_cache : ar_addr_bypass;
     assign axi_arlen   = cache_enable ? 8'(WORDS_PER_LINE - 1) : 8'h00;
     assign axi_arsize  = 3'b010;   // 4 bytes per beat
@@ -957,7 +963,7 @@ module kv32_icache #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (rst_n) begin
             if (imem_resp_valid && (state == S_FILL_REST || state == S_RESP)) begin
-                `DEBUG2(("[ICACHE] RESP_OUT: state=%0d fill_active=%b fill_pend_resp=%b fill_pend_data=0x%h resp_data=0x%h axi_rdata=0x%h imem_resp_data=0x%h", state, fill_active_r, fill_pend_resp_r, fill_pend_data_r, resp_data_r, axi_rdata, imem_resp_data));
+                `DEBUG2(`DBG_GRP_ICACHE, ("RESP_OUT: state=%0d fill_active=%b fill_pend_resp=%b fill_pend_data=0x%h resp_data=0x%h axi_rdata=0x%h imem_resp_data=0x%h", state, fill_active_r, fill_pend_resp_r, fill_pend_data_r, resp_data_r, axi_rdata, imem_resp_data));
             end
         end
     end

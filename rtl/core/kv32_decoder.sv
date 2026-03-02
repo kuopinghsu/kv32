@@ -67,7 +67,8 @@ module kv32_decoder (
 `endif
     output logic        is_fence,
     output logic        is_fence_i,   // FENCE.I (funct3=001): flush instruction cache
-    output logic        is_cbo        // Zicbom CBO (funct3=010): cache block operation
+    output logic        is_cbo,       // Zicbom CBO (funct3=010): cache block operation
+    output logic        is_wfi        // WFI instruction (funct3=000, imm=0x105)
 );
 `ifndef SYNTHESIS
     import kv32_pkg::*;
@@ -132,6 +133,7 @@ module kv32_decoder (
         is_fence   = 1'b0;
         is_fence_i = 1'b0;
         is_cbo     = 1'b0;
+        is_wfi     = 1'b0;
 
         if (valid) begin
             case (opcode)
@@ -249,6 +251,8 @@ module kv32_decoder (
                             is_ebreak = 1'b1;
                         end else if (instr[31:20] == 12'h302) begin
                             is_mret = 1'b1;
+                        end else if (instr[31:20] == 12'h105) begin
+                            is_wfi = 1'b1;  // WFI: wait for interrupt
                         end else begin
                             illegal = 1'b1;
                         end
