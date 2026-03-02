@@ -1,0 +1,32 @@
+## ============================================================================
+## KV32 riscv-dv Simulator Configuration
+## ============================================================================
+## This YAML file is passed to riscv-dv's run.py via --simulator_yaml.
+## It tells riscv-dv how to compile and run the generated assembly on the
+## KV32 RTL (Verilator) and the reference ISS (spike / kv32sim).
+## ============================================================================
+
+# --------------------------------------------------------------------------
+# Common tool paths (overridable via environment / command line)
+# --------------------------------------------------------------------------
+# These can be overridden with --iss_yaml or environment variables.
+
+---
+# Spike ISS for comparison
+- tool: spike
+  cmd: >
+    spike --isa=rv32ima -m0x80000000:0x200000 <elf>
+  # Spike runs the ELF directly; output log is post-processed by the
+  # log-to-trace converter.
+
+# KV32 software simulator for comparison
+- tool: kv32sim
+  cmd: >
+    <kv32sim_path> --isa rv32ima <elf>
+
+# Verilator RTL simulation
+# The actual invocation is done by the run script (scripts/run_rtl.sh)
+# which builds the RTL binary if needed and loads the ELF.
+- tool: verilator
+  cmd: >
+    <kv32soc_path> +ELF=<elf> +MAX_CYCLES=<max_cycles>

@@ -1,0 +1,12 @@
+# riscv-dv clone (fetched by `make setup`)
+riscv-dv/
+
+# Python virtual environment
+.venv/
+
+# Generated output
+out/
+
+# Python bytecode
+__pycache__/
+*.pyc

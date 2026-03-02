@@ -1,0 +1,191 @@
+# ============================================================================
+# KV32 riscv-dv Target — Testlist
+# ============================================================================
+# Each entry defines a random-instruction test configuration.
+# Fields:
+#   test        — Unique test name (also used as output directory)
+#   description — Human-readable description
+#   gen_opts    — Extra options passed to the riscv-dv UVM/pyflow generator
+#   iterations  — Number of random programs to generate per test
+#   gen_test    — Generator test class (from riscv-dv)
+#   rtl_test    — RTL test class (typically same as gen_test for simple sims)
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Basic arithmetic / logic
+# ---------------------------------------------------------------------------
+- test: kv32_arithmetic_basic
+  description: >
+    Basic arithmetic and logic instructions (ADD, SUB, AND, OR, XOR, shifts).
+  gen_opts: >
+    +instr_cnt=500
+    +num_of_sub_program=0
+    +no_fence=1
+    +no_data_page=0
+    +no_branch_jump=0
+    +boot_mode=m
+  iterations: 3
+  gen_test: riscv_instr_base_test
+  rtl_test: kv32_instr_test
+
+# ---------------------------------------------------------------------------
+# Multiply / Divide (M extension)
+# ---------------------------------------------------------------------------
+- test: kv32_mul_div
+  description: >
+    Focused M-extension exercise: MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU.
+  gen_opts: >
+    +instr_cnt=500
+    +num_of_sub_program=0
+    +no_fence=1
+    +directed_instr_0=riscv_int_numeric_corner_stream,20
+    +boot_mode=m
+  iterations: 3
+  gen_test: riscv_instr_base_test
+  rtl_test: kv32_instr_test
+
+# ---------------------------------------------------------------------------
+# Atomic instructions (A extension)
+# ---------------------------------------------------------------------------
+- test: kv32_amo
+  description: >
+    Atomic memory operations: LR/SC, AMOSWAP, AMOADD, AMOAND, AMOOR, AMOXOR,
+    AMOMIN, AMOMAX, AMOMINU, AMOMAXU.
+  gen_opts: >
+    +instr_cnt=500
+    +num_of_sub_program=0
+    +no_fence=0
+    +enable_misaligned_instr=0
+    +boot_mode=m
+  iterations: 2
+  gen_test: riscv_instr_base_test
+  rtl_test: kv32_instr_test
+
+# ---------------------------------------------------------------------------
+# Branch / Jump
+# ---------------------------------------------------------------------------
+- test: kv32_branch_jump
+  description: >
+    Heavy branch and jump coverage: BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR.
+  gen_opts: >
+    +instr_cnt=500
+    +num_of_sub_program=5
+    +no_fence=1
+    +no_data_page=1
+    +no_branch_jump=0
+    +branch_target_ratio=60
+    +boot_mode=m
+  iterations: 3
+  gen_test: riscv_instr_base_test
+  rtl_test: kv32_instr_test
+
+# ---------------------------------------------------------------------------
+# Load / Store
+# ---------------------------------------------------------------------------
+- test: kv32_load_store
+  description: >
+    Load/store instruction coverage: LB, LH, LW, LBU, LHU, SB, SH, SW
+    with various addressing modes.
+  gen_opts: >
+    +instr_cnt=500
+    +num_of_sub_program=0
+    +no_fence=1
+    +no_data_page=0
+    +no_branch_jump=1
+    +enable_misaligned_instr=0
+    +boot_mode=m
+  iterations: 3
+  gen_test: riscv_instr_base_test
+  rtl_test: kv32_instr_test
+
+# ---------------------------------------------------------------------------
+# CSR Operations
+# ---------------------------------------------------------------------------
+- test: kv32_csr
+  description: >
+    CSR read/write operations: CSRRW, CSRRS, CSRRC and immediate variants.
+  gen_opts: >
+    +instr_cnt=200
+    +num_of_sub_program=0
+    +no_fence=1
+    +no_data_page=1
+    +no_branch_jump=1
+    +enable_access_invalid_csr_level=0
+    +boot_mode=m
+  iterations: 2
+  gen_test: riscv_instr_base_test
+  rtl_test: kv32_instr_test
+
+# ---------------------------------------------------------------------------
+# Random mixed
+# ---------------------------------------------------------------------------
+- test: kv32_rand_instr
+  description: >
+    Fully random instruction mix across all supported extensions (I, M, A).
+  gen_opts: >
+    +instr_cnt=2000
+    +num_of_sub_program=5
+    +no_fence=0
+    +no_data_page=0
+    +no_branch_jump=0
+    +boot_mode=m
+  iterations: 5
+  gen_test: riscv_instr_base_test
+  rtl_test: kv32_instr_test
+
+# ---------------------------------------------------------------------------
+# Machine-mode trap handling
+# ---------------------------------------------------------------------------
+- test: kv32_machine_mode_trap
+  description: >
+    Machine-mode trap handling: ECALL, EBREAK, illegal instructions, MRET.
+  gen_opts: >
+    +instr_cnt=500
+    +num_of_sub_program=3
+    +no_fence=1
+    +no_data_page=0
+    +no_branch_jump=0
+    +enable_illegal_csr_instruction=1
+    +enable_access_invalid_csr_level=0
+    +enable_ebreak=1
+    +enable_ecall=1
+    +boot_mode=m
+  iterations: 3
+  gen_test: riscv_instr_base_test
+  rtl_test: kv32_instr_test
+
+# ---------------------------------------------------------------------------
+# HINT / NOP coverage
+# ---------------------------------------------------------------------------
+- test: kv32_hint_nop
+  description: >
+    HINT instructions (encoded as NOP with non-zero rd) and NOP sequences.
+  gen_opts: >
+    +instr_cnt=300
+    +num_of_sub_program=0
+    +no_fence=1
+    +no_data_page=1
+    +no_branch_jump=1
+    +hint_instr_ratio=50
+    +boot_mode=m
+  iterations: 2
+  gen_test: riscv_instr_base_test
+  rtl_test: kv32_instr_test
+
+# ---------------------------------------------------------------------------
+# Stress test — large program
+# ---------------------------------------------------------------------------
+- test: kv32_rand_stress
+  description: >
+    Large random program for stress testing the pipeline, memory subsystem,
+    and instruction cache.
+  gen_opts: >
+    +instr_cnt=10000
+    +num_of_sub_program=10
+    +no_fence=0
+    +no_data_page=0
+    +no_branch_jump=0
+    +boot_mode=m
+  iterations: 2
+  gen_test: riscv_instr_base_test
+  rtl_test: kv32_instr_test
