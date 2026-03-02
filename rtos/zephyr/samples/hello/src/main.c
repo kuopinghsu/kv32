@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2026 kcore Project
+ * Copyright (c) 2026 kv32 Project
  * SPDX-License-Identifier: Apache-2.0
  *
- * Simple Hello World application for kcore board
+ * Simple Hello World application for kv32 board
  * Uses magic address console driver for fast simulation output
  */
 
@@ -19,7 +19,7 @@ void sim_exit(int exit_code)
 void main(void)
 {
     printk("*** Booting Zephyr OS build %s ***\n", KERNEL_VERSION_STRING);
-    printk("Hello World! kcore RISC-V Board\n");
+    printk("Hello World! kv32 RISC-V Board\n");
     printk("Test completed successfully!\n");
     sim_exit(0);
 }

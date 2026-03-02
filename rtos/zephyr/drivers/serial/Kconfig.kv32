@@ -1,22 +1,22 @@
-# Copyright (c) 2026 kcore Project
+# Copyright (c) 2026 kv32 Project
 # SPDX-License-Identifier: Apache-2.0
 
-config UART_KCORE
-    bool "kcore UART driver"
+config UART_KV32
+    bool "kv32 UART driver"
     default y
-    depends on DT_HAS_KCORE_UART_ENABLED
+    depends on DT_HAS_KV32_UART_ENABLED
     select SERIAL_HAS_DRIVER
     select SERIAL_SUPPORT_INTERRUPT
     help
-      Enable driver for kcore custom UART peripheral.
+      Enable driver for kv32 custom UART peripheral.
       This UART has TX capability with a 16-entry FIFO.
 
-if UART_KCORE
+if UART_KV32
 
-config UART_KCORE_PORT_0
+config UART_KV32_PORT_0
     bool "Enable UART Port 0"
     default y
     help
       Enable UART port 0 (the main console UART).
 
-endif # UART_KCORE
+endif # UART_KV32

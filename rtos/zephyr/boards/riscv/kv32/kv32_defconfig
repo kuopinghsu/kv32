@@ -1,13 +1,13 @@
-# Copyright (c) 2026 kcore Project
+# Copyright (c) 2026 kv32 Project
 # SPDX-License-Identifier: Apache-2.0
 
 # SoC configuration
-CONFIG_SOC_RISCV_KCORE=y
+CONFIG_SOC_RISCV_KV32=y
 
 # Serial and Console configuration
 CONFIG_SERIAL=y
 CONFIG_CONSOLE=y
-CONFIG_CONSOLE_KCORE=y
+CONFIG_CONSOLE_KV32=y
 CONFIG_PRINTK=y
 
 # Minimal footprint

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 kcore Project
+ * Copyright (c) 2026 kv32 Project
  * SPDX-License-Identifier: Apache-2.0
  *
  * Extended linker definitions to support sub-priority initialization.
@@ -7,8 +7,8 @@
  * handle _SUB_ priority patterns created by DEVICE_DT_DEFINE.
  */
 
-#ifndef ZEPHYR_SOC_KCORE_LINKER_DEFS_SUB_H_
-#define ZEPHYR_SOC_KCORE_LINKER_DEFS_SUB_H_
+#ifndef ZEPHYR_SOC_KV32_LINKER_DEFS_SUB_H_
+#define ZEPHYR_SOC_KV32_LINKER_DEFS_SUB_H_
 
 /* Redefine CREATE_OBJ_LEVEL to include SUB priority patterns */
 #undef CREATE_OBJ_LEVEL
@@ -19,4 +19,4 @@
     KEEP(*(SORT(.z_##object##_##level##_P_???_*)));      \
     KEEP(*(SORT(.z_##object##_##level##_P_*_SUB_*)));
 
-#endif /* ZEPHYR_SOC_KCORE_LINKER_DEFS_SUB_H_ */
+#endif /* ZEPHYR_SOC_KV32_LINKER_DEFS_SUB_H_ */

@@ -1,12 +1,12 @@
-# Zephyr RTOS Port for kcore
+# Zephyr RTOS Port for kv32
 
-This directory contains a complete Zephyr RTOS port for the RV32IM kcore processor with timer interrupt support and threading capabilities.
+This directory contains a complete Zephyr RTOS port for the RV32IM kv32 processor with timer interrupt support and threading capabilities.
 
 ## Overview
 
 This port provides:
 - **SoC Support**: Custom RISC-V RV32IM SoC definition with CLINT timer
-- **Board Support**: kcore_board configuration with complete devicetree
+- **Board Support**: kv32 configuration with complete devicetree
 - **Timer Driver**: RISC-V machine timer (CLINT) with interrupt support
 - **UART Driver**: Serial console driver for the custom UART peripheral
 - **Console Driver**: Fast magic-address console for simulation
@@ -19,10 +19,10 @@ This port provides:
 rtos/zephyr/
 ├── soc/
 │   └── riscv/
-│       └── kcore/          # SoC definition (Kconfig, devicetree, linker)
+│       └── kv32/          # SoC definition (Kconfig, devicetree, linker)
 ├── boards/
 │   └── riscv/
-│       └── kcore_board/    # Board definition and configuration
+│       └── kv32/    # Board definition and configuration
 ├── drivers/
 │   ├── console/            # Magic address console driver (fast)
 │   └── serial/             # UART driver (hardware accurate)
@@ -53,7 +53,7 @@ Two console drivers are provided:
 - **Address**: 0xFFFFFFF4
 - **Performance**: Very fast - no hardware timing simulation
 - **Use Case**: Simulation and testing
-- **Config**: `CONFIG_CONSOLE_KCORE=y`
+- **Config**: `CONFIG_CONSOLE_KV32=y`
 - **Initialization**: PRE_KERNEL_1 level (early boot)
 
 ### 2. UART Console (Optional - Hardware Accurate)
@@ -122,13 +122,13 @@ export ZEPHYR_EXTRA_MODULES=/path/to/riscv/rtos/zephyr
 
 ```bash
 # Copy SoC definition
-cp -r rtos/zephyr/soc/riscv/kcore $ZEPHYR_BASE/soc/riscv/
+cp -r rtos/zephyr/soc/riscv/kv32 $ZEPHYR_BASE/soc/riscv/
 
 # Copy board definition
-cp -r rtos/zephyr/boards/riscv/kcore_board $ZEPHYR_BASE/boards/riscv/
+cp -r rtos/zephyr/boards/riscv/kv32 $ZEPHYR_BASE/boards/riscv/
 
 # Copy UART driver
-cp rtos/zephyr/drivers/serial/uart_kcore.c $ZEPHYR_BASE/drivers/serial/
+cp rtos/zephyr/drivers/serial/uart_kv32.c $ZEPHYR_BASE/drivers/serial/
 ```
 
 ## Building Sample Applications
@@ -145,7 +145,7 @@ make zephyr-hello
 
 # Using west directly
 cd rtos/zephyr/samples/hello
-west build -b kcore_board
+west build -b kv32
 ```
 
 ### 2. UART Echo (Interactive Test)
@@ -158,7 +158,7 @@ make zephyr-uart_echo
 
 # Using west directly
 cd rtos/zephyr/samples/uart_echo
-west build -b kcore_board
+west build -b kv32
 ```
 
 ### 3. Thread Synchronization (Advanced)
@@ -171,10 +171,10 @@ make zephyr-threads_sync
 
 # Using west directly
 cd rtos/zephyr/samples/threads_sync
-west build -b kcore_board
+west build -b kv32
 ```
 
-## Running on kcore
+## Running on kv32
 
 ### Quick Run with Make
 
@@ -201,7 +201,7 @@ make zephyr-rtl-threads_sync
 **hello:**
 ```
 *** Booting Zephyr OS build v4.3.0 ***
-Hello World! kcore_board
+Hello World! kv32
 Counter: 0
 Counter: 1
 Counter: 2
@@ -298,22 +298,22 @@ target_sources(app PRIVATE src/main.c)
 **Minimal prj.conf:**
 ```
 # For simple apps without timers
-CONFIG_CONSOLE_KCORE=y
+CONFIG_CONSOLE_KV32=y
 CONFIG_SYS_CLOCK_EXISTS=n
 
 # For apps with timers/threading
-CONFIG_CONSOLE_KCORE=y
+CONFIG_CONSOLE_KV32=y
 CONFIG_SYS_CLOCK_EXISTS=y
 CONFIG_TIMESLICING=y
 ```
 
 ### Board Configuration
 
-Modify `boards/riscv/kcore_board/kcore_board_defconfig` to change default configurations.
+Modify `boards/riscv/kv32/kv32_defconfig` to change default configurations.
 
 ### Device Tree
 
-Edit `boards/riscv/kcore_board/kcore_board.dts` to add/modify peripherals.
+Edit `boards/riscv/kv32/kv32.dts` to add/modify peripherals.
 
 ## Porting Guide: Critical Issues and Solutions
 
@@ -335,7 +335,7 @@ This causes linker error: **"Undefined initialization levels used"**
 
 **Solution**: Create extended macro that includes `_SUB_` patterns:
 
-File: `soc/riscv/kcore/linker-defs-sub.h`
+File: `soc/riscv/kv32/linker-defs-sub.h`
 ```c
 #undef CREATE_OBJ_LEVEL
 #define CREATE_OBJ_LEVEL(object, level)                          \
@@ -346,7 +346,7 @@ File: `soc/riscv/kcore/linker-defs-sub.h`
     KEEP(*(SORT(.z_##object##_##level##_P_*_SUB_*)));    /* NEW */
 ```
 
-Include in `soc/riscv/kcore/linker.ld`:
+Include in `soc/riscv/kv32/linker.ld`:
 ```c
 #include "linker-defs-sub.h"
 ```
@@ -381,7 +381,7 @@ mtimer: timer@2000000 {
 **Solution**: Use `PRE_KERNEL_1` level:
 
 ```c
-SYS_INIT(console_kcore_init, PRE_KERNEL_1, CONFIG_CONSOLE_INIT_PRIORITY);
+SYS_INIT(console_kv32_init, PRE_KERNEL_1, CONFIG_CONSOLE_INIT_PRIORITY);
 ```
 
 This ensures console is ready before other drivers log messages.
@@ -394,13 +394,13 @@ This ensures console is ready before other drivers log messages.
 
 ```c
 DEVICE_DT_INST_DEFINE(n,
-            uart_kcore_init,
+            uart_kv32_init,
             NULL,
-            &uart_kcore_data_##n,
-            &uart_kcore_cfg_##n,
+            &uart_kv32_data_##n,
+            &uart_kv32_cfg_##n,
             PRE_KERNEL_1,
             CONFIG_SERIAL_INIT_PRIORITY,
-            &uart_kcore_driver_api);
+            &uart_kv32_driver_api);
 ```
 
 This automatically creates the init entry with proper sub-priority handling.
@@ -418,7 +418,7 @@ This automatically creates the init entry with proper sub-priority handling.
 
 ### Build Errors
 
-1. **"Board kcore_board not found"**:
+1. **"Board kv32 not found"**:
    - Set `ZEPHYR_EXTRA_MODULES` environment variable
    - Or use project's Makefile which handles this automatically
 
@@ -443,7 +443,7 @@ This automatically creates the init entry with proper sub-priority handling.
 ### Runtime Issues
 
 1. **No console output**:
-   - Check that `CONFIG_CONSOLE_KCORE=y` is set
+   - Check that `CONFIG_CONSOLE_KV32=y` is set
    - Verify magic address (0xFFFFFFF4) is implemented in testbench
    - For UART: verify baud rate matches testbench (115200)
 
@@ -468,7 +468,7 @@ This automatically creates the init entry with proper sub-priority handling.
    - Check for stack overflow: `CONFIG_THREAD_STACK_INFO=y`
 
 5. **Slow simulation**:
-   - Use magic console instead of UART: `CONFIG_CONSOLE_KCORE=y`
+   - Use magic console instead of UART: `CONFIG_CONSOLE_KV32=y`
    - Reduce tick rate: `CONFIG_SYS_CLOCK_TICKS_PER_SEC=10`
    - Disable unnecessary features
 
@@ -478,7 +478,7 @@ This automatically creates the init entry with proper sub-priority handling.
 
 1. **Use Magic Console**: Eliminates UART timing delays
    ```
-   CONFIG_CONSOLE_KCORE=y
+   CONFIG_CONSOLE_KV32=y
    CONFIG_UART_CONSOLE=n
    ```
 

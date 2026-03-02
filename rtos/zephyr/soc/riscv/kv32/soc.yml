@@ -1,0 +1,6 @@
+family:
+  - name: kv32
+    series:
+      - name: kv32
+        socs:
+          - name: kv32

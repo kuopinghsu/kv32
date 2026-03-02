@@ -1,6 +1,6 @@
 # UART Echo Test Sample
 
-This sample demonstrates UART driver TX and RX functionality on the kcore board. It receives characters from UART RX and echoes them back via TX.
+This sample demonstrates UART driver TX and RX functionality on the kv32 board. It receives characters from UART RX and echoes them back via TX.
 
 ## Building and Running
 

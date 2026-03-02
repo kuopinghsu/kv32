@@ -1,2 +1,2 @@
-# Vendor prefixes for kcore project
-kcore   kcore RISC-V SoC Project
+# Vendor prefixes for kv32 project
+kv32   kv32 RISC-V SoC Project

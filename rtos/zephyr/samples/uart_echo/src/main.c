@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2026 kcore Project
+ * Copyright (c) 2026 kv32 Project
  * SPDX-License-Identifier: Apache-2.0
  *
- * UART Echo Test Sample for kcore board
+ * UART Echo Test Sample for kv32 board
  * Demonstrates UART driver TX and RX functionality with echo
  */
 

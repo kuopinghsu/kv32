@@ -1,8 +1,8 @@
-# Copyright (c) 2026 kcore Project
+# Copyright (c) 2026 kv32 Project
 # SPDX-License-Identifier: Apache-2.0
 
-config CONSOLE_KCORE
-    bool "kcore magic address console driver"
+config CONSOLE_KV32
+    bool "kv32 magic address console driver"
     help
       Enable console driver that writes to magic address 0xFFFFFFF4.
       This is useful for simulation/testbench where characters written
@@ -12,9 +12,9 @@ config CONSOLE_KCORE
       the full UART driver, as it bypasses hardware FIFO and baud rate
       timing simulation.
 
-if CONSOLE_KCORE
+if CONSOLE_KV32
 
 config CONSOLE_INIT_PRIORITY
     default 40
 
-endif # CONSOLE_KCORE
+endif # CONSOLE_KV32

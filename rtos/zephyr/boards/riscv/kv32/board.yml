@@ -1,0 +1,5 @@
+board:
+  name: kv32
+  vendor: kv32
+  socs:
+    - name: kv32

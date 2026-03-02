@@ -1,10 +1,10 @@
-# Copyright (c) 2026 kcore Project
+# Copyright (c) 2026 kv32 Project
 # SPDX-License-Identifier: Apache-2.0
 
-if SOC_RISCV_KCORE
+if SOC_RISCV_KV32
 
 config SOC
-    default "kcore"
+    default "kv32"
 
 config SYS_CLOCK_HW_CYCLES_PER_SEC
     default 50000000
@@ -29,4 +29,4 @@ config IDLE_STACK_SIZE
 config ISR_STACK_SIZE
     default 2048
 
-endif # SOC_RISCV_KCORE
+endif # SOC_RISCV_KV32

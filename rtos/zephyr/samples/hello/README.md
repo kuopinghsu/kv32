@@ -1,6 +1,6 @@
 # Zephyr Hello World Sample
 
-Simple "Hello World" application for the kcore RISC-V board.
+Simple "Hello World" application for the kv32 RISC-V board.
 
 ## Description
 
@@ -18,7 +18,7 @@ The application uses the fast magic address console driver by default for optima
 
 ```bash
 cd rtos/zephyr/samples/hello
-west build -b kcore_board
+west build -b kv32
 ```
 
 ### Using Make (from project root)
@@ -54,7 +54,7 @@ make zephyr-rtl-hello
 
 ```
 *** Booting Zephyr OS build v3.x.x ***
-Hello World! kcore_board
+Hello World! kv32
 CPU: RISC-V RV32IM @ 50 MHz
 RAM: 2MB @ 0x80000000
 
@@ -91,7 +91,7 @@ Edit `prj.conf` to change build options:
 **Use Magic Address Console (Default - Faster)**:
 ```
 CONFIG_CONSOLE=y
-CONFIG_CONSOLE_KCORE=y
+CONFIG_CONSOLE_KV32=y
 ```
 
 **Use UART Console (Hardware Accurate)**:

@@ -1,6 +1,0 @@
-family:
-  - name: kcore
-    series:
-      - name: kcore
-        socs:
-          - name: kcore

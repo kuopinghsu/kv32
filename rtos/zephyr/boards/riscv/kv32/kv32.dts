@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 kcore Project
+ * Copyright (c) 2026 kv32 Project
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,8 +8,8 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
 
 / {
-    model = "kcore RISC-V Board";
-    compatible = "kcore,kcore_board";
+    model = "kv32 RISC-V Board";
+    compatible = "kv32,kv32";
     #address-cells = <1>;
     #size-cells = <1>;
 
@@ -59,7 +59,7 @@
         };
 
         uart0: uart@10000000 {
-            compatible = "kcore,uart";
+            compatible = "kv32,uart";
             reg = <0x10000000 0x100>;
             clock-frequency = <50000000>;
             current-speed = <115200>;

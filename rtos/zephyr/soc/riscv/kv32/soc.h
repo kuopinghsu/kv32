@@ -1,10 +1,10 @@
 /*
- * Copyright (c) 2026 kcore Project
+ * Copyright (c) 2026 kv32 Project
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _SOC_RISCV_KCORE_SOC_H_
-#define _SOC_RISCV_KCORE_SOC_H_
+#ifndef _SOC_RISCV_KV32_SOC_H_
+#define _SOC_RISCV_KV32_SOC_H_
 
 #include <zephyr/sys/util.h>
 
@@ -52,4 +52,4 @@ static inline void soc_early_init_hook(void)
 
 #endif /* !_ASMLANGUAGE */
 
-#endif /* _SOC_RISCV_KCORE_SOC_H_ */
+#endif /* _SOC_RISCV_KV32_SOC_H_ */

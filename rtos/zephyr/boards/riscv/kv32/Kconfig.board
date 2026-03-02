@@ -1,0 +1,13 @@
+# Copyright (c) 2026 kv32 Project
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_KV32
+    bool "kv32 RISC-V Development Board"
+    depends on SOC_RISCV_KV32
+    help
+      Enable support for the kv32 RISC-V development board.
+      This board features:
+      - RV32IM processor core
+      - 2MB RAM
+      - UART console
+      - CLINT timer/interrupts

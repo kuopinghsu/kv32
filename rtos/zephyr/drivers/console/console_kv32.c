@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2026 kcore Project
+ * Copyright (c) 2026 kv32 Project
  * SPDX-License-Identifier: Apache-2.0
  *
- * Console driver for kcore using magic address
+ * Console driver for kv32 using magic address
  * Writes characters to 0xFFFFFFF4 for simulation/testbench output
  */
 
@@ -34,7 +34,7 @@ static int console_out(int c)
  * @brief Initialize the console driver
  * @return 0 if successful
  */
-static int console_kcore_init(void)
+static int console_kv32_init(void)
 {
 #if defined(CONFIG_STDOUT_CONSOLE)
     __stdout_hook_install(console_out);
@@ -45,6 +45,6 @@ static int console_kcore_init(void)
     return 0;
 }
 
-SYS_INIT(console_kcore_init,
+SYS_INIT(console_kv32_init,
      PRE_KERNEL_1,
      CONFIG_CONSOLE_INIT_PRIORITY);
