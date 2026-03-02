@@ -280,14 +280,24 @@ module axi_memory #(
     assign axi_wready = write_addr_valid && write_can_accept;
 
     // Write pipeline advancement
+    //
+    // For MEM_WRITE_LATENCY == 1: stage[0] is input+output (unchanged behaviour).
+    //
+    // For MEM_WRITE_LATENCY > 1: stage[MEM_WRITE_LATENCY-1] is the ENTRY stage
+    // (new writes land here, write_pipe_busy watches this stage); stages shift
+    // downward each cycle (stage[i] → stage[i-1]) whenever the downstream stage
+    // is empty; B-response is generated from stage[0].
+    //
+    // This ensures exactly one B-response per accepted write and gives the
+    // correct MEM_WRITE_LATENCY cycles of delay between AW-accept and B-valid.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 0; i < MAX_WRITE_STAGES; i++) begin
                 write_pipe[i].valid <= 1'b0;
-                write_pipe[i].addr <= '0;
-                write_pipe[i].data <= '0;
-                write_pipe[i].strb <= '0;
-                write_pipe[i].resp <= 2'b00;
+                write_pipe[i].addr  <= '0;
+                write_pipe[i].data  <= '0;
+                write_pipe[i].strb  <= '0;
+                write_pipe[i].resp  <= 2'b00;
             end
         end else begin
             // Debug: Monitor write pipeline state
@@ -296,73 +306,75 @@ module axi_memory #(
                 static logic prev_write_pipe0_valid = 1'b0;
                 if (write_addr_valid != prev_write_addr_valid || write_pipe[0].valid != prev_write_pipe0_valid) begin
                     $display("[AXI_MEM][WRITE] write_addr_valid=%b write_pipe[0].valid=%b axi_bvalid=%b axi_bready=%b",
-                    write_addr_valid, write_pipe[0].valid, axi_bvalid, axi_bready);
+                             write_addr_valid, write_pipe[0].valid, axi_bvalid, axi_bready);
                     prev_write_addr_valid = write_addr_valid;
                     prev_write_pipe0_valid = write_pipe[0].valid;
                 end
             end
-            // Stage 0: Accept new write transaction
-            // For burst writes, only enter pipeline on wlast to generate exactly one B response
-            if (write_addr_valid && axi_wvalid && write_can_accept && axi_wlast) begin
-                write_pipe[0].valid <= 1'b1;
-                write_pipe[0].addr <= write_addr_reg;
-                write_pipe[0].data <= axi_wdata;
-                write_pipe[0].strb <= axi_wstrb;
-                // Check address bounds (wr_burst_err tracks any earlier out-of-range beat)
-                if (wr_burst_err || write_addr_reg < BASE_ADDR || write_addr_reg >= (BASE_ADDR + MEM_SIZE)) begin
-                    write_pipe[0].resp <= 2'b10;  // SLVERR
-                end else begin
-                    write_pipe[0].resp <= 2'b00;  // OKAY
-                end
-            end else if (MEM_WRITE_LATENCY > 1 && write_pipe[1].valid) begin
-                // Shift from next stage
-                write_pipe[0] <= write_pipe[1];
-            end else if (write_pipe[0].valid && axi_bready) begin
-                // Clear when response is accepted
-                write_pipe[0].valid <= 1'b0;
-            end
 
-            // Pipeline stages 1 to MAX_WRITE_STAGES-1
-            for (int i = 1; i < MAX_WRITE_STAGES; i++) begin
-                if (i < MEM_WRITE_LATENCY - 1) begin
-                    if (i == MEM_WRITE_LATENCY - 2) begin
-                        // Last latency stage: perform memory write
-                        if (write_pipe[i].valid) begin
-                            write_pipe[i] <= write_pipe[i];  // Hold until shifted out
-                        end else if (i + 1 < MAX_WRITE_STAGES && write_pipe[i+1].valid) begin
-                            write_pipe[i] <= write_pipe[i+1];
-                        end else if (i == 1 && write_addr_valid && axi_wvalid && write_can_accept) begin
-                            write_pipe[i].valid <= 1'b1;
-                            write_pipe[i].addr <= write_addr_reg;
-                            write_pipe[i].data <= axi_wdata;
-                            write_pipe[i].strb <= axi_wstrb;
-                            if (write_addr_reg < BASE_ADDR || write_addr_reg >= (BASE_ADDR + MEM_SIZE)) begin
-                                write_pipe[i].resp <= 2'b10;
-                            end else begin
-                                write_pipe[i].resp <= 2'b00;
-                            end
-                        end else begin
-                            write_pipe[i].valid <= 1'b0;
-                        end
-                    end else begin
-                        // Intermediate stages: simple shift
-                        if (i + 1 < MAX_WRITE_STAGES && write_pipe[i+1].valid) begin
-                            write_pipe[i] <= write_pipe[i+1];
-                        end else if (i == 1 && write_addr_valid && axi_wvalid && write_can_accept) begin
-                            write_pipe[i].valid <= 1'b1;
-                            write_pipe[i].addr <= write_addr_reg;
-                            write_pipe[i].data <= axi_wdata;
-                            write_pipe[i].strb <= axi_wstrb;
-                            if (write_addr_reg < BASE_ADDR || write_addr_reg >= (BASE_ADDR + MEM_SIZE)) begin
-                                write_pipe[i].resp <= 2'b10;
-                            end else begin
-                                write_pipe[i].resp <= 2'b00;
-                            end
-                        end else begin
-                            write_pipe[i].valid <= 1'b0;
-                        end
+            if (MEM_WRITE_LATENCY == 1) begin
+                // ── Latency-1: stage[0] is both input and output ──────────
+                // Accept new write OR drain on B-accept (mutually exclusive
+                // because write_can_accept already checks !write_pipe_busy).
+                if (write_addr_valid && axi_wvalid && write_can_accept && axi_wlast) begin
+                    write_pipe[0].valid <= 1'b1;
+                    write_pipe[0].addr  <= write_addr_reg;
+                    write_pipe[0].data  <= axi_wdata;
+                    write_pipe[0].strb  <= axi_wstrb;
+                    write_pipe[0].resp  <= (wr_burst_err ||
+                                            write_addr_reg < BASE_ADDR ||
+                                            write_addr_reg >= (BASE_ADDR + MEM_SIZE))
+                                          ? 2'b10 : 2'b00;
+                end else if (write_pipe[0].valid && axi_bready) begin
+                    write_pipe[0].valid <= 1'b0;
+                end
+            end else begin
+                // ── Latency > 1: shift-register pipeline ──────────────────
+                //
+                // Stage[0]  — output: drain on B-accept, else load from [1]
+                if (write_pipe[0].valid && axi_bready) begin
+                    write_pipe[0].valid <= 1'b0;
+                end else if (!write_pipe[0].valid && write_pipe[1].valid) begin
+                    write_pipe[0] <= write_pipe[1];
+                end
+
+                // Stages[1 .. MEM_WRITE_LATENCY-2] — middle shift stages
+                for (int i = 1; i < MEM_WRITE_LATENCY - 1; i++) begin
+                    if (write_pipe[i].valid && !write_pipe[i-1].valid) begin
+                        // Downstream is empty → shift out; stage[i-1] loads
+                        // our value in its own non-blocking assignment above.
+                        write_pipe[i].valid <= 1'b0;
+                    end else if (!write_pipe[i].valid && write_pipe[i+1].valid) begin
+                        // We are empty and upstream has data → shift in.
+                        write_pipe[i] <= write_pipe[i+1];
                     end
-                end else begin
+                    // else: hold (occupied + downstream occupied, or empty + no upstream)
+                end
+
+                // Stage[MEM_WRITE_LATENCY-1] — entry stage
+                // write_pipe_busy watches this stage; axi_awready/wready go
+                // low when it is occupied.
+                if (write_pipe[MEM_WRITE_LATENCY-1].valid &&
+                    !write_pipe[MEM_WRITE_LATENCY-2].valid) begin
+                    // Shift out to the stage below; clear the entry stage so
+                    // the next write can be accepted one cycle later.
+                    write_pipe[MEM_WRITE_LATENCY-1].valid <= 1'b0;
+                end else if (!write_pipe[MEM_WRITE_LATENCY-1].valid &&
+                             write_addr_valid && axi_wvalid &&
+                             write_can_accept && axi_wlast) begin
+                    // Accept new write into the entry stage.
+                    write_pipe[MEM_WRITE_LATENCY-1].valid <= 1'b1;
+                    write_pipe[MEM_WRITE_LATENCY-1].addr  <= write_addr_reg;
+                    write_pipe[MEM_WRITE_LATENCY-1].data  <= axi_wdata;
+                    write_pipe[MEM_WRITE_LATENCY-1].strb  <= axi_wstrb;
+                    write_pipe[MEM_WRITE_LATENCY-1].resp  <= (wr_burst_err ||
+                                                              write_addr_reg < BASE_ADDR ||
+                                                              write_addr_reg >= (BASE_ADDR + MEM_SIZE))
+                                                            ? 2'b10 : 2'b00;
+                end
+
+                // Stages >= MEM_WRITE_LATENCY are unused; keep them clear.
+                for (int i = MEM_WRITE_LATENCY; i < MAX_WRITE_STAGES; i++) begin
                     write_pipe[i].valid <= 1'b0;
                 end
             end

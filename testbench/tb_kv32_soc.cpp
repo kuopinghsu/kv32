@@ -23,6 +23,7 @@
 #include <iomanip>
 #include <fstream>
 #include <sstream>
+#include <vector>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -204,6 +205,12 @@ static void dump_instruction_trace(
         static bool        pstore_lv    = false;
         static uint32_t    pstore_lp    = 0;
         static uint32_t    pstore_li    = 0;
+        // Queue for instructions that retired while a store was pending.
+        // fence_stall only activates once FENCE reaches MEM, but fence_in_pipe
+        // detects FENCE as early as the IF stage.  Between the sw retiring and
+        // the fence reaching MEM, addi/bne etc. can retire and must be queued
+        // here so they are emitted AFTER the pending store trace line.
+        static std::vector<std::string> pstore_queue;
         // ───────────────────────────────────────────────────────────────────
 
         // Flush pending store once the B-channel response has arrived.
@@ -213,15 +220,21 @@ static void dump_instruction_trace(
             dut->get_store_resp(&resp_valid, &resp_error, &fence_in_pipe_unused);
             if (resp_valid) {
                 if (!resp_error) {
-                    // Store completed OK — emit the buffered line
+                    // Store completed OK — emit the buffered store line first,
+                    // then any instructions that were queued behind it.
                     trace_file << pstore_line << std::endl;
+                    for (const auto& queued_line : pstore_queue) {
+                        trace_file << queued_line << std::endl;
+                    }
                 } else {
-                    // Store faulted (SLVERR) — discard and roll back state
+                    // Store faulted (SLVERR) — discard store and queued
+                    // instructions, roll back count to before the store.
                     instr_count = pstore_count;
                     last_valid  = pstore_lv;
                     last_pc     = pstore_lp;
                     last_instr  = pstore_li;
                 }
+                pstore_queue.clear();
                 pstore_has = false;
             }
         }
@@ -384,8 +397,11 @@ static void dump_instruction_trace(
             }
             if (fence_in_pipe) {
                 // FENCE is in the pipeline — buffer this store's trace line.
-                // The fence_stall will hold off subsequent retirements until
-                // the B-channel arrives, so the buffer is safe to hold.
+                // NOTE: fence_stall only fires once FENCE reaches MEM, so
+                // instructions between the sw and the FENCE (e.g. addi/bne
+                // in a loop) can still retire before the B-channel arrives.
+                // Those instructions are held in pstore_queue and emitted
+                // after the store line when the B-channel response comes in.
                 pstore_count = prior_count;
                 pstore_lv    = prior_lv;
                 pstore_lp    = prior_lp;
@@ -399,7 +415,13 @@ static void dump_instruction_trace(
             // store committed without a fault, emit its trace line directly.
         }
 
-        trace_file << base_line << std::string(padding_needed, ' ') << "; " << disasm_str << std::endl;
+        // If a store is still pending (B-channel not yet confirmed), queue this
+        // instruction so it is emitted after the store line in program order.
+        if (pstore_has) {
+            pstore_queue.push_back(base_line + std::string(padding_needed, ' ') + "; " + disasm_str);
+        } else {
+            trace_file << base_line << std::string(padding_needed, ' ') << "; " << disasm_str << std::endl;
+        }
     } catch (...) {
         if (!debug_printed) {
             std::cerr << "WARNING: DPI call failed at cycle " << cycle_num << std::endl;
