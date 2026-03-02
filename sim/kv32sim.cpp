@@ -659,7 +659,7 @@ void KV32Simulator::untick_slaves() {
 }
 
 // Memory access
-uint32_t KV32Simulator::read_mem(uint32_t addr, int size) {
+uint32_t KV32Simulator::read_mem(uint32_t addr, int size, bool is_fetch) {
     // Check for misaligned access
     if ((size == 2 && (addr & 0x1)) || (size == 4 && (addr & 0x3))) {
         // Misaligned access - raise exception
@@ -695,12 +695,15 @@ uint32_t KV32Simulator::read_mem(uint32_t addr, int size) {
     bool handled = false;
     uint32_t value = bus_read(addr, size, &handled);
     if (!handled) {
-        if (trace_enabled && trace_file.is_open()) {
-            trace_file << "Memory read out of bounds: addr=0x" << std::hex
-                       << std::setfill('0') << std::setw(8) << addr
-                       << " size=" << std::dec << size << " pc=0x" << std::hex
-                       << std::setfill('0') << std::setw(8) << pc << std::endl;
-        }
+        // Unmapped address: raise instruction fetch fault (cause 1) or load access fault (cause 5)
+        uint32_t cause = is_fetch ? CAUSE_FETCH_ACCESS : CAUSE_LOAD_ACCESS;
+        uint32_t mie_bit = (csr_mstatus >> 3) & 1;
+        csr_mstatus = (csr_mstatus & ~0x1888) | (mie_bit << 7) | (3 << 11);
+        write_csr(CSR_MCAUSE, cause);
+        write_csr(CSR_MTVAL,  addr);
+        write_csr(CSR_MEPC,   pc);
+        exception_occurred = true;
+        exception_pc = read_csr(CSR_MTVEC) & ~0x3;
         return 0;
     }
     // AXI SLVERR from peripheral → load access fault (cause 5)
@@ -758,12 +761,14 @@ void KV32Simulator::write_mem(uint32_t addr, uint32_t value, int size) {
     }
 
     if (!bus_write(addr, value, size)) {
-        std::cout << "Memory write out of bounds: addr=0x" << std::hex
-                  << std::setfill('0') << std::setw(8) << addr
-                  << " size=" << std::dec << size << " value=0x" << std::hex
-                  << std::setfill('0') << std::setw(8) << value << " pc=0x"
-                  << std::hex << std::setfill('0') << std::setw(8) << pc
-                  << std::endl;
+        // Unmapped address: raise store access fault (cause 7)
+        uint32_t mie_bit = (csr_mstatus >> 3) & 1;
+        csr_mstatus = (csr_mstatus & ~0x1888) | (mie_bit << 7) | (3 << 11);
+        write_csr(CSR_MCAUSE, CAUSE_STORE_ACCESS);
+        write_csr(CSR_MTVAL,  addr);
+        write_csr(CSR_MEPC,   pc);
+        exception_occurred = true;
+        exception_pc = read_csr(CSR_MTVEC) & ~0x3;
         return;
     }
     // AXI SLVERR from peripheral → store access fault (cause 7)
@@ -813,8 +818,17 @@ void KV32Simulator::step() {
     // the device state after the *previous* instruction retired.
     tick_slaves();
 
-    uint32_t inst = read_mem(pc, 4);
+    uint32_t inst = read_mem(pc, 4, true);
     uint32_t exec_pc = pc; // Save PC for logging
+
+    // Instruction fetch fault (e.g. fetch from unmapped address) — abort before decode.
+    // Like illegal instruction: the insn is not retired; undo counter/mtime increments.
+    if (exception_occurred) {
+        untick_slaves();
+        inst_count--; csr_mcycle--; csr_minstret--;
+        pc = exception_pc;
+        return;
+    }
 
     uint32_t opcode = inst & 0x7F;
     uint32_t rd = (inst >> 7) & 0x1F;

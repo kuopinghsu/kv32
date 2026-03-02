@@ -217,7 +217,7 @@ public:
     bool bus_write(uint32_t addr, uint32_t value, int size);
     void tick_slaves();
 
-    uint32_t read_mem(uint32_t addr, int size);
+    uint32_t read_mem(uint32_t addr, int size, bool is_fetch = false);
     void write_mem(uint32_t addr, uint32_t value, int size);
     int32_t sign_extend(uint32_t value, int bits);
 

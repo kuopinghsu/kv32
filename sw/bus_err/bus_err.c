@@ -2,11 +2,28 @@
 // File: bus_err.c
 // Project: KV32 RISC-V Processor
 // Description: AXI slave bus-error (SLVERR) test for 8 peripheral slaves
-//              (CLINT is skipped – Spike does not return SLVERR on CLINT accesses)
+//              plus null-address accesses on data and instruction paths.
 //
-// Verifies that a load/store to an out-of-range address within each
-// AXI peripheral raises the correct access-fault exception (cause 5 or 7)
-// and that the exception handler can resume execution at mepc+4.
+// Peripheral slave tests (tests 1-16):
+//   Verifies that a load/store to an out-of-range address within each
+//   AXI peripheral raises the correct access-fault exception (cause 5 or 7)
+//   and that the exception handler can resume execution at mepc+4.
+//
+// Null-address tests (tests 17-19):
+//   Tests 17-18: Load/store to virtual address 0x0 via the data AXI bus.
+//     Address 0 is unmapped on the data path (the sole AXI memory slave
+//     lives at 0x8000_0000), so the arbiter returns DECERR → SLVERR,
+//     raising LOAD_FAULT (5) or STORE_FAULT (7) respectively.
+//   Test 19: Function call through a NULL pointer.
+//     The JALR redirects the PC to 0x0; the instruction fetch from 0x0
+//     returns SLVERR on the instruction AXI port, raising INSN_FAULT (1).
+//     Because mepc = 0 after the fault, the handler cannot use mepc+4 to
+//     resume (that would keep fetching from unmapped space). Instead a
+//     pre-stored resume address is used so that MRET returns to the
+//     instruction immediately after the indirect call.
+//     The resume address is captured with an inline-asm forward label
+//     ("la %0, 1f" / "1:") rather than GCC's &&label extension, which
+//     is unreliable at -O2 (the label may resolve to the wrong address).
 // ============================================================================
 
 #include <stdint.h>
@@ -25,13 +42,29 @@ static int g_pass, g_fail;
 static volatile int      g_bus_err_caught;
 static volatile uint32_t g_bus_err_mcause;
 
-/* ── bus-error exception handler ───────────────────────────────────────── */
+/* Resume address written before a null function call so the INSN_FAULT
+ * handler can redirect mepc there (mepc = 0 after the fault, so mepc+4
+ * would still be unmapped). */
+static volatile uintptr_t g_null_call_resume;
+
+/* ── bus-error exception handler (load/store faults) ───────────────────── */
 static void bus_err_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 {
     (void)mtval;
     g_bus_err_caught = 1;
     g_bus_err_mcause = mcause;
-    write_csr_mepc(mepc + 4);  /* skip the faulting load/store instruction */
+    write_csr_mepc(mepc + 4);  /* skip the faulting load/store/fence instruction */
+}
+
+/* ── instruction-access-fault handler (null function call) ──────────────── */
+static void insn_fault_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+{
+    (void)mtval;
+    (void)mepc;  /* mepc = 0x0 (unmapped fetch address) — cannot use mepc+4 */
+    g_bus_err_caught = 1;
+    g_bus_err_mcause = mcause;
+    /* Redirect to the pre-stored resume point (instruction after the call). */
+    write_csr_mepc((uint32_t)g_null_call_resume);
 }
 
 /* ── helper: test one invalid address (load + store) ────────────────────── */
@@ -100,6 +133,8 @@ int main(void)
     /* Install handlers for load-access-fault and store-access-fault */
     kv_exc_register(KV_EXC_LOAD_FAULT,  bus_err_handler);
     kv_exc_register(KV_EXC_STORE_FAULT, bus_err_handler);
+    /* Install handler for instruction-access-fault (null function call) */
+    kv_exc_register(KV_EXC_INSN_FAULT,  insn_fault_handler);
 
     /* Each call tests: (2*N-1) invalid load, (2*N) invalid store */
     test_peripheral(1, "UART",
@@ -135,6 +170,53 @@ int main(void)
     /* Magic: only EXIT (offset 0xFFF0) and CONSOLE (offset 0xFFF4) valid */
     test_peripheral(8, "Magic",
                     (volatile uint32_t *)(KV_MAGIC_BASE + 0x0000UL));
+
+    /* ── Null-address tests ── */
+    /* Tests 17 & 18: data load/store to address 0x0.
+     * Address 0 is not mapped on the data AXI path (only slave at
+     * 0x8000_0000), so the arbiter returns DECERR → load/store access fault. */
+    test_peripheral(9, "NULL ptr (data)",
+                    (volatile uint32_t *)0);
+
+    /* Test 19: function call through NULL pointer.
+     * JALR redirects PC to 0x0; instruction fetch from 0x0 returns SLVERR
+     * on the instruction AXI port, raising instruction access fault (cause 1).
+     * mepc = 0x0 after the fault so the handler uses a pre-stored resume
+     * address instead of mepc+4.
+     *
+     * IMPORTANT: do NOT use GCC's &&label extension for the resume address.
+     * At -O2 the compiler may place the label at the wrong location (e.g.
+     * the function entry), causing an infinite restart loop.  Instead use
+     * inline-asm local numeric labels:
+     *   "la %0, 1f"  – loads the address of forward label 1: into resume
+     *   "1:"         – marks the instruction immediately after the null call
+     * Both asm statements are volatile so GCC cannot reorder them. */
+    printf("[TEST 19] NULL function call -> instruction access fault\n");
+    g_bus_err_caught = 0;
+    g_bus_err_mcause = 0xFFFFFFFFu;
+
+    {
+        uintptr_t resume;
+        /* "1f" resolves to the label "1:" that appears right after null_fn().
+         * Store it before the call so insn_fault_handler can redirect mepc. */
+        asm volatile ("la %0, 1f" : "=r"(resume));
+        g_null_call_resume = resume;
+
+        typedef void (*fn_t)(void);
+        volatile fn_t null_fn = (fn_t)0;
+        null_fn();          /* JALR to 0x0 -> insn fetch fault -> insn_fault_handler */
+        asm volatile ("1:"); /* resume point: MRET will land here */
+    }
+
+    if (!g_bus_err_caught) {
+        TEST_FAIL(19, "NULL call produced no exception");
+    } else if ((g_bus_err_mcause & 0x1Fu) != KV_EXC_INSN_FAULT) {
+        printf("[TEST 19] FAIL: wrong cause %u (expected %u)\n",
+               (unsigned)(g_bus_err_mcause & 0x1Fu), KV_EXC_INSN_FAULT);
+        g_fail++;
+    } else {
+        TEST_PASS(19);
+    }
 
     /* ── summary ── */
     printf("\nResults: %d passed, %d failed\n", g_pass, g_fail);
