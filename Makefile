@@ -177,6 +177,17 @@ VERILATOR_FLAGS += -pvalue+MEM_READ_LATENCY=$(MEM_READ_LATENCY)
 VERILATOR_FLAGS += -pvalue+MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY)
 VERILATOR_FLAGS += -pvalue+MEM_DUAL_PORT=$(MEM_DUAL_PORT)
 
+# External memory type: sram (default) or ddr4
+# MEM_TYPE=sram  → axi_memory.sv (32-bit, parametric latency, DPI-C)
+# MEM_TYPE=ddr4  → ddr4_axi4_slave.sv (full AXI4 with ID, DDR4 timing, DPI-C)
+MEM_TYPE ?= sram
+ifeq ($(MEM_TYPE),ddr4)
+  MEM_TB_SV = $(TB_DIR)/ddr4_axi4_pkg.sv $(TB_DIR)/ddr4_axi4_slave.sv
+  VERILATOR_FLAGS += +define+MEM_TYPE_DDR4
+else
+  MEM_TB_SV = $(TB_DIR)/axi_memory.sv
+endif
+
 # I-cache defaults (set before ifdef blocks so ?= assignments take effect)
 ICACHE_EN    ?= 1
 ICACHE_SIZE  ?= 4096
@@ -211,7 +222,7 @@ DEBUG        ?=
 DEBUG_GROUP  ?=
 # Pass I-cache parameters to C++ testbench for stats reporting
 VERILATOR_FLAGS += -CFLAGS "-DICACHE_EN=$(ICACHE_EN) -DICACHE_SIZE=$(ICACHE_SIZE) -DICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) -DICACHE_WAYS=$(ICACHE_WAYS)"
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP) COVERAGE=$(COVERAGE) MEM_READ_LATENCY=$(MEM_READ_LATENCY) MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY) MEM_DUAL_PORT=$(MEM_DUAL_PORT)
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP) COVERAGE=$(COVERAGE) MEM_READ_LATENCY=$(MEM_READ_LATENCY) MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY) MEM_DUAL_PORT=$(MEM_DUAL_PORT) MEM_TYPE=$(MEM_TYPE)
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
 
 # SW params stamp: tracks CFLAGS defines passed to the RISC-V compiler.
@@ -228,7 +239,7 @@ RTL_SOURCES = \
 	$(filter-out $(RTL_DIR)/axi_pkg.sv, $(wildcard $(RTL_DIR)/*.sv)) \
 	$(filter-out $(RTL_DIR)/jtag/PINMUX_EXAMPLES.sv, $(wildcard $(RTL_DIR)/jtag/*.sv)) \
 	$(wildcard $(MEM_DIR)/*.sv) \
-	$(TB_DIR)/axi_memory.sv \
+	$(MEM_TB_SV) \
 	$(TB_DIR)/axi_monitor.sv \
 	$(TB_DIR)/uart_loopback.sv \
 	$(TB_DIR)/spi_slave_memory.sv \

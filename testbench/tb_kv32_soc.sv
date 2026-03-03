@@ -224,7 +224,13 @@ module tb_kv32_soc #(
         .axi_wready  (axi_wready)
     );
 
-    // Instantiate external memory (2MB)
+    // Instantiate external memory at 0x80000000 (2MB / 1GB)
+    // Select memory model at elaboration time via +define+MEM_TYPE_DDR4 (MEM_TYPE=ddr4)
+    // or leave undefined for the default axi_memory SRAM model (MEM_TYPE=sram).
+`ifndef MEM_TYPE_DDR4
+    // -------------------------------------------------------------------------
+    // SRAM model: axi_memory (32-bit AXI, DPI-C ELF loader, parametric latency)
+    // -------------------------------------------------------------------------
     axi_memory #(
         .ADDR_WIDTH(32),
         .DATA_WIDTH(32),
@@ -238,19 +244,19 @@ module tb_kv32_soc #(
     ) ext_mem (
         .clk(clk),
         .rst_n(rst_n),
-        .axi_awaddr(axi_awaddr),
-        .axi_awlen (axi_awlen),
+        .axi_awaddr (axi_awaddr),
+        .axi_awlen  (axi_awlen),
         .axi_awburst(axi_awburst),
         .axi_awvalid(axi_awvalid),
         .axi_awready(axi_awready),
-        .axi_wdata(axi_wdata),
-        .axi_wstrb(axi_wstrb),
-        .axi_wlast (axi_wlast),
-        .axi_wvalid(axi_wvalid),
-        .axi_wready(axi_wready),
-        .axi_bresp(axi_bresp),
-        .axi_bvalid(axi_bvalid),
-        .axi_bready(axi_bready),
+        .axi_wdata  (axi_wdata),
+        .axi_wstrb  (axi_wstrb),
+        .axi_wlast  (axi_wlast),
+        .axi_wvalid (axi_wvalid),
+        .axi_wready (axi_wready),
+        .axi_bresp  (axi_bresp),
+        .axi_bvalid (axi_bvalid),
+        .axi_bready (axi_bready),
         .axi_araddr (axi_araddr),
         .axi_arvalid(axi_arvalid),
         .axi_arready(axi_arready),
@@ -263,6 +269,68 @@ module tb_kv32_soc #(
         .axi_rready (axi_rready),
         .axi_rlast  (axi_rlast)
     );
+`else
+    // -------------------------------------------------------------------------
+    // DDR4 model: ddr4_axi4_slave (32-bit AXI4 with full ID/sideband, 1 GB)
+    // Sideband signals not driven by the 32-bit SoC core are tied to safe values.
+    // -------------------------------------------------------------------------
+    /* verilator lint_off PINCONNECTEMPTY */
+    ddr4_axi4_slave #(
+        .AXI_ID_WIDTH   (4),
+        .AXI_ADDR_WIDTH (32),
+        .AXI_DATA_WIDTH (32),
+        .DDR4_DENSITY_GB(1),
+        .BASE_ADDR      (32'h80000000),
+        .ENABLE_TIMING_CHECK(0),
+        .VERBOSE_MODE   (0)
+    ) ext_mem (
+        .aclk            (clk),
+        .aresetn         (rst_n),
+        // Write address channel
+        .s_axi_awid      (4'b0),
+        .s_axi_awaddr    (axi_awaddr),
+        .s_axi_awlen     (axi_awlen),
+        .s_axi_awsize    (3'b010),      // 4 bytes (DATA_WIDTH=32 → fixed)
+        .s_axi_awburst   (axi_awburst),
+        .s_axi_awlock    (1'b0),
+        .s_axi_awcache   (4'b0),
+        .s_axi_awprot    (3'b0),
+        .s_axi_awqos     (4'b0),
+        .s_axi_awvalid   (axi_awvalid),
+        .s_axi_awready   (axi_awready),
+        // Write data channel
+        .s_axi_wdata     (axi_wdata),
+        .s_axi_wstrb     (axi_wstrb),
+        .s_axi_wlast     (axi_wlast),
+        .s_axi_wvalid    (axi_wvalid),
+        .s_axi_wready    (axi_wready),
+        // Write response channel
+        .s_axi_bid       (),            // not used by SoC
+        .s_axi_bresp     (axi_bresp),
+        .s_axi_bvalid    (axi_bvalid),
+        .s_axi_bready    (axi_bready),
+        // Read address channel
+        .s_axi_arid      (4'b0),
+        .s_axi_araddr    (axi_araddr),
+        .s_axi_arlen     (axi_arlen),
+        .s_axi_arsize    (axi_arsize),
+        .s_axi_arburst   (axi_arburst),
+        .s_axi_arlock    (1'b0),
+        .s_axi_arcache   (4'b0),
+        .s_axi_arprot    (3'b0),
+        .s_axi_arqos     (4'b0),
+        .s_axi_arvalid   (axi_arvalid),
+        .s_axi_arready   (axi_arready),
+        // Read data channel
+        .s_axi_rid       (),            // not used by SoC
+        .s_axi_rdata     (axi_rdata),
+        .s_axi_rresp     (axi_rresp),
+        .s_axi_rlast     (axi_rlast),
+        .s_axi_rvalid    (axi_rvalid),
+        .s_axi_rready    (axi_rready)
+    );
+    /* verilator lint_on PINCONNECTEMPTY */
+`endif
 
     // ========================================================================
     // Testbench Peripheral Targets

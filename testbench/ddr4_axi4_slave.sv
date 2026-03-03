@@ -9,6 +9,11 @@
 // (CL, RCD, RP, RAS, etc.).  Intended for use in Verilator testbenches.
 // ============================================================================
 
+/* verilator lint_off UNUSEDSIGNAL */
+/* verilator lint_off CASEINCOMPLETE */
+/* verilator lint_off WIDTHEXPAND */
+/* verilator lint_off WIDTHTRUNC */
+
 module ddr4_axi4_slave #(
     //-------------------------------------------------------------------------
     // AXI4 Interface Parameters
@@ -50,7 +55,8 @@ module ddr4_axi4_slave #(
     parameter ENABLE_ECC        = 0,              // Enable ECC (if DQ width supports)
     parameter RANDOM_DELAY_EN   = 0,              // Enable random response delays
     parameter MAX_RANDOM_DELAY  = 10,             // Maximum random delay cycles
-    parameter VERBOSE_MODE      = 1               // Enable verbose logging
+    parameter VERBOSE_MODE      = 1,              // Enable verbose logging
+    parameter BASE_ADDR         = 32'h80000000    // Base address of this memory in AXI address space
 )(
     //-------------------------------------------------------------------------
     // Global Signals
@@ -290,18 +296,18 @@ module ddr4_axi4_slave #(
         endcase
     endfunction
 
-    // Convert AXI address to memory index
+    // Convert AXI address to memory index (subtract BASE_ADDR first)
     function automatic [MEM_ADDR_WIDTH-1:0] addr_to_mem_index(
         input [AXI_ADDR_WIDTH-1:0] addr
     );
-        addr_to_mem_index = addr[MEM_ADDR_WIDTH+ADDR_LSB-1:ADDR_LSB];
+        addr_to_mem_index = (addr - BASE_ADDR) >> ADDR_LSB;
     endfunction
 
     // Check if address is valid
     function automatic logic is_valid_address(
         input [AXI_ADDR_WIDTH-1:0] addr
     );
-        is_valid_address = (addr < MEM_SIZE_BYTES);
+        is_valid_address = (addr >= BASE_ADDR) && (addr < BASE_ADDR + MEM_SIZE_BYTES);
     endfunction
 
     //=========================================================================
@@ -518,16 +524,15 @@ module ddr4_axi4_slave #(
                         s_axi_bvalid <= 1'b0;
 
                         // Calculate and update latency statistics
-                        automatic time latency = $time - wr_start_time;
-                        stats.write_latency_total <= stats.write_latency_total + latency;
-                        if (latency < stats.min_write_latency)
-                            stats.min_write_latency <= latency;
-                        if (latency > stats.max_write_latency)
-                            stats.max_write_latency <= latency;
+                        stats.write_latency_total <= stats.write_latency_total + ($time - wr_start_time);
+                        if (($time - wr_start_time) < stats.min_write_latency)
+                            stats.min_write_latency <= $time - wr_start_time;
+                        if (($time - wr_start_time) > stats.max_write_latency)
+                            stats.max_write_latency <= $time - wr_start_time;
 
                         if (VERBOSE_MODE)
                             $display("[%0t] DDR4_MODEL: Write transaction completed - ID=%0d, Latency=%0t",
-                                    $time, wr_id_reg, latency);
+                                    $time, wr_id_reg, $time - wr_start_time);
                     end
                 end
             endcase
@@ -667,16 +672,15 @@ module ddr4_axi4_slave #(
                             s_axi_rvalid <= 1'b0;
 
                             // Calculate and update latency statistics
-                            automatic time latency = $time - rd_start_time;
-                            stats.read_latency_total <= stats.read_latency_total + latency;
-                            if (latency < stats.min_read_latency)
-                                stats.min_read_latency <= latency;
-                            if (latency > stats.max_read_latency)
-                                stats.max_read_latency <= latency;
+                            stats.read_latency_total <= stats.read_latency_total + ($time - rd_start_time);
+                            if (($time - rd_start_time) < stats.min_read_latency)
+                                stats.min_read_latency <= $time - rd_start_time;
+                            if (($time - rd_start_time) > stats.max_read_latency)
+                                stats.max_read_latency <= $time - rd_start_time;
 
                             if (VERBOSE_MODE)
                                 $display("[%0t] DDR4_MODEL: Read transaction completed - ID=%0d, Latency=%0t",
-                                        $time, rd_id_reg, latency);
+                                        $time, rd_id_reg, $time - rd_start_time);
                         end else begin
                             rd_beat_cnt <= rd_beat_cnt + 1;
                             rd_addr_next <= calc_next_addr(rd_addr_next, rd_size_reg, rd_burst_reg, rd_len_reg, rd_addr_reg);
@@ -838,4 +842,53 @@ module ddr4_axi4_slave #(
         print_statistics();
     end
 
+    //=========================================================================
+    // DPI-C Memory Access Interface (compatible with elfloader / tb_kv32_soc.cpp)
+    //
+    // elfloader.cpp subtracts g_mem_base (0x80000000) before calling these
+    // functions, so addr=0 corresponds to BASE_ADDR in AXI space.
+    //=========================================================================
+    export "DPI-C" function mem_write_byte;
+    export "DPI-C" function mem_read_byte;
+    export "DPI-C" function mem_get_stat_ar_requests;
+    export "DPI-C" function mem_get_stat_r_responses;
+    export "DPI-C" function mem_get_stat_aw_requests;
+    export "DPI-C" function mem_get_stat_w_data;
+    export "DPI-C" function mem_get_stat_w_expected;
+    export "DPI-C" function mem_get_stat_b_responses;
+    export "DPI-C" function mem_get_stat_max_outstanding_reads;
+    export "DPI-C" function mem_get_stat_max_outstanding_writes;
+
+    function void mem_write_byte(input int addr, input byte data);
+        automatic int word_idx = addr / BYTES_PER_BEAT;
+        automatic int byte_lane = addr % BYTES_PER_BEAT;
+        if (word_idx >= 0 && word_idx < MEM_DEPTH) begin
+            memory[word_idx][byte_lane*8 +: 8] = data;
+        end
+    endfunction
+
+    function byte mem_read_byte(input int addr);
+        automatic int word_idx = addr / BYTES_PER_BEAT;
+        automatic int byte_lane = addr % BYTES_PER_BEAT;
+        if (word_idx >= 0 && word_idx < MEM_DEPTH)
+            return memory[word_idx][byte_lane*8 +: 8];
+        else
+            return 8'hFF;
+    endfunction
+
+    // Stat stubs — return transaction counts so tb_kv32_soc.cpp can compile
+    // and link with either MEM_TYPE=sram or MEM_TYPE=ddr4.
+    function int mem_get_stat_ar_requests();  return int'(stats.total_read_transactions);  endfunction
+    function int mem_get_stat_r_responses();  return int'(stats.total_read_transactions);  endfunction
+    function int mem_get_stat_aw_requests();  return int'(stats.total_write_transactions); endfunction
+    function int mem_get_stat_w_data();       return int'(stats.total_write_transactions); endfunction
+    function int mem_get_stat_w_expected();   return int'(stats.total_write_transactions); endfunction
+    function int mem_get_stat_b_responses();  return int'(stats.total_write_transactions); endfunction
+    function int mem_get_stat_max_outstanding_reads();  return 0; endfunction
+    function int mem_get_stat_max_outstanding_writes(); return 0; endfunction
+
 endmodule
+/* verilator lint_on WIDTHTRUNC */
+/* verilator lint_on WIDTHEXPAND */
+/* verilator lint_on CASEINCOMPLETE */
+/* verilator lint_on UNUSEDSIGNAL */

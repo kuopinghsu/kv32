@@ -11,6 +11,8 @@
 `ifndef DDR4_AXI4_PKG_SV
 `define DDR4_AXI4_PKG_SV
 
+/* verilator lint_off WIDTHEXPAND */
+
 package ddr4_axi4_pkg;
 
     //=========================================================================
