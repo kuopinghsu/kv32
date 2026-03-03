@@ -10,7 +10,9 @@
 #ifndef KV_PLATFORM_H
 #define KV_PLATFORM_H
 
+#ifndef __ASSEMBLER__
 #include <stdint.h>
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════
  * System memory
@@ -53,9 +55,9 @@
 #define KV_PLIC_SRC_TIMER   6
 
 /* ═══════════════════════════════════════════════════════════════════
- * UART  (0x2000_0000)
+ * UART  (0x2001_0000, 64 KB)
  * ══════════════════════════════════════════════════════════════════ */
-#define KV_UART_BASE        0x20000000UL
+#define KV_UART_BASE        0x20010000UL
 #define KV_UART_SIZE        0x00010000UL
 
 /* Register offsets */
@@ -84,9 +86,9 @@
 #define KV_UART_CTRL_LOOPBACK (1u << 0) /* Internal TX→RX loopback       */
 
 /* ═══════════════════════════════════════════════════════════════════
- * I2C master  (0x2001_0000)
+ * I2C master  (0x2002_0000, 64 KB)
  * ══════════════════════════════════════════════════════════════════ */
-#define KV_I2C_BASE         0x20010000UL
+#define KV_I2C_BASE         0x20020000UL
 #define KV_I2C_SIZE         0x00010000UL
 
 /* Register offsets */
@@ -121,9 +123,9 @@
 #define KV_I2C_IE_STOP_DONE (1u << 2)  /* STOP condition completed      */
 
 /* ═══════════════════════════════════════════════════════════════════
- * SPI master  (0x2002_0000)
+ * SPI master  (0x2003_0000, 64 KB)
  * ══════════════════════════════════════════════════════════════════ */
-#define KV_SPI_BASE         0x20020000UL
+#define KV_SPI_BASE         0x20030000UL
 #define KV_SPI_SIZE         0x00010000UL
 
 /* Register offsets */
@@ -166,14 +168,14 @@
 #define KV_SPI_IE_TX_EMPTY  (1u << 1)  /* TX FIFO drained interrupt     */
 
 /* ═══════════════════════════════════════════════════════════════════
- * DMA controller  (0x2003_0000, 4 KB)
+ * DMA controller  (0x2000_0000, 64 KB)
  * ═══════════════════════════════════════════════════════════════════
  *
  * Up to 8 independent channels.  Per-channel registers are at
  *   DMA_BASE + channel * 0x40.  Global registers at DMA_BASE + 0xF00.
  */
-#define KV_DMA_BASE              0x20030000UL
-#define KV_DMA_SIZE              0x00001000UL
+#define KV_DMA_BASE              0x20000000UL
+#define KV_DMA_SIZE              0x00010000UL
 #define KV_PLIC_SRC_DMA          4  /* PLIC interrupt source number */
 
 /* Per-channel register offsets (relative to KV_DMA_BASE + ch*0x40) */
@@ -230,9 +232,9 @@
 #define KV_DMA_GLB_REG(off)    KV_REG32(KV_DMA_BASE, (off))
 
 /* ═══════════════════════════════════════════════════════════════════
- * GPIO  (0x2004_0000, 64 KB)
+ * GPIO  (0x2005_0000, 64 KB)
  * ══════════════════════════════════════════════════════════════════ */
-#define KV_GPIO_BASE              0x20040000UL
+#define KV_GPIO_BASE              0x20050000UL
 #define KV_GPIO_SIZE              0x00010000UL
 
 /* Register offsets (per bank: 0-3, each bank controls 32 pins) */
@@ -292,9 +294,9 @@
                                           /* [31:16] = VERSION (0x0001) */
 
 /* ═══════════════════════════════════════════════════════════════════
- * Timer/PWM  (0x2005_0000, 64 KB)
+ * Timer/PWM  (0x2004_0000, 64 KB)
  * ══════════════════════════════════════════════════════════════════ */
-#define KV_TIMER_BASE             0x20050000UL
+#define KV_TIMER_BASE             0x20040000UL
 #define KV_TIMER_SIZE             0x00010000UL
 
 /* Per-channel register offsets (4 timers, channel stride = 0x20) */
@@ -322,34 +324,36 @@
 /* ═══════════════════════════════════════════════════════════════════
  * Register accessor macro  (firmware only; not used by simulator)
  * ══════════════════════════════════════════════════════════════════ */
+#ifndef __ASSEMBLER__
 #define KV_REG32(base, off) \
     (*(volatile uint32_t *)((uintptr_t)(base) + (uintptr_t)(off)))
 
 /* ═══════════════════════════════════════════════════════════════════
- * Magic device  (0xFFFF_0000)  –  simulator / RTL testbench only
+ * Magic device  (0x4000_0000)  –  simulator / RTL testbench only
  *
  * Two memory-mapped registers let bare-metal firmware communicate
  * with the host environment without a real peripheral:
  *
- *   KV_MAGIC_CONSOLE  (0xFFFFFFF4)  write low byte → host console
- *   KV_MAGIC_EXIT     (0xFFFFFFF0)  write exit code (tohost encoding)
+ *   KV_MAGIC_CONSOLE  (0x40000000)  write low byte → host console
+ *   KV_MAGIC_EXIT     (0x40000004)  write exit code (tohost encoding)
  *
  * Exit encoding (matches HTIF/Spike tohost convention):
  *   pass (code 0): write 1
  *   fail (code N): write (N << 1) | 1
  * ══════════════════════════════════════════════════════════════════ */
-#define KV_MAGIC_BASE           0xFFFF0000UL
+#define KV_MAGIC_BASE           0x40000000UL
 #define KV_MAGIC_SIZE           0x00010000UL
-#define KV_MAGIC_EXIT_OFF       0xFFF0UL  /* offset from KV_MAGIC_BASE  */
-#define KV_MAGIC_CONSOLE_OFF    0xFFF4UL  /* offset from KV_MAGIC_BASE  */
+#define KV_MAGIC_CONSOLE_OFF    0x0000UL  /* offset from KV_MAGIC_BASE  */
+#define KV_MAGIC_EXIT_OFF       0x0004UL  /* offset from KV_MAGIC_BASE  */
 
 /* Absolute addresses (derived; match RTL axi_magic.sv and kv32sim) */
-#define KV_MAGIC_EXIT_ADDR      (KV_MAGIC_BASE + KV_MAGIC_EXIT_OFF)
 #define KV_MAGIC_CONSOLE_ADDR   (KV_MAGIC_BASE + KV_MAGIC_CONSOLE_OFF)
+#define KV_MAGIC_EXIT_ADDR      (KV_MAGIC_BASE + KV_MAGIC_EXIT_OFF)
 
 /* Register accessors (firmware) */
 #define KV_MAGIC_EXIT    KV_REG32(KV_MAGIC_BASE, KV_MAGIC_EXIT_OFF)
 #define KV_MAGIC_CONSOLE KV_REG32(KV_MAGIC_BASE, KV_MAGIC_CONSOLE_OFF)
+#endif /* !__ASSEMBLER__ */
 
 /* Inline API ------------------------------------------------------- */
 /* Define KV_PLATFORM_NO_INLINE_HELPERS before including this file     *

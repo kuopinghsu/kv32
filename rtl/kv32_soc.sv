@@ -31,13 +31,16 @@
 //   0x8000_0000 - 0x801F_FFFF: RAM (2MB)
 //   0x0200_0000 - 0x020B_FFFF: CLINT
 //   0x0C00_0000 - 0x0CFF_FFFF: PLIC
-//   0x2000_0000 - 0x2000_FFFF: UART
-//   0x2001_0000 - 0x2001_FFFF: I2C
-//   0x2002_0000 - 0x2002_FFFF: SPI
-//   0x2003_0000 - 0x2003_FFFF: DMA
-//   0x2004_0000 - 0x2004_FFFF: GPIO
-//   0x2005_0000 - 0x2005_FFFF: Timer
-//   0xFFFF_0000 - 0xFFFF_FFFF: Magic addresses
+//   0x4000_0000 - 0x4000_FFFF: Magic addresses
+//   0x0200_0000 - 0x020B_FFFF: CLINT
+//   0x0C00_0000 - 0x0CFF_FFFF: PLIC
+//   0x2000_0000 - 0x2000_FFFF: DMA
+//   0x2001_0000 - 0x2001_FFFF: UART
+//   0x2002_0000 - 0x2002_FFFF: I2C
+//   0x2003_0000 - 0x2003_FFFF: SPI
+//   0x2004_0000 - 0x2004_FFFF: Timer
+//   0x2005_0000 - 0x2005_FFFF: GPIO
+//   0x8000_0000 - 0x801F_FFFF: RAM (2MB)
 //
 // Default Configuration:
 //   - System Clock: 100 MHz
@@ -165,7 +168,9 @@ module kv32_soc #(
     logic        imem_req_ready;      // Memory system ready for new request
     // Loop-free version of imem_req_addr for icache fill-pending logic;
     // uses dedup_consumed (without imem_req_ready) to break the UNOPTFLAT loop.
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] imem_req_addr_fill;
+    /* verilator lint_on UNUSEDSIGNAL */
     logic        imem_resp_valid;     // Instruction data available
     logic [31:0] imem_resp_data;      // Fetched instruction word
     logic        imem_resp_error;     // Access error (e.g., unmapped address)
@@ -200,7 +205,9 @@ module kv32_soc #(
     logic [7:0]               imem_axi_arlen;      // Burst length (icache only)
     logic [2:0]               imem_axi_arsize;     // Burst size
     logic [1:0]               imem_axi_arburst;    // Burst type (INCR/WRAP)
+    /* verilator lint_off UNUSEDSIGNAL */
     logic                     imem_axi_rlast;      // Last beat of burst (icache only)
+    /* verilator lint_on UNUSEDSIGNAL */
 
     // ========================================================================
     // Data Memory AXI Bridge Signals (Read/Write)
@@ -312,7 +319,7 @@ module kv32_soc #(
     // AXI Interconnect <-> UART Signals
     // ========================================================================
     // Memory-mapped access to UART TX/RX data and status registers
-    // Base address: 0x2000_0000
+    // Base address: 0x2001_0000
     logic [31:0] uart_axi_awaddr;
     logic        uart_axi_awvalid;
     logic        uart_axi_awready;
@@ -335,7 +342,7 @@ module kv32_soc #(
     // AXI Interconnect <-> SPI Signals
     // ========================================================================
     // Memory-mapped access to SPI control, data, and status registers
-    // Base address: 0x2002_0000
+    // Base address: 0x2003_0000
     logic [31:0] spi_axi_awaddr;
     logic        spi_axi_awvalid;
     logic        spi_axi_awready;
@@ -358,7 +365,7 @@ module kv32_soc #(
     // AXI Interconnect <-> I2C Peripheral Signals
     // ========================================================================
     // Memory-mapped I2C master controller for sensor interfacing
-    // Base address: 0x2001_0000
+    // Base address: 0x2002_0000
     logic [31:0] i2c_axi_awaddr;
     logic        i2c_axi_awvalid;
     logic        i2c_axi_awready;
@@ -381,7 +388,7 @@ module kv32_soc #(
     // AXI Interconnect <-> GPIO Peripheral Signals
     // ========================================================================
     // Memory-mapped GPIO controller with up to 128 configurable pins
-    // Base address: 0x2004_0000
+    // Base address: 0x2005_0000
     logic [31:0] gpio_axi_awaddr;
     logic        gpio_axi_awvalid;
     logic        gpio_axi_awready;
@@ -404,7 +411,7 @@ module kv32_soc #(
     // AXI Interconnect <-> Timer Peripheral Signals
     // ========================================================================
     // Memory-mapped Timer/PWM controller with 4 independent 32-bit timers
-    // Base address: 0x2005_0000
+    // Base address: 0x2004_0000
     logic [31:0] timer_axi_awaddr;
     logic        timer_axi_awvalid;
     logic        timer_axi_awready;
@@ -427,8 +434,8 @@ module kv32_soc #(
     // AXI Interconnect <-> DMA Controller Signals
     // ========================================================================
     // Special addresses for simulation control (exit, pass/fail, etc.)
-    // Base address: 0x2003_0000
-    // DMA configuration slave AXI-Lite signals (xbar s6 → axi_dma cfg port)
+    // Base address: 0x2000_0000
+    // DMA configuration slave AXI-Lite signals (xbar s4 → axi_dma cfg port)
     logic [31:0] dma_cfg_axi_awaddr;  logic dma_cfg_axi_awvalid;  logic dma_cfg_axi_awready;
     logic [31:0] dma_cfg_axi_wdata;   logic [3:0] dma_cfg_axi_wstrb;
     logic        dma_cfg_axi_wvalid;  logic dma_cfg_axi_wready;
@@ -459,7 +466,7 @@ module kv32_soc #(
     // AXI Interconnect <-> Magic Device Signals
     // ========================================================================
     // Special addresses for simulation control (exit, pass/fail, etc.)
-    // Base address: 0xFFFF_0000
+    // Base address: 0x4000_0000
     logic [31:0] magic_axi_awaddr;
     logic        magic_axi_awvalid;
     logic        magic_axi_awready;
@@ -479,9 +486,11 @@ module kv32_soc #(
     logic        magic_axi_rready;
 
     // CMO sideband from CPU core (FENCE.I / cbo.inval instructions)
+    /* verilator lint_off UNUSEDSIGNAL */
     logic        core_cmo_valid;     // Core CMO request valid
     logic [1:0]  core_cmo_op;        // Core CMO operation
     logic [31:0] core_cmo_addr;      // Core CMO target address
+    /* verilator lint_on UNUSEDSIGNAL */
     logic        core_cmo_ready;     // Acknowledge back to core
 
     // ========================================================================
@@ -937,14 +946,17 @@ module kv32_soc #(
     // ========================================================================
     // AXI4 Interconnect (1-to-7 Crossbar)
     // ========================================================================
-    // Routes transactions from arbiter to 7 slave devices based on address with ID tracking:
+    // Routes transactions from arbiter to slave devices based on address with ID tracking:
     //   Slave 0 (0x8000_0000): External 2MB RAM
-    //   Slave 1 (0x0200_0000): CLINT timer peripheral
-    //   Slave 2 (0x0C00_0000): PLIC interrupt controller
-    //   Slave 3 (0x2000_0000): UART peripheral
-    //   Slave 4 (0x2001_0000): I2C peripheral
-    //   Slave 5 (0x2002_0000): SPI peripheral
-    //   Slave 6 (0xFFFF_0000): Magic addresses for simulation
+    //   Slave 1 (0x4000_0000): Magic device
+    //   Slave 2 (0x0200_0000): CLINT timer peripheral
+    //   Slave 3 (0x0C00_0000): PLIC interrupt controller
+    //   Slave 4 (0x2000_0000): DMA controller
+    //   Slave 5 (0x2001_0000): UART peripheral
+    //   Slave 6 (0x2002_0000): I2C peripheral
+    //   Slave 7 (0x2003_0000): SPI peripheral
+    //   Slave 8 (0x2004_0000): Timer/PWM peripheral
+    //   Slave 9 (0x2005_0000): GPIO peripheral
     // Returns DECERR response for unmapped addresses
     axi_xbar axi_intercon (
         .clk(clk),
@@ -1015,158 +1027,154 @@ module kv32_soc #(
         .s0_axi_rready (m_axi_rready),
         .s0_axi_rlast  (m_axi_rlast),
 
-        // Slave 1: CLINT
-        .s1_axi_awaddr(clint_axi_awaddr),
-        .s1_axi_awvalid(clint_axi_awvalid),
-        .s1_axi_awready(clint_axi_awready),
+        // Slave 1: Magic Device
+        .s1_axi_awaddr  (magic_axi_awaddr),
+        .s1_axi_awvalid (magic_axi_awvalid),
+        .s1_axi_awready (magic_axi_awready),
 
-        .s1_axi_wdata(clint_axi_wdata),
-        .s1_axi_wstrb(clint_axi_wstrb),
-        .s1_axi_wvalid(clint_axi_wvalid),
-        .s1_axi_wready(clint_axi_wready),
+        .s1_axi_wdata   (magic_axi_wdata),
+        .s1_axi_wstrb   (magic_axi_wstrb),
+        .s1_axi_wvalid  (magic_axi_wvalid),
+        .s1_axi_wready  (magic_axi_wready),
 
-        .s1_axi_bresp(clint_axi_bresp),
-        .s1_axi_bvalid(clint_axi_bvalid),
-        .s1_axi_bready(clint_axi_bready),
+        .s1_axi_bresp   (magic_axi_bresp),
+        .s1_axi_bvalid  (magic_axi_bvalid),
+        .s1_axi_bready  (magic_axi_bready),
 
-        .s1_axi_araddr(clint_axi_araddr),
-        .s1_axi_arvalid(clint_axi_arvalid),
-        .s1_axi_arready(clint_axi_arready),
+        .s1_axi_araddr  (magic_axi_araddr),
+        .s1_axi_arvalid (magic_axi_arvalid),
+        .s1_axi_arready (magic_axi_arready),
 
-        .s1_axi_rdata(clint_axi_rdata),
-        .s1_axi_rresp(clint_axi_rresp),
-        .s1_axi_rvalid(clint_axi_rvalid),
-        .s1_axi_rready(clint_axi_rready),
+        .s1_axi_rdata   (magic_axi_rdata),
+        .s1_axi_rresp   (magic_axi_rresp),
+        .s1_axi_rvalid  (magic_axi_rvalid),
+        .s1_axi_rready  (magic_axi_rready),
 
-        // Slave 2: PLIC
-        .s2_axi_awaddr(plic_axi_awaddr),
-        .s2_axi_awvalid(plic_axi_awvalid),
-        .s2_axi_awready(plic_axi_awready),
+        // Slave 2: CLINT
+        .s2_axi_awaddr(clint_axi_awaddr),
+        .s2_axi_awvalid(clint_axi_awvalid),
+        .s2_axi_awready(clint_axi_awready),
 
-        .s2_axi_wdata(plic_axi_wdata),
-        .s2_axi_wstrb(plic_axi_wstrb),
-        .s2_axi_wvalid(plic_axi_wvalid),
-        .s2_axi_wready(plic_axi_wready),
+        .s2_axi_wdata(clint_axi_wdata),
+        .s2_axi_wstrb(clint_axi_wstrb),
+        .s2_axi_wvalid(clint_axi_wvalid),
+        .s2_axi_wready(clint_axi_wready),
 
-        .s2_axi_bresp(plic_axi_bresp),
-        .s2_axi_bvalid(plic_axi_bvalid),
-        .s2_axi_bready(plic_axi_bready),
+        .s2_axi_bresp(clint_axi_bresp),
+        .s2_axi_bvalid(clint_axi_bvalid),
+        .s2_axi_bready(clint_axi_bready),
 
-        .s2_axi_araddr(plic_axi_araddr),
-        .s2_axi_arvalid(plic_axi_arvalid),
-        .s2_axi_arready(plic_axi_arready),
+        .s2_axi_araddr(clint_axi_araddr),
+        .s2_axi_arvalid(clint_axi_arvalid),
+        .s2_axi_arready(clint_axi_arready),
 
-        .s2_axi_rdata(plic_axi_rdata),
-        .s2_axi_rresp(plic_axi_rresp),
-        .s2_axi_rvalid(plic_axi_rvalid),
-        .s2_axi_rready(plic_axi_rready),
+        .s2_axi_rdata(clint_axi_rdata),
+        .s2_axi_rresp(clint_axi_rresp),
+        .s2_axi_rvalid(clint_axi_rvalid),
+        .s2_axi_rready(clint_axi_rready),
 
-        // Slave 3: UART
-        .s3_axi_awaddr(uart_axi_awaddr),
-        .s3_axi_awvalid(uart_axi_awvalid),
-        .s3_axi_awready(uart_axi_awready),
+        // Slave 3: PLIC
+        .s3_axi_awaddr(plic_axi_awaddr),
+        .s3_axi_awvalid(plic_axi_awvalid),
+        .s3_axi_awready(plic_axi_awready),
 
-        .s3_axi_wdata(uart_axi_wdata),
-        .s3_axi_wstrb(uart_axi_wstrb),
-        .s3_axi_wvalid(uart_axi_wvalid),
-        .s3_axi_wready(uart_axi_wready),
+        .s3_axi_wdata(plic_axi_wdata),
+        .s3_axi_wstrb(plic_axi_wstrb),
+        .s3_axi_wvalid(plic_axi_wvalid),
+        .s3_axi_wready(plic_axi_wready),
 
-        .s3_axi_bresp(uart_axi_bresp),
-        .s3_axi_bvalid(uart_axi_bvalid),
-        .s3_axi_bready(uart_axi_bready),
+        .s3_axi_bresp(plic_axi_bresp),
+        .s3_axi_bvalid(plic_axi_bvalid),
+        .s3_axi_bready(plic_axi_bready),
 
-        .s3_axi_araddr(uart_axi_araddr),
-        .s3_axi_arvalid(uart_axi_arvalid),
-        .s3_axi_arready(uart_axi_arready),
+        .s3_axi_araddr(plic_axi_araddr),
+        .s3_axi_arvalid(plic_axi_arvalid),
+        .s3_axi_arready(plic_axi_arready),
 
-        .s3_axi_rdata(uart_axi_rdata),
-        .s3_axi_rresp(uart_axi_rresp),
-        .s3_axi_rvalid(uart_axi_rvalid),
-        .s3_axi_rready(uart_axi_rready),
+        .s3_axi_rdata(plic_axi_rdata),
+        .s3_axi_rresp(plic_axi_rresp),
+        .s3_axi_rvalid(plic_axi_rvalid),
+        .s3_axi_rready(plic_axi_rready),
 
-        // Slave 4: I2C
-        .s4_axi_awaddr(i2c_axi_awaddr),
-        .s4_axi_awvalid(i2c_axi_awvalid),
-        .s4_axi_awready(i2c_axi_awready),
+        // Slave 4: DMA Controller
+        .s4_axi_awaddr  (dma_cfg_axi_awaddr),
+        .s4_axi_awvalid (dma_cfg_axi_awvalid),
+        .s4_axi_awready (dma_cfg_axi_awready),
+        .s4_axi_wdata   (dma_cfg_axi_wdata),
+        .s4_axi_wstrb   (dma_cfg_axi_wstrb),
+        .s4_axi_wvalid  (dma_cfg_axi_wvalid),
+        .s4_axi_wready  (dma_cfg_axi_wready),
+        .s4_axi_bresp   (dma_cfg_axi_bresp),
+        .s4_axi_bvalid  (dma_cfg_axi_bvalid),
+        .s4_axi_bready  (dma_cfg_axi_bready),
+        .s4_axi_araddr  (dma_cfg_axi_araddr),
+        .s4_axi_arvalid (dma_cfg_axi_arvalid),
+        .s4_axi_arready (dma_cfg_axi_arready),
+        .s4_axi_rdata   (dma_cfg_axi_rdata),
+        .s4_axi_rresp   (dma_cfg_axi_rresp),
+        .s4_axi_rvalid  (dma_cfg_axi_rvalid),
+        .s4_axi_rready  (dma_cfg_axi_rready),
 
-        .s4_axi_wdata(i2c_axi_wdata),
-        .s4_axi_wstrb(i2c_axi_wstrb),
-        .s4_axi_wvalid(i2c_axi_wvalid),
-        .s4_axi_wready(i2c_axi_wready),
+        // Slave 5: UART
+        .s5_axi_awaddr(uart_axi_awaddr),
+        .s5_axi_awvalid(uart_axi_awvalid),
+        .s5_axi_awready(uart_axi_awready),
 
-        .s4_axi_bresp(i2c_axi_bresp),
-        .s4_axi_bvalid(i2c_axi_bvalid),
-        .s4_axi_bready(i2c_axi_bready),
+        .s5_axi_wdata(uart_axi_wdata),
+        .s5_axi_wstrb(uart_axi_wstrb),
+        .s5_axi_wvalid(uart_axi_wvalid),
+        .s5_axi_wready(uart_axi_wready),
 
-        .s4_axi_araddr(i2c_axi_araddr),
-        .s4_axi_arvalid(i2c_axi_arvalid),
-        .s4_axi_arready(i2c_axi_arready),
+        .s5_axi_bresp(uart_axi_bresp),
+        .s5_axi_bvalid(uart_axi_bvalid),
+        .s5_axi_bready(uart_axi_bready),
 
-        .s4_axi_rdata(i2c_axi_rdata),
-        .s4_axi_rresp(i2c_axi_rresp),
-        .s4_axi_rvalid(i2c_axi_rvalid),
-        .s4_axi_rready(i2c_axi_rready),
+        .s5_axi_araddr(uart_axi_araddr),
+        .s5_axi_arvalid(uart_axi_arvalid),
+        .s5_axi_arready(uart_axi_arready),
 
-        // Slave 5: SPI
-        .s5_axi_awaddr(spi_axi_awaddr),
-        .s5_axi_awvalid(spi_axi_awvalid),
-        .s5_axi_awready(spi_axi_awready),
+        .s5_axi_rdata(uart_axi_rdata),
+        .s5_axi_rresp(uart_axi_rresp),
+        .s5_axi_rvalid(uart_axi_rvalid),
+        .s5_axi_rready(uart_axi_rready),
 
-        .s5_axi_wdata(spi_axi_wdata),
-        .s5_axi_wstrb(spi_axi_wstrb),
-        .s5_axi_wvalid(spi_axi_wvalid),
-        .s5_axi_wready(spi_axi_wready),
+        // Slave 6: I2C
+        .s6_axi_awaddr  (i2c_axi_awaddr),
+        .s6_axi_awvalid (i2c_axi_awvalid),
+        .s6_axi_awready (i2c_axi_awready),
+        .s6_axi_wdata   (i2c_axi_wdata),
+        .s6_axi_wstrb   (i2c_axi_wstrb),
+        .s6_axi_wvalid  (i2c_axi_wvalid),
+        .s6_axi_wready  (i2c_axi_wready),
+        .s6_axi_bresp   (i2c_axi_bresp),
+        .s6_axi_bvalid  (i2c_axi_bvalid),
+        .s6_axi_bready  (i2c_axi_bready),
+        .s6_axi_araddr  (i2c_axi_araddr),
+        .s6_axi_arvalid (i2c_axi_arvalid),
+        .s6_axi_arready (i2c_axi_arready),
+        .s6_axi_rdata   (i2c_axi_rdata),
+        .s6_axi_rresp   (i2c_axi_rresp),
+        .s6_axi_rvalid  (i2c_axi_rvalid),
+        .s6_axi_rready  (i2c_axi_rready),
 
-        .s5_axi_bresp(spi_axi_bresp),
-        .s5_axi_bvalid(spi_axi_bvalid),
-        .s5_axi_bready(spi_axi_bready),
-
-        .s5_axi_araddr(spi_axi_araddr),
-        .s5_axi_arvalid(spi_axi_arvalid),
-        .s5_axi_arready(spi_axi_arready),
-
-        .s5_axi_rdata(spi_axi_rdata),
-        .s5_axi_rresp(spi_axi_rresp),
-        .s5_axi_rvalid(spi_axi_rvalid),
-        .s5_axi_rready(spi_axi_rready),
-
-        // Slave 6: DMA Controller
-        .s6_axi_awaddr  (dma_cfg_axi_awaddr),
-        .s6_axi_awvalid (dma_cfg_axi_awvalid),
-        .s6_axi_awready (dma_cfg_axi_awready),
-        .s6_axi_wdata   (dma_cfg_axi_wdata),
-        .s6_axi_wstrb   (dma_cfg_axi_wstrb),
-        .s6_axi_wvalid  (dma_cfg_axi_wvalid),
-        .s6_axi_wready  (dma_cfg_axi_wready),
-        .s6_axi_bresp   (dma_cfg_axi_bresp),
-        .s6_axi_bvalid  (dma_cfg_axi_bvalid),
-        .s6_axi_bready  (dma_cfg_axi_bready),
-        .s6_axi_araddr  (dma_cfg_axi_araddr),
-        .s6_axi_arvalid (dma_cfg_axi_arvalid),
-        .s6_axi_arready (dma_cfg_axi_arready),
-        .s6_axi_rdata   (dma_cfg_axi_rdata),
-        .s6_axi_rresp   (dma_cfg_axi_rresp),
-        .s6_axi_rvalid  (dma_cfg_axi_rvalid),
-        .s6_axi_rready  (dma_cfg_axi_rready),
-
-        // Slave 7: GPIO
-        .s7_axi_awaddr  (gpio_axi_awaddr),
-        .s7_axi_awvalid (gpio_axi_awvalid),
-        .s7_axi_awready (gpio_axi_awready),
-        .s7_axi_wdata   (gpio_axi_wdata),
-        .s7_axi_wstrb   (gpio_axi_wstrb),
-        .s7_axi_wvalid  (gpio_axi_wvalid),
-        .s7_axi_wready  (gpio_axi_wready),
-        .s7_axi_bresp   (gpio_axi_bresp),
-        .s7_axi_bvalid  (gpio_axi_bvalid),
-        .s7_axi_bready  (gpio_axi_bready),
-        .s7_axi_araddr  (gpio_axi_araddr),
-        .s7_axi_arvalid (gpio_axi_arvalid),
-        .s7_axi_arready (gpio_axi_arready),
-        .s7_axi_rdata   (gpio_axi_rdata),
-        .s7_axi_rresp   (gpio_axi_rresp),
-        .s7_axi_rvalid  (gpio_axi_rvalid),
-        .s7_axi_rready  (gpio_axi_rready),
+        // Slave 7: SPI
+        .s7_axi_awaddr  (spi_axi_awaddr),
+        .s7_axi_awvalid (spi_axi_awvalid),
+        .s7_axi_awready (spi_axi_awready),
+        .s7_axi_wdata   (spi_axi_wdata),
+        .s7_axi_wstrb   (spi_axi_wstrb),
+        .s7_axi_wvalid  (spi_axi_wvalid),
+        .s7_axi_wready  (spi_axi_wready),
+        .s7_axi_bresp   (spi_axi_bresp),
+        .s7_axi_bvalid  (spi_axi_bvalid),
+        .s7_axi_bready  (spi_axi_bready),
+        .s7_axi_araddr  (spi_axi_araddr),
+        .s7_axi_arvalid (spi_axi_arvalid),
+        .s7_axi_arready (spi_axi_arready),
+        .s7_axi_rdata   (spi_axi_rdata),
+        .s7_axi_rresp   (spi_axi_rresp),
+        .s7_axi_rvalid  (spi_axi_rvalid),
+        .s7_axi_rready  (spi_axi_rready),
 
         // Slave 8: Timer
         .s8_axi_awaddr  (timer_axi_awaddr),
@@ -1187,24 +1195,24 @@ module kv32_soc #(
         .s8_axi_rvalid  (timer_axi_rvalid),
         .s8_axi_rready  (timer_axi_rready),
 
-        // Slave 9: Magic Device
-        .s9_axi_awaddr  (magic_axi_awaddr),
-        .s9_axi_awvalid (magic_axi_awvalid),
-        .s9_axi_awready (magic_axi_awready),
-        .s9_axi_wdata   (magic_axi_wdata),
-        .s9_axi_wstrb   (magic_axi_wstrb),
-        .s9_axi_wvalid  (magic_axi_wvalid),
-        .s9_axi_wready  (magic_axi_wready),
-        .s9_axi_bresp   (magic_axi_bresp),
-        .s9_axi_bvalid  (magic_axi_bvalid),
-        .s9_axi_bready  (magic_axi_bready),
-        .s9_axi_araddr  (magic_axi_araddr),
-        .s9_axi_arvalid (magic_axi_arvalid),
-        .s9_axi_arready (magic_axi_arready),
-        .s9_axi_rdata   (magic_axi_rdata),
-        .s9_axi_rresp   (magic_axi_rresp),
-        .s9_axi_rvalid  (magic_axi_rvalid),
-        .s9_axi_rready  (magic_axi_rready)
+        // Slave 9: GPIO
+        .s9_axi_awaddr  (gpio_axi_awaddr),
+        .s9_axi_awvalid (gpio_axi_awvalid),
+        .s9_axi_awready (gpio_axi_awready),
+        .s9_axi_wdata   (gpio_axi_wdata),
+        .s9_axi_wstrb   (gpio_axi_wstrb),
+        .s9_axi_wvalid  (gpio_axi_wvalid),
+        .s9_axi_wready  (gpio_axi_wready),
+        .s9_axi_bresp   (gpio_axi_bresp),
+        .s9_axi_bvalid  (gpio_axi_bvalid),
+        .s9_axi_bready  (gpio_axi_bready),
+        .s9_axi_araddr  (gpio_axi_araddr),
+        .s9_axi_arvalid (gpio_axi_arvalid),
+        .s9_axi_arready (gpio_axi_arready),
+        .s9_axi_rdata   (gpio_axi_rdata),
+        .s9_axi_rresp   (gpio_axi_rresp),
+        .s9_axi_rvalid  (gpio_axi_rvalid),
+        .s9_axi_rready  (gpio_axi_rready)
     );
 
     // ========================================================================
@@ -1312,7 +1320,7 @@ module kv32_soc #(
     // UART - Universal Asynchronous Receiver/Transmitter
     // ========================================================================
     // FIFO-based UART with TX/RX depths of 16.  IRQ goes to PLIC source 1.
-    // Memory map: 0x2000_0000 (DATA, STATUS, IE, IS, LEVEL registers)
+    // Memory map: 0x2001_0000 (DATA, STATUS, IE, IS, LEVEL registers)
     // Configuration: 8N1 format, configurable baud rate
     // Current: 100 MHz clock, 25 Mbaud (CLKS_PER_BIT=4, maximum rate)
     axi_uart #(

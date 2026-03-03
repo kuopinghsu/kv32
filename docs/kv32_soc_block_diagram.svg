@@ -102,6 +102,24 @@
   <text x="111" y="492" text-anchor="middle" font-size="9" fill="#7C3AED">← sw_irq     (CLINT)</text>
   <text x="111" y="505" text-anchor="middle" font-size="9" fill="#7C3AED">← ext_irq    (PLIC)</text>
 
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!--  POWER MANAGER                                                     -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Core sleep_req → PM -->
+  <line x1="130" y1="532" x2="130" y2="545"
+        stroke="#374151" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="134" y="541" font-size="7" fill="#374151" font-style="italic">sleep_req</text>
+  <!-- PM gated_clk → Core -->
+  <line x1="84" y1="545" x2="84" y2="532"
+        stroke="#DC2626" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="18" y="541" font-size="7" fill="#DC2626" font-style="italic">gated_clk_o</text>
+  <rect x="15" y="545" width="192" height="68" rx="6"
+        fill="#F0FDF4" stroke="#22C55E" stroke-width="1.8"/>
+  <text x="111" y="563" text-anchor="middle" font-size="11" font-weight="bold" fill="#15803D">Power Manager</text>
+  <text x="111" y="576" text-anchor="middle" font-size="9" fill="#166534">kv32_pm · ICG · BUFGCE (FPGA)</text>
+  <text x="111" y="589" text-anchor="middle" font-size="8" fill="#16A34A">Clock gated on WFI · wake on IRQ</text>
+  <text x="111" y="601" text-anchor="middle" font-size="8" fill="#16A34A">IRQ pulse capture · 1-cycle wake latency</text>
+
   <!-- IF right-side arrow → Instruction Buffer -->
   <!-- Bidirectional: IF ↔ Instr Buffer -->
   <line x1="197" y1="89"  x2="232" y2="89"
@@ -110,10 +128,10 @@
         stroke="#374151" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- MEM right-side arrow → Mem Arbiter (D-path, dashed) -->
-  <path d="M 197 261 L 218 261 L 218 165 L 393 165"
+  <path d="M 197 261 L 218 261 L 218 202 L 393 202"
         stroke="#374151" stroke-width="1.2" fill="none"
         stroke-dasharray="5,3" marker-end="url(#arr)"/>
-  <text x="300" y="157" text-anchor="middle" font-size="8" fill="#374151" font-style="italic">D-path (Store Buf)</text>
+  <text x="300" y="194" text-anchor="middle" font-size="8" fill="#374151" font-style="italic">D-path (Store Buf)</text>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!--  INSTRUCTION BUFFER                                                -->
@@ -124,35 +142,35 @@
   <text x="298" y="101" text-anchor="middle" font-size="9"  fill="#047857">IB_DEPTH = 4</text>
 
   <!-- Instr Buffer → I-Cache (down arrow) -->
-  <line x1="278" y1="112" x2="260" y2="122"
+  <line x1="298" y1="112" x2="298" y2="162"
         stroke="#374151" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!--  I-CACHE                                                           -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <rect x="232" y="122" width="132" height="52" rx="3"
+  <rect x="232" y="162" width="132" height="52" rx="3"
         fill="#D1FAE5" stroke="#34D399" stroke-width="1.5"/>
-  <text x="298" y="141" text-anchor="middle" font-size="11" font-weight="bold" fill="#065F46">I-Cache</text>
-  <text x="298" y="155" text-anchor="middle" font-size="9"  fill="#047857">4KB, 2-way SA</text>
-  <text x="298" y="167" text-anchor="middle" font-size="8"  fill="#059669">32B line · round-robin</text>
+  <text x="298" y="181" text-anchor="middle" font-size="11" font-weight="bold" fill="#065F46">I-Cache</text>
+  <text x="298" y="195" text-anchor="middle" font-size="9"  fill="#047857">4KB, 2-way SA</text>
+  <text x="298" y="207" text-anchor="middle" font-size="8"  fill="#059669">32B line · round-robin</text>
 
   <!-- I-Cache ↔ Mem Arbiter (bidirectional) -->
-  <line x1="364" y1="142" x2="393" y2="142"
+  <line x1="364" y1="182" x2="393" y2="182"
         stroke="#374151" stroke-width="1.5" marker-end="url(#arr)"/>
-  <line x1="393" y1="154" x2="364" y2="154"
+  <line x1="393" y1="194" x2="364" y2="194"
         stroke="#374151" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!--  MEM ARBITER                                                       -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <rect x="393" y="122" width="152" height="52" rx="3"
+  <rect x="393" y="162" width="152" height="52" rx="3"
         fill="#D1FAE5" stroke="#34D399" stroke-width="1.5"/>
-  <text x="469" y="141" text-anchor="middle" font-size="11" font-weight="bold" fill="#065F46">Mem Arbiter</text>
-  <text x="469" y="155" text-anchor="middle" font-size="9"  fill="#047857">I-fetch / D-access</text>
-  <text x="469" y="167" text-anchor="middle" font-size="8"  fill="#059669">AXI4 WRAP burst</text>
+  <text x="469" y="181" text-anchor="middle" font-size="11" font-weight="bold" fill="#065F46">Mem Arbiter</text>
+  <text x="469" y="195" text-anchor="middle" font-size="9"  fill="#047857">I-fetch / D-access</text>
+  <text x="469" y="207" text-anchor="middle" font-size="8"  fill="#059669">AXI4 WRAP burst</text>
 
   <!-- Mem Arbiter → AXI Crossbar (down arrow) -->
-  <line x1="469" y1="174" x2="469" y2="275"
+  <line x1="469" y1="214" x2="469" y2="275"
         stroke="#374151" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
@@ -183,23 +201,23 @@
   <!-- Horizontal stubs: bus bar → each slave (stride=70, first center y=65) -->
   <!-- S0 RAM   center y=65 -->
   <line x1="600" y1="65"  x2="613" y2="65"  stroke="#6B7280" stroke-width="2"/>
-  <!-- S1 CLINT center y=135 -->
+  <!-- S1 Magic center y=135 -->
   <line x1="600" y1="135" x2="613" y2="135" stroke="#6B7280" stroke-width="2"/>
-  <!-- S2 PLIC  center y=205 -->
+  <!-- S2 CLINT center y=205 -->
   <line x1="600" y1="205" x2="613" y2="205" stroke="#6B7280" stroke-width="2"/>
-  <!-- S3 UART  center y=275 -->
+  <!-- S3 PLIC  center y=275 -->
   <line x1="600" y1="275" x2="613" y2="275" stroke="#6B7280" stroke-width="2"/>
-  <!-- S4 I2C   center y=345 -->
+  <!-- S4 DMA   center y=345 -->
   <line x1="600" y1="345" x2="613" y2="345" stroke="#6B7280" stroke-width="2"/>
-  <!-- S5 SPI   center y=415 -->
+  <!-- S5 UART  center y=415 -->
   <line x1="600" y1="415" x2="613" y2="415" stroke="#6B7280" stroke-width="2"/>
-  <!-- S6 DMA   center y=485 -->
+  <!-- S6 I2C   center y=485 -->
   <line x1="600" y1="485" x2="613" y2="485" stroke="#6B7280" stroke-width="2"/>
-  <!-- S7 GPIO  center y=555 -->
+  <!-- S7 SPI   center y=555 -->
   <line x1="600" y1="555" x2="613" y2="555" stroke="#6B7280" stroke-width="2"/>
   <!-- S8 Timer center y=625 -->
   <line x1="600" y1="625" x2="613" y2="625" stroke="#6B7280" stroke-width="2"/>
-  <!-- S9 Magic center y=695 -->
+  <!-- S9 GPIO  center y=695 -->
   <line x1="600" y1="695" x2="613" y2="695" stroke="#6B7280" stroke-width="2"/>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
@@ -218,95 +236,97 @@
         stroke="#3730A3" stroke-width="1.2"/>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <!--  SLAVE 1: CLINT                                                    -->
+  <!--  SLAVE 1: MAGIC DEVICE                                             -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <rect x="615" y="105" width="440" height="60" rx="4"
-        fill="#FCE7F3" stroke="#F472B6" stroke-width="1.5"/>
-  <text x="625" y="127" font-size="12" font-weight="bold" fill="#9D174D">Slave 1: CLINT</text>
-  <text x="625" y="141" font-size="9"  fill="#BE185D" font-family="'Courier New', monospace">0x0200_0000 – 0x020B_FFFF</text>
-  <text x="625" y="155" font-size="9"  fill="#DB2777">mtime / mtimecmp / msip (machine timer &amp; soft IRQ)</text>
-  <!-- IRQ output labels -->
-  <text x="1058" y="124" font-size="9" fill="#B91C1C" font-weight="bold" font-family="'Courier New', monospace">→ timer_irq</text>
-  <text x="1058" y="138" font-size="9" fill="#B91C1C" font-weight="bold" font-family="'Courier New', monospace">→ sw_irq</text>
-  <text x="1058" y="152" font-size="8" fill="#6B7280">  (to KV32 Core)</text>
-  <line x1="1055" y1="130" x2="1113" y2="130"
-        stroke="#B91C1C" stroke-width="1.2" stroke-dasharray="3,2"/>
-  <line x1="1055" y1="143" x2="1113" y2="143"
-        stroke="#B91C1C" stroke-width="1.2" stroke-dasharray="3,2"/>
+        fill="#F9FAFB" stroke="#D1D5DB" stroke-width="1.5"/>
+  <text x="625" y="127" font-size="12" font-weight="bold" fill="#374151">Slave 1: Magic Device</text>
+  <text x="625" y="141" font-size="9"  fill="#6B7280" font-family="'Courier New', monospace">0x4000_0000 – 0x4000_FFFF</text>
+  <text x="625" y="155" font-size="9"  fill="#9CA3AF">Simulation only · console I/O · exit code control</text>
+  <!-- sim-only badge -->
+  <rect x="1010" y="114" width="42" height="16" rx="3"
+        fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="1031" y="126" text-anchor="middle" font-size="8" fill="#92400E" font-weight="bold">SIM ONLY</text>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <!--  SLAVE 2: PLIC                                                     -->
+  <!--  SLAVE 2: CLINT                                                    -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <rect x="615" y="175" width="440" height="60" rx="4"
         fill="#FCE7F3" stroke="#F472B6" stroke-width="1.5"/>
-  <text x="625" y="197" font-size="12" font-weight="bold" fill="#9D174D">Slave 2: PLIC</text>
-  <text x="625" y="211" font-size="9"  fill="#BE185D" font-family="'Courier New', monospace">0x0C00_0000 – 0x0CFF_FFFF</text>
-  <text x="625" y="225" font-size="9"  fill="#DB2777">Priority/Enable/Claim/Complete · srcs: UART(1) SPI(2) I2C(3) DMA(4) GPIO(5) TMR(6)</text>
-  <!-- ext_irq output label -->
-  <text x="1058" y="196" font-size="9" fill="#B91C1C" font-weight="bold" font-family="'Courier New', monospace">→ ext_irq</text>
-  <text x="1058" y="210" font-size="8" fill="#6B7280">  (to KV32 Core)</text>
-  <line x1="1055" y1="200" x2="1100" y2="200"
+  <text x="625" y="197" font-size="12" font-weight="bold" fill="#9D174D">Slave 2: CLINT</text>
+  <text x="625" y="211" font-size="9"  fill="#BE185D" font-family="'Courier New', monospace">0x0200_0000 – 0x020B_FFFF</text>
+  <text x="625" y="225" font-size="9"  fill="#DB2777">mtime / mtimecmp / msip (machine timer &amp; soft IRQ)</text>
+  <!-- IRQ output labels -->
+  <text x="1058" y="194" font-size="9" fill="#B91C1C" font-weight="bold" font-family="'Courier New', monospace">→ timer_irq</text>
+  <text x="1058" y="208" font-size="9" fill="#B91C1C" font-weight="bold" font-family="'Courier New', monospace">→ sw_irq</text>
+  <text x="1058" y="222" font-size="8" fill="#6B7280">  (to KV32 Core)</text>
+  <line x1="1055" y1="200" x2="1113" y2="200"
+        stroke="#B91C1C" stroke-width="1.2" stroke-dasharray="3,2"/>
+  <line x1="1055" y1="213" x2="1113" y2="213"
         stroke="#B91C1C" stroke-width="1.2" stroke-dasharray="3,2"/>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <!--  SLAVE 3: UART                                                     -->
+  <!--  SLAVE 3: PLIC                                                     -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <rect x="615" y="245" width="440" height="60" rx="4"
-        fill="#F0FDF4" stroke="#86EFAC" stroke-width="1.5"/>
-  <text x="625" y="267" font-size="12" font-weight="bold" fill="#166534">Slave 3: UART</text>
-  <text x="625" y="281" font-size="9"  fill="#15803D" font-family="'Courier New', monospace">0x2000_0000 – 0x2000_FFFF</text>
-  <text x="625" y="295" font-size="9"  fill="#16A34A">8N1 · 16-deep TX/RX FIFOs · 25 MHz max baud · PLIC src 1</text>
-  <!-- pin labels -->
-  <text x="1058" y="267" font-size="9" fill="#166534" font-family="'Courier New', monospace">→ uart_tx</text>
-  <text x="1058" y="281" font-size="9" fill="#166534" font-family="'Courier New', monospace">← uart_rx</text>
+        fill="#FCE7F3" stroke="#F472B6" stroke-width="1.5"/>
+  <text x="625" y="267" font-size="12" font-weight="bold" fill="#9D174D">Slave 3: PLIC</text>
+  <text x="625" y="281" font-size="9"  fill="#BE185D" font-family="'Courier New', monospace">0x0C00_0000 – 0x0CFF_FFFF</text>
+  <text x="625" y="295" font-size="9"  fill="#DB2777">Priority/Enable/Claim/Complete · srcs: UART(1) SPI(2) I2C(3) DMA(4) GPIO(5) TMR(6)</text>
+  <!-- ext_irq output label -->
+  <text x="1058" y="266" font-size="9" fill="#B91C1C" font-weight="bold" font-family="'Courier New', monospace">→ ext_irq</text>
+  <text x="1058" y="280" font-size="8" fill="#6B7280">  (to KV32 Core)</text>
+  <line x1="1055" y1="270" x2="1100" y2="270"
+        stroke="#B91C1C" stroke-width="1.2" stroke-dasharray="3,2"/>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <!--  SLAVE 4: I2C                                                      -->
+  <!--  SLAVE 4: DMA                                                      -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <rect x="615" y="315" width="440" height="60" rx="4"
-        fill="#F0FDF4" stroke="#86EFAC" stroke-width="1.5"/>
-  <text x="625" y="337" font-size="12" font-weight="bold" fill="#166534">Slave 4: I2C</text>
-  <text x="625" y="351" font-size="9"  fill="#15803D" font-family="'Courier New', monospace">0x2001_0000 – 0x2001_FFFF</text>
-  <text x="625" y="365" font-size="9"  fill="#16A34A">Master · 100k/400k · 8-deep TX/RX FIFOs · PLIC src 3</text>
-  <!-- pin labels -->
-  <text x="1058" y="337" font-size="9" fill="#166534" font-family="'Courier New', monospace">↔ i2c_scl (o/i/oe)</text>
-  <text x="1058" y="351" font-size="9" fill="#166534" font-family="'Courier New', monospace">↔ i2c_sda (o/i/oe)</text>
+        fill="#ECFEFF" stroke="#67E8F9" stroke-width="1.5"/>
+  <text x="625" y="337" font-size="12" font-weight="bold" fill="#155E75">Slave 4: DMA Controller</text>
+  <text x="625" y="351" font-size="9"  fill="#0E7490" font-family="'Courier New', monospace">0x2000_0000 – 0x2000_FFFF</text>
+  <text x="625" y="365" font-size="9"  fill="#0891B2">4 ch · 1D/2D/3D/SG transfers · perf counters · PLIC src 4</text>
+  <!-- pin label: DMA has its own AXI master -->
+  <text x="1058" y="337" font-size="9" fill="#155E75" font-family="'Courier New', monospace">↔ AXI4 master port</text>
+  <text x="1058" y="351" font-size="8" fill="#6B7280">  (mem-to-mem DMA)</text>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <!--  SLAVE 5: SPI                                                      -->
+  <!--  SLAVE 5: UART                                                     -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <rect x="615" y="385" width="440" height="60" rx="4"
         fill="#F0FDF4" stroke="#86EFAC" stroke-width="1.5"/>
-  <text x="625" y="407" font-size="12" font-weight="bold" fill="#166534">Slave 5: SPI</text>
-  <text x="625" y="421" font-size="9"  fill="#15803D" font-family="'Courier New', monospace">0x2002_0000 – 0x2002_FFFF</text>
-  <text x="625" y="435" font-size="9"  fill="#16A34A">Master · modes 0–3 · 4 CS lines · 8-deep FIFOs · PLIC src 2</text>
+  <text x="625" y="407" font-size="12" font-weight="bold" fill="#166534">Slave 5: UART</text>
+  <text x="625" y="421" font-size="9"  fill="#15803D" font-family="'Courier New', monospace">0x2001_0000 – 0x2001_FFFF</text>
+  <text x="625" y="435" font-size="9"  fill="#16A34A">8N1 · 16-deep TX/RX FIFOs · 25 MHz max baud · PLIC src 1</text>
   <!-- pin labels -->
-  <text x="1058" y="405" font-size="9" fill="#166534" font-family="'Courier New', monospace">→ spi_sclk / spi_mosi</text>
-  <text x="1058" y="419" font-size="9" fill="#166534" font-family="'Courier New', monospace">← spi_miso</text>
-  <text x="1058" y="433" font-size="9" fill="#166534" font-family="'Courier New', monospace">→ spi_cs_n[3:0]</text>
+  <text x="1058" y="407" font-size="9" fill="#166534" font-family="'Courier New', monospace">→ uart_tx</text>
+  <text x="1058" y="421" font-size="9" fill="#166534" font-family="'Courier New', monospace">← uart_rx</text>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <!--  SLAVE 6: DMA                                                      -->
+  <!--  SLAVE 6: I2C                                                      -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <rect x="615" y="455" width="440" height="60" rx="4"
-        fill="#ECFEFF" stroke="#67E8F9" stroke-width="1.5"/>
-  <text x="625" y="477" font-size="12" font-weight="bold" fill="#155E75">Slave 6: DMA Controller</text>
-  <text x="625" y="491" font-size="9"  fill="#0E7490" font-family="'Courier New', monospace">0x2003_0000 – 0x2003_0FFF</text>
-  <text x="625" y="505" font-size="9"  fill="#0891B2">4 ch · 1D/2D/3D/SG transfers · perf counters · PLIC src 4</text>
-  <!-- pin label: DMA has its own AXI master -->
-  <text x="1058" y="477" font-size="9" fill="#155E75" font-family="'Courier New', monospace">↔ AXI4 master port</text>
-  <text x="1058" y="491" font-size="8" fill="#6B7280">  (mem-to-mem DMA)</text>
+        fill="#F0FDF4" stroke="#86EFAC" stroke-width="1.5"/>
+  <text x="625" y="477" font-size="12" font-weight="bold" fill="#166534">Slave 6: I2C</text>
+  <text x="625" y="491" font-size="9"  fill="#15803D" font-family="'Courier New', monospace">0x2002_0000 – 0x2002_FFFF</text>
+  <text x="625" y="505" font-size="9"  fill="#16A34A">Master · 100k/400k · 8-deep TX/RX FIFOs · PLIC src 3</text>
+  <!-- pin labels -->
+  <text x="1058" y="477" font-size="9" fill="#166534" font-family="'Courier New', monospace">↔ i2c_scl (o/i/oe)</text>
+  <text x="1058" y="491" font-size="9" fill="#166534" font-family="'Courier New', monospace">↔ i2c_sda (o/i/oe)</text>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <!--  SLAVE 7: GPIO                                                     -->
+  <!--  SLAVE 7: SPI                                                      -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <rect x="615" y="525" width="440" height="60" rx="4"
-        fill="#FEF2F2" stroke="#FCA5A5" stroke-width="1.5"/>
-  <text x="625" y="547" font-size="12" font-weight="bold" fill="#991B1B">Slave 7: GPIO</text>
-  <text x="625" y="561" font-size="9"  fill="#B91C1C" font-family="'Courier New', monospace">0x2004_0000 – 0x2004_FFFF</text>
-  <text x="625" y="575" font-size="9"  fill="#DC2626">4 banks × 32 pins · dir/IRQ/edge/level/loopback · PLIC src 5</text>
+        fill="#F0FDF4" stroke="#86EFAC" stroke-width="1.5"/>
+  <text x="625" y="547" font-size="12" font-weight="bold" fill="#166534">Slave 7: SPI</text>
+  <text x="625" y="561" font-size="9"  fill="#15803D" font-family="'Courier New', monospace">0x2003_0000 – 0x2003_FFFF</text>
+  <text x="625" y="575" font-size="9"  fill="#16A34A">Master · modes 0–3 · 4 CS lines · 8-deep FIFOs · PLIC src 2</text>
   <!-- pin labels -->
-  <text x="1058" y="547" font-size="9" fill="#991B1B" font-family="'Courier New', monospace">↔ gpio_out/in/oe[127:0]</text>
+  <text x="1058" y="545" font-size="9" fill="#166534" font-family="'Courier New', monospace">→ spi_sclk / spi_mosi</text>
+  <text x="1058" y="559" font-size="9" fill="#166534" font-family="'Courier New', monospace">← spi_miso</text>
+  <text x="1058" y="573" font-size="9" fill="#166534" font-family="'Courier New', monospace">→ spi_cs_n[3:0]</text>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!--  SLAVE 8: TIMER / PWM                                              -->
@@ -314,23 +334,21 @@
   <rect x="615" y="595" width="440" height="60" rx="4"
         fill="#FFF7ED" stroke="#FDBA74" stroke-width="1.5"/>
   <text x="625" y="617" font-size="12" font-weight="bold" fill="#92400E">Slave 8: Timer / PWM</text>
-  <text x="625" y="631" font-size="9"  fill="#C2410C" font-family="'Courier New', monospace">0x2005_0000 – 0x2005_FFFF</text>
+  <text x="625" y="631" font-size="9"  fill="#C2410C" font-family="'Courier New', monospace">0x2004_0000 – 0x2004_FFFF</text>
   <text x="625" y="645" font-size="9"  fill="#EA580C">4 ch · 32-bit up-counter · dual compare · PWM · PLIC src 6</text>
   <!-- pin labels -->
   <text x="1058" y="617" font-size="9" fill="#92400E" font-family="'Courier New', monospace">→ pwm_out[3:0]</text>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <!--  SLAVE 9: MAGIC DEVICE                                             -->
+  <!--  SLAVE 9: GPIO                                                     -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <rect x="615" y="665" width="440" height="60" rx="4"
-        fill="#F9FAFB" stroke="#D1D5DB" stroke-width="1.5"/>
-  <text x="625" y="687" font-size="12" font-weight="bold" fill="#374151">Slave 9: Magic Device</text>
-  <text x="625" y="701" font-size="9"  fill="#6B7280" font-family="'Courier New', monospace">0xFFFF_0000 – 0xFFFF_FFFF</text>
-  <text x="625" y="715" font-size="9"  fill="#9CA3AF">Simulation only · console I/O · exit code control</text>
-  <!-- sim-only badge -->
-  <rect x="1010" y="674" width="42" height="16" rx="3"
-        fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
-  <text x="1031" y="686" text-anchor="middle" font-size="8" fill="#92400E" font-weight="bold">SIM ONLY</text>
+        fill="#FEF2F2" stroke="#FCA5A5" stroke-width="1.5"/>
+  <text x="625" y="687" font-size="12" font-weight="bold" fill="#991B1B">Slave 9: GPIO</text>
+  <text x="625" y="701" font-size="9"  fill="#B91C1C" font-family="'Courier New', monospace">0x2005_0000 – 0x2005_FFFF</text>
+  <text x="625" y="715" font-size="9"  fill="#DC2626">4 banks × 32 pins · dir/IRQ/edge/level/loopback · PLIC src 5</text>
+  <!-- pin labels -->
+  <text x="1058" y="687" font-size="9" fill="#991B1B" font-family="'Courier New', monospace">↔ gpio_out/in/oe[127:0]</text>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!--  EXTERNAL PINS LEGEND (bottom)                                     -->

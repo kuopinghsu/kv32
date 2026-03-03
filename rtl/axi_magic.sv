@@ -4,11 +4,11 @@
 // Description: AXI4-Lite Magic Device for Simulation Control
 //
 // Provides special memory-mapped registers for simulation and testing.
-// Base address: 0xFFFF0000
+// Base address: 0x40000000
 //
 // Magic Addresses:
-//   0xFFFFFFF0: EXIT_MAGIC_ADDR - Exit simulation
-//   0xFFFFFFF4: CONSOLE_MAGIC_ADDR - Output character
+//   0x40000000: CONSOLE_MAGIC_ADDR - Output character
+//   0x40000004: EXIT_MAGIC_ADDR - Exit simulation
 //
 // This device is typically used only in simulation/testbench environments
 // and not synthesized for FPGA/ASIC implementations.
@@ -58,8 +58,8 @@ module axi_magic (
     assign axi_rvalid       = 1'b1;
 `else // SYNTHESIS
     // Magic addresses
-    localparam EXIT_MAGIC_ADDR    = 32'hFFFFFFF0;
-    localparam CONSOLE_MAGIC_ADDR = 32'hFFFFFFF4;
+    localparam CONSOLE_MAGIC_ADDR = 32'h40000000;
+    localparam EXIT_MAGIC_ADDR    = 32'h40000004;
 
     // State machine for write transactions
     typedef enum logic [1:0] {

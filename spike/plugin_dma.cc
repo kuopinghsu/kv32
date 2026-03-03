@@ -4,7 +4,7 @@
 // Description: Spike MMIO plugin for the KV32 DMA controller
 //              with actual host-memory copy via simif_t::addr_to_mem().
 //
-// Register Map (relative to KV_DMA_BASE = 0x2003_0000, size 4 KB):
+// Register Map (relative to KV_DMA_BASE = 0x2000_0000, size 64 KB):
 //
 //   Per-channel registers (up to NUM_CHANNELS, each block 0x40 bytes):
 //     ch*0x40 + 0x00  CTRL     - [0]=en, [1]=start, [2]=stop, [4:3]=mode, [5]=src_inc

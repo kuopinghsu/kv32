@@ -52,6 +52,7 @@ package kv32_pkg;
     `define DBG_GRP_ICACHE 13   // I-Cache state machine
     `define DBG_GRP_ALU    14   // ALU operations
     `define DBG_GRP_SB     15   // Store buffer
+    `define DBG_GRP_AXIMEM 16   // AXI memory slave (testbench)
 
 `ifndef SYNTHESIS
     // ── Display name strings (6-char fixed width for aligned output) ─────────
@@ -75,6 +76,7 @@ package kv32_pkg;
             `DBG_GRP_ICACHE: return "ICACHE";
             `DBG_GRP_ALU:    return "ALU   ";
             `DBG_GRP_SB:     return "SB    ";
+            `DBG_GRP_AXIMEM: return "AXIMEM";
             default:         return "?     ";
         endcase
     endfunction

@@ -234,11 +234,6 @@ module tb_kv32_soc #(
         .MEM_WRITE_LATENCY(MEM_WRITE_LATENCY),
         .MAX_OUTSTANDING_READS(16),
         .MAX_OUTSTANDING_WRITES(16),
-    `ifdef DEBUG_LEVEL_2
-        .ENABLE_MEM_TRACE(1),
-    `else
-        .ENABLE_MEM_TRACE(0),
-    `endif
         .MEM_DUAL_PORT(MEM_DUAL_PORT)
     ) ext_mem (
         .clk(clk),

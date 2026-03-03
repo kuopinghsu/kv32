@@ -1538,16 +1538,10 @@ bool KV32Simulator::load_elf(const char *filename) {
                     std::string name = &strtab[sym.st_name];
                     if (name == "tohost") {
                         tohost_addr = sym.st_value;
-                        std::cout << "Found tohost at 0x" << std::hex
-                                  << tohost_addr << std::endl;
                     } else if (name == "begin_signature") {
                         signature_start = sym.st_value;
-                        std::cout << "Found begin_signature at 0x" << std::hex
-                                  << signature_start << std::endl;
                     } else if (name == "end_signature") {
                         signature_end = sym.st_value;
-                        std::cout << "Found end_signature at 0x" << std::hex
-                                  << signature_end << std::endl;
                     }
                 }
             }
@@ -1559,8 +1553,6 @@ bool KV32Simulator::load_elf(const char *filename) {
 }
 
 void KV32Simulator::run() {
-    std::cout << "\n=== Starting RV32IMAC Simulation ===" << std::endl;
-
     if (gdb_enabled) {
         std::cout << "GDB stub enabled, waiting for GDB connection..." << std::endl;
         gdb_context_t* gdb = (gdb_context_t*)gdb_ctx;
@@ -1660,7 +1652,6 @@ void KV32Simulator::run() {
         }
     }
 
-    std::cout << "\n=== Simulation Complete ===" << std::endl;
     std::cout << "Instructions executed: " << std::dec << inst_count
               << std::endl;
 
@@ -1837,9 +1828,6 @@ int main(int argc, char *argv[]) {
     std::signal(SIGINT, handle_sigint);
 
     std::cout << "=== RV32IMAC Software Simulator ===" << std::endl;
-    std::cout << "Memory: 0x" << std::hex << mem_base << " - 0x"
-              << (mem_base + mem_size) << " (" << std::dec << (mem_size / 1024)
-              << " KB)" << std::endl;
     if (trace_enabled) {
         std::cout << "Trace: enabled -> " << log_file << std::endl;
     }

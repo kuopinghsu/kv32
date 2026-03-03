@@ -3,7 +3,7 @@
 // Project: KV32 RISC-V Processor
 // Description: Spike MMIO plugin for the KV32 UART peripheral
 //
-// Register Map (relative to KV_UART_BASE = 0x2000_0000):
+// Register Map (relative to KV_UART_BASE = 0x2001_0000):
 //   0x00  DATA    - write: byte → stdout;  read: byte ← stdin (non-blocking)
 //   0x04  STATUS  - [0/1]=tx_full (0=ready), [2]=rx_ready, [3]=rx_full
 //   0x08  IE      - Interrupt enable (R/W)

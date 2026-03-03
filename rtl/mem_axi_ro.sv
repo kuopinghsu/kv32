@@ -46,7 +46,9 @@ module mem_axi_ro #(
 
     input  logic [31:0]              axi_rdata,
     input  logic [1:0]               axi_rresp,
+    /* verilator lint_off UNUSEDSIGNAL */
     input  logic [axi_pkg::AXI_ID_WIDTH-1:0] axi_rid,
+    /* verilator lint_on UNUSEDSIGNAL */
     input  logic                     axi_rvalid,
     output logic                     axi_rready
 );
@@ -140,8 +142,10 @@ module mem_axi_ro #(
     // The ar_buf counts as 1 pending request that hasn't hit AXI yet.
     logic [$clog2(OUTSTANDING_DEPTH+2):0] total_requests;
     logic read_fifo_full;
+    /* verilator lint_off WIDTHEXPAND */
     assign total_requests = read_outstanding_count + (ar_buf_valid ? 1'b1 : 1'b0);
-    assign read_fifo_full = (total_requests >= OUTSTANDING_DEPTH);
+    /* verilator lint_on WIDTHEXPAND */
+    assign read_fifo_full = (total_requests >= ($bits(total_requests))'(OUTSTANDING_DEPTH));
 
     // ========================================================================
     // mem_req_ready: Can accept new request when:
@@ -177,7 +181,7 @@ module mem_axi_ro #(
     logic resp_bypass;  // AXI R data bypasses FIFO directly to core
 
     assign resp_fifo_empty = (resp_count == 0);
-    assign resp_fifo_full  = (resp_count >= OUTSTANDING_DEPTH);
+    assign resp_fifo_full  = (resp_count >= ($bits(resp_count))'(OUTSTANDING_DEPTH));
 
     // Bypass condition: FIFO empty AND core can consume immediately
     assign resp_bypass = axi_rvalid && resp_fifo_empty && mem_resp_ready;
@@ -272,7 +276,7 @@ module mem_axi_ro #(
     // Outstanding Transaction Bounds
     property p_read_outstanding_bounds;
         @(posedge clk) disable iff (!rst_n)
-        read_outstanding_count <= OUTSTANDING_DEPTH;
+        read_outstanding_count <= ($bits(read_outstanding_count))'(OUTSTANDING_DEPTH);
     endproperty
     assert property (p_read_outstanding_bounds)
         else $error("[%s] Read outstanding count exceeded limit: %0d > %0d",
@@ -280,7 +284,7 @@ module mem_axi_ro #(
 
     property p_total_requests_bounds;
         @(posedge clk) disable iff (!rst_n)
-        total_requests <= OUTSTANDING_DEPTH + 1;  // outstanding + at most 1 skid buf
+        total_requests <= ($bits(total_requests))'(OUTSTANDING_DEPTH + 1);  // outstanding + at most 1 skid buf
     endproperty
     assert property (p_total_requests_bounds)
         else $error("[%s] Total requests exceeded limit: %0d", BRIDGE_NAME, total_requests);
@@ -304,7 +308,7 @@ module mem_axi_ro #(
 
     property p_resp_count_bounds;
         @(posedge clk) disable iff (!rst_n)
-        resp_count <= OUTSTANDING_DEPTH;
+        resp_count <= ($bits(resp_count))'(OUTSTANDING_DEPTH);
     endproperty
     assert property (p_resp_count_bounds)
         else $error("[%s] Response FIFO count exceeded: %0d > %0d",

@@ -4,7 +4,7 @@
 // Description: Spike MMIO plugin for the KV32 SPI master peripheral
 //              with simulated flash (address-pattern content) and PLIC IRQ.
 //
-// Register Map (relative to KV_SPI_BASE = 0x2002_0000):
+// Register Map (relative to KV_SPI_BASE = 0x2003_0000):
 //   0x00  CTRL    - Control (R/W): [0]=enable, [1]=CPOL, [2]=CPHA, [3]=loopback,
 //                   [7:4]=CS_n (active-low chip selects)
 //   0x04  DIV     - Clock divider (R/W)

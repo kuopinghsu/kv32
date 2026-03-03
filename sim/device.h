@@ -86,10 +86,10 @@ public:
 };
 
 // Magic Device Driver
-// Base address: 0xFFFF0000 (64KB window)
+// Base address: 0x40000000 (64KB window)
 // Registers (window-relative offsets):
-//   0xFFF4: Console output (write low byte)
-//   0xFFF0: Exit magic (write exit code encoding)
+//   0x0000: Console output (write low byte)
+//   0x0004: Exit magic (write exit code encoding)
 class MagicDevice : public Device {
 private:
     bool exit_pending;
@@ -108,7 +108,7 @@ public:
 };
 
 // UART Device Driver
-// Base address: 0x20000000
+// Base address: 0x20010000
 // FIFO-based; matches RTL axi_uart.sv register map.
 // Registers:
 //   0x00: TX/RX Data (write=TX push, read=RX pop)

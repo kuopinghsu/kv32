@@ -18,6 +18,7 @@ K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IM
 - **Bus Interface**: AXI4-Lite 1-to-10 interconnect (single master, ten slaves)
 - **Memory**: 2MB RAM at `0x8000_0000` with DPI-C access for ELF loading
 - **Instruction Cache**: 2-way set-associative, 4 KB, 32-byte cache lines (configurable)
+- **Power Management**: WFI-triggered clock gating via ICG cell (BUFGCE on Xilinx FPGA); auto-wakes on any pending M-mode interrupt (timer, software, external); IRQ pulse capture ensures single-cycle pulses are not missed; 1-cycle wake latency
 - **Peripherals**:
   - CLINT — timer (`mtime`/`mtimecmp`) and software interrupts
   - PLIC — platform-level interrupt controller
@@ -76,6 +77,7 @@ kv32/
 │   ├── axi_xbar.sv        # AXI crossbar/interconnect
 │   ├── axi_arbiter.sv     # AXI arbiter
 │   ├── kv32_icache.sv     # 2-way set-associative instruction cache
+│   ├── kv32_pm.sv         # Power manager (WFI clock gating, BUFGCE/ICG)
 │   ├── axi_clint.sv       # CLINT (mtime/mtimecmp/msip)
 │   ├── axi_plic.sv        # PLIC placeholder
 │   ├── axi_uart.sv        # UART with AXI wrapper

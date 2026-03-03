@@ -4,7 +4,7 @@
 // Description: Spike MMIO plugin for the KV32 I2C master peripheral
 //              with simulated 256-byte EEPROM at I2C address 0x50.
 //
-// Register Map (relative to KV_I2C_BASE = 0x2001_0000):
+// Register Map (relative to KV_I2C_BASE = 0x2002_0000):
 //   0x00  CTRL    - Control (R/W): [0]=enable, [1]=start, [2]=stop, [3]=read, [4]=nack
 //   0x04  DIV     - Clock divider (R/W)
 //   0x08  TX      - TX data byte (W): push to TX FIFO

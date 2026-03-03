@@ -620,7 +620,6 @@ int main(int argc, char** argv) {
     dut->trace_mode = enable_trace ? 1 : 0;
 
     vluint64_t time_counter = 0;
-    bool finished = false;
     bool error = false;  // Track if simulation ended with error
     int exit_code = 0;   // Capture exit code from $finish()
 
@@ -747,8 +746,6 @@ int main(int argc, char** argv) {
 
         cycle_count++;
     }
-
-    finished = true;
 
     // Capture exit code if exit was requested via DPI
     if (exit_requested) {

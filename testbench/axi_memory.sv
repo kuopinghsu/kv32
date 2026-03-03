@@ -4,8 +4,10 @@
 // Description: AXI4-Lite External Memory Module for Testbench
 //
 // Configurable AXI memory supporting single-port or dual-port operation.
-// Features pipelined architecture for performance and optional memory tracing.
+// Features pipelined architecture for performance.
 // Default configuration: 2MB RAM at 0x8000_0000 with 1-cycle latency.
+// Debug logging is controlled via the DBG_GRP_AXIMEM debug group (bit 16).
+// Enable with: make DEBUG=2 DEBUG_GROUP=0x10000 rtl-<test>
 // ============================================================================
 
 module axi_memory #(
@@ -15,7 +17,6 @@ module axi_memory #(
     parameter BASE_ADDR = 32'h80000000,     // Base address for memory mapping
     parameter MEM_READ_LATENCY = 1,         // Read latency in cycles (1 to 16)
     parameter MEM_WRITE_LATENCY = 1,        // Write latency in cycles (1 to 16)
-    parameter ENABLE_MEM_TRACE = 0,         // Enable memory transaction trace logging (0=off, 1=on)
     parameter MEM_DUAL_PORT = 1,            // 1=Dual-port (best performance), 0=One-port (with arbitration)
     parameter MAX_OUTSTANDING_READS = 16,   // Maximum outstanding read requests (independent of latency)
     parameter MAX_OUTSTANDING_WRITES = 16   // Maximum outstanding write requests (independent of latency)
@@ -205,10 +206,8 @@ module axi_memory #(
                 wr_burst_err     <= 1'b0;
                 stat_aw_requests <= stat_aw_requests + 1;
                 stat_w_expected  <= stat_w_expected + (32'(axi_awlen) + 1);
-                if (ENABLE_MEM_TRACE) begin
-                    $display("[AXI_MEM][WR] Write addr accepted addr=0x%h awlen=%0d",
-                             axi_awaddr, axi_awlen);
-                end
+                `DEBUG2(`DBG_GRP_AXIMEM, ("[WR] Write addr accepted addr=0x%h awlen=%0d",
+                         axi_awaddr, axi_awlen));
             end else if (write_addr_valid && axi_wvalid && write_can_accept) begin
                 // Track out-of-range address
                 if (write_addr_reg < BASE_ADDR || write_addr_reg >= (BASE_ADDR + MEM_SIZE))
@@ -220,10 +219,8 @@ module axi_memory #(
                     if (wr_burst_type == 2'b01)
                         write_addr_reg <= write_addr_reg + 4;
                 end
-                if (ENABLE_MEM_TRACE) begin
-                    $display("[AXI_MEM][WR] Write data accepted addr=0x%h data=0x%h strb=0x%h wlast=%b",
-                             write_addr_reg, axi_wdata, axi_wstrb, axi_wlast);
-                end
+                `DEBUG2(`DBG_GRP_AXIMEM, ("[WR] Write data accepted addr=0x%h data=0x%h strb=0x%h wlast=%b",
+                         write_addr_reg, axi_wdata, axi_wstrb, axi_wlast));
             end
 
             // Handle simultaneous AW and B
@@ -301,16 +298,18 @@ module axi_memory #(
             end
         end else begin
             // Debug: Monitor write pipeline state
-            if (ENABLE_MEM_TRACE) begin
+            `ifdef DEBUG_LEVEL_2
+            if (|((`DEBUG_GROUP >> `DBG_GRP_AXIMEM) & 32'h1)) begin
                 static logic prev_write_addr_valid = 1'b0;
                 static logic prev_write_pipe0_valid = 1'b0;
                 if (write_addr_valid != prev_write_addr_valid || write_pipe[0].valid != prev_write_pipe0_valid) begin
-                    $display("[AXI_MEM][WR] write_addr_valid=%b write_pipe[0].valid=%b axi_bvalid=%b axi_bready=%b",
+                    $display("[AXIMEM] [WR] write_addr_valid=%b write_pipe[0].valid=%b axi_bvalid=%b axi_bready=%b",
                              write_addr_valid, write_pipe[0].valid, axi_bvalid, axi_bready);
                     prev_write_addr_valid = write_addr_valid;
                     prev_write_pipe0_valid = write_pipe[0].valid;
                 end
             end
+            `endif
 
             if (MEM_WRITE_LATENCY == 1) begin
                 // ── Latency-1: stage[0] is both input and output ──────────
@@ -395,14 +394,12 @@ module axi_memory #(
                 if (axi_wstrb[2]) mem[(base_addr + 2) & (MEM_SIZE-1)] <= axi_wdata[23:16];
                 if (axi_wstrb[3]) mem[(base_addr + 3) & (MEM_SIZE-1)] <= axi_wdata[31:24];
 
-                if (ENABLE_MEM_TRACE) begin
-                    $display("[AXI_MEM][WR] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
-                             write_addr_reg, axi_wdata, axi_wstrb,
-                             axi_wstrb[0] ? axi_wdata[7:0] : 8'hXX,
-                             axi_wstrb[1] ? axi_wdata[15:8] : 8'hXX,
-                             axi_wstrb[2] ? axi_wdata[23:16] : 8'hXX,
-                             axi_wstrb[3] ? axi_wdata[31:24] : 8'hXX);
-                end
+                `DEBUG2(`DBG_GRP_AXIMEM, ("[WR] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
+                         write_addr_reg, axi_wdata, axi_wstrb,
+                         axi_wstrb[0] ? axi_wdata[7:0] : 8'hXX,
+                         axi_wstrb[1] ? axi_wdata[15:8] : 8'hXX,
+                         axi_wstrb[2] ? axi_wdata[23:16] : 8'hXX,
+                         axi_wstrb[3] ? axi_wdata[31:24] : 8'hXX));
             end
         end else begin
             // Multi-cycle write: write each beat immediately as it is accepted;
@@ -418,14 +415,12 @@ module axi_memory #(
                 if (axi_wstrb[2]) mem[(base_addr + 2) & (MEM_SIZE-1)] <= axi_wdata[23:16];
                 if (axi_wstrb[3]) mem[(base_addr + 3) & (MEM_SIZE-1)] <= axi_wdata[31:24];
 
-                if (ENABLE_MEM_TRACE) begin
-                    $display("[AXI_MEM][WR] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
-                             write_addr_reg, axi_wdata, axi_wstrb,
-                             axi_wstrb[0] ? axi_wdata[7:0] : 8'hXX,
-                             axi_wstrb[1] ? axi_wdata[15:8] : 8'hXX,
-                             axi_wstrb[2] ? axi_wdata[23:16] : 8'hXX,
-                             axi_wstrb[3] ? axi_wdata[31:24] : 8'hXX);
-                end
+                `DEBUG2(`DBG_GRP_AXIMEM, ("[WR] addr=0x%08x data=0x%08x strb=0x%x [bytes: %02x %02x %02x %02x]",
+                         write_addr_reg, axi_wdata, axi_wstrb,
+                         axi_wstrb[0] ? axi_wdata[7:0] : 8'hXX,
+                         axi_wstrb[1] ? axi_wdata[15:8] : 8'hXX,
+                         axi_wstrb[2] ? axi_wdata[23:16] : 8'hXX,
+                         axi_wstrb[3] ? axi_wdata[31:24] : 8'hXX));
             end
         end
     end
@@ -673,10 +668,8 @@ module axi_memory #(
                     if (raw_addr < BASE_ADDR || raw_addr >= (BASE_ADDR + MEM_SIZE)) begin
                         read_pipe[target_stage].resp <= 2'b10;
                         read_pipe[target_stage].data <= 32'hDEADBEEF;
-                        if (ENABLE_MEM_TRACE) begin
-                            $display("[AXI_MEM][RD][ERROR] addr=0x%08x out of range [0x%08x - 0x%08x]",
-                                     raw_addr, BASE_ADDR, BASE_ADDR + MEM_SIZE);
-                        end
+                        `DEBUG2(`DBG_GRP_AXIMEM, ("[RD][ERROR] addr=0x%08x out of range [0x%08x - 0x%08x]",
+                                 raw_addr, BASE_ADDR, BASE_ADDR + MEM_SIZE));
                     end else begin
                         read_value = {mem[(word_addr + 3) & (MEM_SIZE-1)],
                                      mem[(word_addr + 2) & (MEM_SIZE-1)],
@@ -684,14 +677,12 @@ module axi_memory #(
                                      mem[word_addr]};
                         read_pipe[target_stage].resp <= 2'b00;
                         read_pipe[target_stage].data <= read_value;
-                        if (ENABLE_MEM_TRACE) begin
-                            $display("[AXI_MEM][RD] addr=0x%08x data=0x%08x [bytes: %02x %02x %02x %02x]",
-                                     raw_addr, read_value,
-                                     mem[word_addr],
-                                     mem[(word_addr + 1) & (MEM_SIZE-1)],
-                                     mem[(word_addr + 2) & (MEM_SIZE-1)],
-                                     mem[(word_addr + 3) & (MEM_SIZE-1)]);
-                        end
+                        `DEBUG2(`DBG_GRP_AXIMEM, ("[RD] addr=0x%08x data=0x%08x [bytes: %02x %02x %02x %02x]",
+                                 raw_addr, read_value,
+                                 mem[word_addr],
+                                 mem[(word_addr + 1) & (MEM_SIZE-1)],
+                                 mem[(word_addr + 2) & (MEM_SIZE-1)],
+                                 mem[(word_addr + 3) & (MEM_SIZE-1)]));
                     end
                 end
             end
@@ -707,9 +698,9 @@ module axi_memory #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             // empty
-        end else if (ENABLE_MEM_TRACE && burst_active) begin
-            $display("[AXI_MEM][PIPE] rvalid=%b rdata=0x%08h burst_active=%b burst_remaining=%0d pipe_valid=%b pipe_data=0x%08h",
-                axi_rvalid, axi_rdata, burst_active, burst_remaining, read_pipe[0].valid, read_pipe[0].data);
+        end else if (burst_active) begin
+            `DEBUG2(`DBG_GRP_AXIMEM, ("[PIPE] rvalid=%b rdata=0x%08h burst_active=%b burst_remaining=%0d pipe_valid=%b pipe_data=0x%08h",
+                axi_rvalid, axi_rdata, burst_active, burst_remaining, read_pipe[0].valid, read_pipe[0].data));
         end
     end
 
@@ -781,8 +772,8 @@ module axi_memory #(
         automatic int masked_addr = addr & (MEM_SIZE - 1);
         if (masked_addr >= 0 && masked_addr < MEM_SIZE) begin
             mem[masked_addr] = data;
-        end else if (ENABLE_MEM_TRACE) begin
-            $display("[AXI_MEM][WR][ERROR] addr=0x%08x masked=0x%08x OUT OF RANGE", addr, masked_addr);
+        end else begin
+            `DEBUG2(`DBG_GRP_AXIMEM, ("[WR][ERROR] addr=0x%08x masked=0x%08x OUT OF RANGE", addr, masked_addr));
         end
     endfunction
 

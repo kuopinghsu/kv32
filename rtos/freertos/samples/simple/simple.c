@@ -57,8 +57,7 @@ void vTask2(void *pvParameters) {
             printf("Task 2: Completed\n");
             printf("\n=== FreeRTOS Test Complete ===\n");
             /* Exit simulation */
-            volatile uint32_t *exit_reg = (volatile uint32_t *)0xFFFFFFF0;
-            *exit_reg = 0;
+            kv_magic_exit(0);
             vTaskDelete(NULL);
         }
     }

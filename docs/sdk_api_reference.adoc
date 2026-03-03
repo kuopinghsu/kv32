@@ -135,27 +135,27 @@ Portability:: Works with both RTL simulation and software simulators (kv32sim, S
 | Platform-Level Interrupt Controller
 
 | UART
-| `0x2000_0000`
+| `0x2001_0000`
 | 64 KB
 | Serial communication peripheral
 
 | I2C
-| `0x2001_0000`
+| `0x2002_0000`
 | 64 KB
 | I2C master controller
 
 | SPI
-| `0x2002_0000`
+| `0x2003_0000`
 | 64 KB
 | SPI master controller
 
 | DMA
-| `0x2003_0000`
-| 4 KB
+| `0x2000_0000`
+| 64 KB
 | Direct Memory Access controller (8 channels)
 
 | Magic Device
-| `0xFFFF_0000`
+| `0x4000_0000`
 | 64 KB
 | Simulation/testbench console and exit control
 |===
@@ -282,7 +282,7 @@ The UART peripheral (`axi_uart.sv`) provides full-duplex serial communication wi
 * Interrupt generation on RX data available and TX FIFO empty
 * Internal loopback mode for testing
 
-Base Address:: `0x2000_0000` (KV_UART_BASE)
+Base Address:: `0x2001_0000` (KV_UART_BASE)
 PLIC Source ID:: 1 (KV_PLIC_SRC_UART)
 
 === Register Map
@@ -489,7 +489,7 @@ The SPI peripheral (`axi_spi.sv`) provides a master-mode SPI controller with:
 * Full-duplex operation
 * Internal loopback mode
 
-Base Address:: `0x2002_0000` (KV_SPI_BASE)
+Base Address:: `0x2003_0000` (KV_SPI_BASE)
 PLIC Source ID:: 2 (KV_PLIC_SRC_SPI)
 
 === Register Map
@@ -695,7 +695,7 @@ The I2C peripheral (`axi_i2c.sv`) provides a master-mode I2C controller with:
 * ACK/NACK detection
 * Interrupt support
 
-Base Address:: `0x2001_0000` (KV_I2C_BASE)
+Base Address:: `0x2002_0000` (KV_I2C_BASE)
 PLIC Source ID:: 3 (KV_PLIC_SRC_I2C)
 
 === Register Map
@@ -879,7 +879,7 @@ The DMA controller (`axi_dma.sv`) provides high-performance data transfers with:
 * Interrupt generation on completion or error
 * Performance counters for throughput monitoring
 
-Base Address:: `0x2003_0000` (KV_DMA_BASE)
+Base Address:: `0x2000_0000` (KV_DMA_BASE)
 PLIC Source ID:: 4 (KV_PLIC_SRC_DMA)
 
 === Register Map
@@ -1265,7 +1265,7 @@ printf("DMA: %u cycles, %u rd, %u wr\n", cycles, rd_bytes, wr_bytes);
 The Timer (`axi_timer.sv`) provides 4 independent 32-bit up-counters with PWM output,
 prescaler, dual compare, and per-channel interrupt support.
 
-Base Address:: `0x2005_0000` (KV_TIMER_BASE)
+Base Address:: `0x2004_0000` (KV_TIMER_BASE)
 PLIC Source:: 6 (KV_PLIC_SRC_TIMER)
 Header:: `kv_timer.h`
 
@@ -1442,7 +1442,7 @@ The GPIO controller (`axi_gpio.sv`) provides 4 independent 32-pin banks with
 configurable direction, atomic set/clear, edge/level interrupt detection,
 and per-bank loopback mode for testing.
 
-Base Address:: `0x2004_0000` (KV_GPIO_BASE)
+Base Address:: `0x2005_0000` (KV_GPIO_BASE)
 PLIC Source:: 5 (KV_PLIC_SRC_GPIO)
 Header:: `kv_gpio.h`
 
@@ -1940,7 +1940,7 @@ float cpi = (float)cycles / instructions;
 
 The Magic Device provides a simple interface for firmware to communicate with simulation environments without requiring a full UART implementation.
 
-Base Address:: `0xFFFF_0000` (KV_MAGIC_BASE)
+Base Address:: `0x4000_0000` (KV_MAGIC_BASE)
 
 NOTE: This peripheral is only available in simulation (RTL testbench, kv32sim, Spike plugins).
 It will not be synthesized for production FPGA/ASIC.

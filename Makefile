@@ -93,21 +93,22 @@ SPIKE_PLUGINS = \
 SPIKE_EXTLIBS  = $(patsubst %,--extlib=%,$(SPIKE_PLUGINS))
 SPIKE_DEVICES  = \
 	-m2047 \
-	--device=plugin_magic,0xFFFF0000    \
-	--device=plugin_uart,0x20000000     \
-	--device=plugin_i2c,0x20010000      \
-	--device=plugin_spi,0x20020000      \
-	--device=plugin_dma,0x20030000      \
-	--device=plugin_gpio,0x20040000     \
-	--device=plugin_timer,0x20050000
+	--device=plugin_magic,0x40000000    \
+	--device=plugin_uart,0x20010000     \
+	--device=plugin_i2c,0x20020000      \
+	--device=plugin_spi,0x20030000      \
+	--device=plugin_dma,0x20000000      \
+	--device=plugin_gpio,0x20050000     \
+	--device=plugin_timer,0x20040000
 
 # Verilator settings
 VERILATOR ?= verilator
 VERILATOR_JOBS ?= 0
-VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-UNSIGNED --trace --trace-fst --cc --exe --build -j $(VERILATOR_JOBS)
+VERILATOR_FLAGS = -Wall -Wno-UNSIGNED --trace --trace-fst --cc --exe --build -j $(VERILATOR_JOBS)
 VERILATOR_FLAGS += -sv --timing
 VERILATOR_FLAGS += --top-module tb_kv32_soc
 VERILATOR_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM
+VERILATOR_FLAGS += -CFLAGS "-Wall -Werror -Wno-bool-operation -Wno-parentheses-equality -Wno-unused-variable"
 VERILATOR_FLAGS += -I$(MEM_DIR)
 
 # Assertion control (ASSERT=1 enables, ASSERT=0 disables)
@@ -182,6 +183,9 @@ ICACHE_SIZE  ?= 4096
 ICACHE_LINE_SIZE ?= 32
 ICACHE_WAYS  ?= 2
 
+# Pass I-cache enable to SW compiler so tests can skip when cache is absent
+CFLAGS += -DICACHE_EN=$(ICACHE_EN)
+
 # I-cache: ICACHE_EN=0 disables the cache (uses mem_axi_ro bypass), default=1
 ifdef ICACHE_EN
   VERILATOR_FLAGS += -pvalue+ICACHE_EN=$(ICACHE_EN)
@@ -209,6 +213,11 @@ DEBUG_GROUP  ?=
 VERILATOR_FLAGS += -CFLAGS "-DICACHE_EN=$(ICACHE_EN) -DICACHE_SIZE=$(ICACHE_SIZE) -DICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) -DICACHE_WAYS=$(ICACHE_WAYS)"
 RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP) COVERAGE=$(COVERAGE) MEM_READ_LATENCY=$(MEM_READ_LATENCY) MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY) MEM_DUAL_PORT=$(MEM_DUAL_PORT)
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
+
+# SW params stamp: tracks CFLAGS defines passed to the RISC-V compiler.
+# When ICACHE_EN (or any future -D flag) changes, all .elf files are rebuilt.
+SW_BUILD_PARAMS  = ICACHE_EN=$(ICACHE_EN)
+SW_PARAMS_STAMP  = $(BUILD_DIR)/.sw_build_params
 
 # RTL source files
 # Package files must be compiled first
@@ -238,6 +247,7 @@ BUILD_TARGET = $(BUILD_DIR)/kv32soc
 all: rtl-all sim-all compare-all spike-all freertos-compare-simple
 	@echo "== FAST_DIV=0 FAST_MUL=0 compare-all rtl-all"
 	@make -f Makefile FAST_DIV=0 FAST_MUL=0 compare-all rtl-all
+	@make -f Makefile ICACHE_EN=0 compare-all rtl-all
 	@make -f Makefile TRACE=1 arch-test-all
 	@make -f Makefile TRACE=1 arch-test-sim
 
@@ -265,6 +275,11 @@ rtl-build: build-rtl
 $(RTL_PARAMS_STAMP): FORCE
 	@mkdir -p $(BUILD_DIR)
 	@printf '%s' "$(RTL_BUILD_PARAMS)" | cmp -s - $@ || printf '%s' "$(RTL_BUILD_PARAMS)" > $@
+
+# SW params stamp: same mechanism as RTL stamp but for CFLAGS-visible defines.
+$(SW_PARAMS_STAMP): FORCE
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s' "$(SW_BUILD_PARAMS)" | cmp -s - $@ || printf '%s' "$(SW_BUILD_PARAMS)" > $@
 
 FORCE:
 
@@ -309,12 +324,12 @@ sim-build: build-sim
 .SECONDEXPANSION:
 
 # Pattern rule to build a test program (handles both C and C++ automatically)
-$(BUILD_DIR)/%.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld \
+$(BUILD_DIR)/%.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld $(SW_PARAMS_STAMP) \
                     $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h $(SW_DIR)/$$*/*.S)
 	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@ DIS_OUT=$(BUILD_DIR)/$*.dis READELF_OUT=$(BUILD_DIR)/$*.readelf
 
 # Pattern rule to build a test program for Spike (with HTIF support)
-$(BUILD_DIR)/%-spike.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld \
+$(BUILD_DIR)/%-spike.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld $(SW_PARAMS_STAMP) \
                           $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h $(SW_DIR)/$$*/*.S)
 	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@ HTIF=1 DIS_OUT=$(BUILD_DIR)/$*-spike.dis READELF_OUT=$(BUILD_DIR)/$*-spike.readelf
 

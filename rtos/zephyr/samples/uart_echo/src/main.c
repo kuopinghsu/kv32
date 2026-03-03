@@ -10,12 +10,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/printk.h>
-
-void sim_exit(int exit_code)
-{
-    /* Write to exit magic address */
-    *((volatile uint32_t *)0xFFFFFFF0) = exit_code;
-}
+#include "kv_platform.h"
 
 void uart_echo_test(const struct device *uart_dev)
 {
@@ -67,7 +62,7 @@ void main(void)
 
     if (!device_is_ready(uart_dev)) {
         printk("ERROR: UART device not ready!\n");
-        sim_exit(1);
+        kv_magic_exit(1);
         return;
     }
 
@@ -79,5 +74,5 @@ void main(void)
     /* Report results */
     printk("\nUART Echo test PASSED\n");
     printk("Successfully received and echoed characters\n");
-    sim_exit(0);
+    kv_magic_exit(0);
 }

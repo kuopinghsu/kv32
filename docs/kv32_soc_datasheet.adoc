@@ -127,13 +127,19 @@ This datasheet is organized as follows:
     +-----------------+   |                    |  (2MB ext)  |          |   |
                           |                    +-------------+          |   |
                           |                                             |   |
-                          | Slave 1: CLINT    0x0200_0000-0x020B_FFFF   |   |
+                          | Slave 1: Magic    0x4000_0000-0x4000_FFFF   |   |
+                          |   +--------------------------+              |   |
+                          |   | Simulation console I/O   |              |   |
+                          |   | Exit code control        |              |   |
+                          |   +--------------------------+              |   |
+                          |                                             |   |
+                          | Slave 2: CLINT    0x0200_0000-0x020B_FFFF   |   |
                           |   +--------------------------+              |   |
                           |   | Timer (mtime/mtimecmp)   |              |   |
                           |   | Software IRQ (msip)      |---->timer_irq|   |
                           |   +--------------------------+   +>sw_irq   |   |
                           |                                             |   |
-                          | Slave 2: PLIC     0x0C00_0000-0x0CFF_FFFF   |   |
+                          | Slave 3: PLIC     0x0C00_0000-0x0CFF_FFFF   |   |
                           |   +--------------------------+              |   |
                           |   | Priority/Enable/Claim    |<---uart_irq  |   |
                           |   | Threshold/Complete       |<---spi_irq   |   |
@@ -141,48 +147,42 @@ This datasheet is organized as follows:
                           |                  |            <---dma_irq   |   |
                           |                  +-------------->ext_irq    |   |
                           |                                             |   |
-                          | Slave 3: UART     0x2000_0000-0x2000_FFFF   |   |
-                          |   +--------------------------+              |   |
-                          |   | TX/RX FIFOs (16-deep)    |<---uart_rx   |   |
-                          |   | Baud rate: 25MHz max     |--->uart_tx   |   |
-                          |   +--------------------------+              |   |
-                          |                                             |   |
-                          | Slave 4: I2C      0x2001_0000-0x2001_FFFF   |   |
-                          |   +--------------------------+              |   |
-                          |   | Master mode (100k/400k)  |<-->i2c_sda   |   |
-                          |   | TX/RX FIFOs (8-deep)     |<-->i2c_scl   |   |
-                          |   +--------------------------+              |   |
-                          |                                             |   |
-                          | Slave 5: SPI      0x2002_0000-0x2002_FFFF   |   |
-                          |   +--------------------------+              |   |
-                          |   | Master mode (4 CS lines) |--->spi_sclk  |   |
-                          |   | TX/RX FIFOs (8-deep)     |--->spi_mosi  |   |
-                          |   | Modes 0-3 (CPOL/CPHA)    |<---spi_miso  |   |
-                          |   +--------------------------+--->spi_cs_n  |   |
-                          |                                             |   |
-                          | Slave 6: DMA      0x2003_0000-0x2003_0FFF   |   |
+                          | Slave 4: DMA      0x2000_0000-0x2000_FFFF   |   |
                           |   +--------------------------+              |   |
                           |   | 4 channels, 1D/2D/3D/SG  |<-->(AXI4     |   |
                           |   | 32-bit data width        |    master    |   |
                           |   | Performance counters     |    port)     |   |
                           |   +--------------------------+              |   |
                           |                                             |   |
-                          | Slave 7: GPIO     0x2004_0000-0x2004_FFFF   |   |
+                          | Slave 5: UART     0x2001_0000-0x2001_FFFF   |   |
                           |   +--------------------------+              |   |
-                          |   | 4 banks x 32 pins        |<-->gpio[127:0]|  |
-                          |   | Dir/IRQ/edge/level       +-->gpio_irq   |   |
+                          |   | TX/RX FIFOs (16-deep)    |<---uart_rx   |   |
+                          |   | Baud rate: 25MHz max     |--->uart_tx   |   |
                           |   +--------------------------+              |   |
                           |                                             |   |
-                          | Slave 8: Timer    0x2005_0000-0x2005_FFFF   |   |
+                          | Slave 6: I2C      0x2002_0000-0x2002_FFFF   |   |
+                          |   +--------------------------+              |   |
+                          |   | Master mode (100k/400k)  |<-->i2c_sda   |   |
+                          |   | TX/RX FIFOs (8-deep)     |<-->i2c_scl   |   |
+                          |   +--------------------------+              |   |
+                          |                                             |   |
+                          | Slave 7: SPI      0x2003_0000-0x2003_FFFF   |   |
+                          |   +--------------------------+              |   |
+                          |   | Master mode (4 CS lines) |--->spi_sclk  |   |
+                          |   | TX/RX FIFOs (8-deep)     |--->spi_mosi  |   |
+                          |   | Modes 0-3 (CPOL/CPHA)    |<---spi_miso  |   |
+                          |   +--------------------------+--->spi_cs_n  |   |
+                          |                                             |   |
+                          | Slave 8: Timer    0x2004_0000-0x2004_FFFF   |   |
                           |   +--------------------------+              |   |
                           |   | 4 ch, 32-bit up-counter  +-->pwm[3:0]   |   |
                           |   | PWM + dual compare       +-->timer_irq  |   |
                           |   +--------------------------+              |   |
                           |                                             |   |
-                          | Slave 9: Magic    0xFFFF_0000-0xFFFF_FFFF   |   |
+                          | Slave 9: GPIO     0x2005_0000-0x2005_FFFF   |   |
                           |   +--------------------------+              |   |
-                          |   | Simulation console I/O   |              |   |
-                          |   | Exit code control        |              |   |
+                          |   | 4 banks x 32 pins        |<-->gpio[127:0]|  |
+                          |   | Dir/IRQ/edge/level       +-->gpio_irq   |   |
                           |   +--------------------------+              |   |
                           +---------------------------------------------+   |
                                                                             |
@@ -254,6 +254,47 @@ Seven peripheral slaves hang off the AXI crossbar:
 * **PLIC**: Routes up to 31 external interrupt sources (UART, SPI, I2C, DMA, GPIO, Timer) with programmable priorities (0-15) and a configurable claim/complete handshake
 * **Core Integration**: timer_irq, software_irq, external_irq inputs to core CSR unit
 
+==== Power Manager (kv32_pm)
+
+The `kv32_pm` module implements clock gating for the processor core, enabling low-power idle when the core executes a `WFI` (Wait-For-Interrupt) instruction.
+
+===== Operation
+
+When the processor executes `WFI`, `kv32_core` asserts `core_sleep_o` after all outstanding instruction-fetch and store-buffer traffic drains. `kv32_pm` then gates the core clock until any M-mode interrupt becomes active:
+
+[source,verilog]
+----
+clk_en = !sleep_req_i       // core not in WFI
+       | timer_irq_i         // CLINT machine-timer
+       | external_irq_i      // PLIC external IRQ
+       | software_irq_i      // CLINT software IRQ
+       | irq_wake_pending;   // captured single-cycle pulse
+----
+
+===== IRQ Pulse Capture
+
+Interrupt sources may assert for only a single cycle on the ungated system clock. To prevent the core from remaining asleep after a missed short pulse, a flip-flop clocked by the ungated `clk_i` captures any IRQ edge and holds `clk_en=1` (`irq_wake_pending`) until the core de-asserts `sleep_req_i`. This guarantees the gated clock delivers at least one rising edge to the core's interrupt-sampling logic.
+
+===== Technology Mapping
+
+[cols="1,3"]
+.Clock-Gate Implementation
+|===
+|Target |Implementation
+
+|FPGA (Xilinx UltraScale+)
+|`BUFGCE` primitive with `CE_TYPE="SYNC"`. Vivado infers correct setup/hold constraints on CE. CE active-high; not inverted.
+
+|Simulation / ASIC
+|Behavioural ICG cell: transparent latch (open on low phase of `clk_i`) followed by AND gate. Recognised by synthesis tools as a standard ICG pattern.
+|===
+
+===== Timing
+
+* **Sleep entry**: `core_sleep_o` asserted after all outstanding AXI transactions drain
+* **Wake latency**: 1 clock period from IRQ assertion to first gated rising edge
+* **Clock domain boundary**: CLINT and PLIC run on the ungated system clock and continue counting while the core is asleep
+
 <<<
 
 == Memory Map
@@ -277,32 +318,32 @@ The RV32IMA SoC implements a 32-bit address space (4GB) with the following alloc
 |64MB
 |(actual registers much smaller, per RISC-V spec)
 
-|0x2000_0000 - 0x2000_FFFF
+|0x2001_0000 - 0x2001_FFFF
 |UART
 |64KB
 |Serial communication peripheral
 
-|0x2001_0000 - 0x2001_FFFF
+|0x2002_0000 - 0x2002_FFFF
 |I2C
 |64KB
 |I2C master controller
 
-|0x2002_0000 - 0x2002_FFFF
+|0x2003_0000 - 0x2003_FFFF
 |SPI
 |64KB
 |SPI master controller
 
-|0x2003_0000 - 0x2003_0FFF
+|0x2000_0000 - 0x2000_FFFF
 |DMA
-|4KB
+|64KB
 |DMA controller (4 channels)
 
-|0x2004_0000 - 0x2004_FFFF
+|0x2005_0000 - 0x2005_FFFF
 |GPIO
 |64KB
 |General-purpose I/O controller (4 banks × 32 pins)
 
-|0x2005_0000 - 0x2005_FFFF
+|0x2004_0000 - 0x2004_FFFF
 |Timer
 |64KB
 |Timer/PWM controller (4 channels, 32-bit)
@@ -312,7 +353,7 @@ The RV32IMA SoC implements a 32-bit address space (4GB) with the following alloc
 |2MB
 |Main system memory (SRAM)
 
-|0xFFFF_0000 - 0xFFFF_FFFF
+|0x4000_0000 - 0x4000_FFFF
 |Magic Device
 |64KB
 |Simulation control and console
@@ -323,15 +364,15 @@ The RV32IMA SoC implements a 32-bit address space (4GB) with the following alloc
 The AXI crossbar (`axi_xbar`) decodes addresses based on the high-order bits:
 
 * **Slave 0 (RAM)**: `addr[31:21] == 11'h400` (0x8000_0000)
-* **Slave 1 (CLINT)**: `addr[31:20] == 12'h020` (0x0200_0000)
-* **Slave 2 (PLIC)**: `addr[31:24] == 8'h0C` (0x0C00_0000)
-* **Slave 3 (UART)**: `addr[31:16] == 16'h2000` (0x2000_0000)
-* **Slave 4 (I2C)**: `addr[31:16] == 16'h2001` (0x2001_0000)
-* **Slave 5 (SPI)**: `addr[31:16] == 16'h2002` (0x2002_0000)
-* **Slave 6 (DMA)**: `addr[31:12] == 20'h2003_0` (0x2003_0000)
-* **Slave 7 (GPIO)**: `addr[31:16] == 16'h2004` (0x2004_0000)
-* **Slave 8 (Timer)**: `addr[31:16] == 16'h2005` (0x2005_0000)
-* **Slave 9 (Magic)**: `addr[31:16] == 16'hFFFF` (0xFFFF_0000)
+* **Slave 1 (Magic)**: `addr[31:16] == 16'h4000` (0x4000_0000)
+* **Slave 2 (CLINT)**: `addr[31:20] == 12'h020` (0x0200_0000)
+* **Slave 3 (PLIC)**: `addr[31:24] == 8'h0C` (0x0C00_0000)
+* **Slave 4 (DMA)**: `addr[31:16] == 16'h2000` (0x2000_0000)
+* **Slave 5 (UART)**: `addr[31:16] == 16'h2001` (0x2001_0000)
+* **Slave 6 (I2C)**: `addr[31:16] == 16'h2002` (0x2002_0000)
+* **Slave 7 (SPI)**: `addr[31:16] == 16'h2003` (0x2003_0000)
+* **Slave 8 (Timer)**: `addr[31:16] == 16'h2004` (0x2004_0000)
+* **Slave 9 (GPIO)**: `addr[31:16] == 16'h2005` (0x2005_0000)
 
 Unmapped addresses return an AXI SLVERR (2'b10) response on the read channel and OKAY (2'b00) on the write channel (write is silently ignored).
 
@@ -749,7 +790,7 @@ The UART peripheral provides serial communication with configurable baud rate an
 |Feature |Specification
 
 |Base Address
-|0x2000_0000
+|0x2001_0000
 
 |Size
 |64KB (only first 0x18 bytes used)
@@ -903,7 +944,7 @@ The SPI peripheral provides master-mode serial communication for interfacing wit
 |Feature |Specification
 
 |Base Address
-|0x2002_0000
+|0x2003_0000
 
 |Size
 |64KB (only first 0x1C bytes used)
@@ -1100,7 +1141,7 @@ The I2C peripheral provides master-mode I2C communication for interfacing with s
 |Feature |Specification
 
 |Base Address
-|0x2001_0000
+|0x2002_0000
 
 |Size
 |64KB (only first 0x1C bytes used)
@@ -1275,10 +1316,10 @@ The DMA controller provides high-performance memory-to-memory and peripheral-to-
 |Feature |Specification
 
 |Base Address
-|0x2003_0000
+|0x2000_0000
 
 |Size
-|4KB
+|64KB
 
 |Channels
 |4 independent channels
@@ -1512,7 +1553,7 @@ atomic bit-manipulation, edge/level interrupt detection, and loopback test mode.
 |Feature |Specification
 
 |Base Address
-|0x2004_0000
+|0x2005_0000
 
 |Size
 |64KB
@@ -1646,7 +1687,7 @@ dual compare registers for mid-period and period-end interrupts, and per-channel
 |Feature |Specification
 
 |Base Address
-|0x2005_0000
+|0x2004_0000
 
 |Size
 |64KB
@@ -2034,7 +2075,7 @@ WARNING: This peripheral is intended for simulation and testing only. It is not 
 |Feature |Specification
 
 |Base Address
-|0xFFFF_0000
+|0x4000_0000
 
 |Size
 |64KB
@@ -2050,13 +2091,13 @@ WARNING: This peripheral is intended for simulation and testing only. It is not 
 |===
 |Offset |Name |Access |Description
 
-|0xFFF0
+|0x0004
 |EXIT
 |W/O
 |Write exit code to terminate simulation +
 Value 1 = PASS (exit 0), Value ≠1 = FAIL (exit code N)
 
-|0xFFF4
+|0x0000
 |CONSOLE
 |W/O
 |Write character (low byte) to simulation console
@@ -2075,8 +2116,8 @@ Example:
 
 [source,c]
 ----
-volatile uint32_t *magic_exit = (uint32_t *)0xFFFFFFF0;
-volatile uint32_t *magic_console = (uint32_t *)0xFFFFFFF4;
+volatile uint32_t *magic_exit = (uint32_t *)0x40000004;
+volatile uint32_t *magic_console = (uint32_t *)0x40000000;
 
 // Print to console
 *magic_console = 'H';
@@ -2664,12 +2705,12 @@ For questions or support, contact: support@example.com
 |0x0200_4000
 |MTIMECMP_LO
 |R/W
-|0xFFFF_FFFF
+|0x4000_FFFF
 
 |0x0200_4004
 |MTIMECMP_HI
 |R/W
-|0xFFFF_FFFF
+|0x4000_FFFF
 
 |0x0200_BFF8
 |MTIME_LO
@@ -2725,37 +2766,37 @@ For questions or support, contact: support@example.com
 |===
 |Address |Name |Access |Reset Value
 
-|0x2000_0000
+|0x2001_0000
 |DATA
 |R/W
 |0x0000_0000
 
-|0x2000_0004
+|0x2001_0004
 |STATUS
 |R/O
 |0x0000_0002
 
-|0x2000_0008
+|0x2001_0008
 |IE
 |R/W
 |0x0000_0000
 
-|0x2000_000C
+|0x2001_000C
 |IS
 |R/O
 |0x0000_0000
 
-|0x2000_0010
+|0x2001_0010
 |LEVEL
 |R/O
 |0x0000_0000
 
-|0x2000_0014
+|0x2001_0014
 |CTRL
 |R/W
 |0x0000_0000
 
-|0x2000_0018
+|0x2001_0018
 |CAP
 |R/O
 |`{VERSION[31:16], TX_DEPTH[15:8], RX_DEPTH[7:0]}`
@@ -2767,10 +2808,57 @@ For questions or support, contact: support@example.com
 |===
 |Address |Name |Access |Reset Value
 
-|0x2002_0000
+|0x2003_0000
 |CTRL
 |R/W
 |0x0000_00F0
+
+|0x2003_0004
+|DIV
+|R/W
+|0x0000_0000
+
+|0x2003_0008
+|TX
+|W/O
+|-
+
+|0x2003_000C
+|RX
+|R/O
+|0x0000_0000
+
+|0x2003_0010
+|STATUS
+|R/O
+|0x0000_000A
+
+|0x2003_0014
+|IE
+|R/W
+|0x0000_0000
+
+|0x2003_0018
+|IS
+|R/O
+|0x0000_0000
+
+|0x2003_001C
+|CAP
+|R/O
+|`{VERSION[31:16], TX_DEPTH[15:8], RX_DEPTH[7:0]}`
+|===
+
+=== I2C Registers
+
+[cols="1,2,1,2"]
+|===
+|Address |Name |Access |Reset Value
+
+|0x2002_0000
+|CTRL
+|R/W
+|0x0000_0000
 
 |0x2002_0004
 |DIV
@@ -2790,7 +2878,7 @@ For questions or support, contact: support@example.com
 |0x2002_0010
 |STATUS
 |R/O
-|0x0000_000A
+|0x0000_0002
 
 |0x2002_0014
 |IE
@@ -2808,95 +2896,48 @@ For questions or support, contact: support@example.com
 |`{VERSION[31:16], TX_DEPTH[15:8], RX_DEPTH[7:0]}`
 |===
 
-=== I2C Registers
-
-[cols="1,2,1,2"]
-|===
-|Address |Name |Access |Reset Value
-
-|0x2001_0000
-|CTRL
-|R/W
-|0x0000_0000
-
-|0x2001_0004
-|DIV
-|R/W
-|0x0000_0000
-
-|0x2001_0008
-|TX
-|W/O
-|-
-
-|0x2001_000C
-|RX
-|R/O
-|0x0000_0000
-
-|0x2001_0010
-|STATUS
-|R/O
-|0x0000_0002
-
-|0x2001_0014
-|IE
-|R/W
-|0x0000_0000
-
-|0x2001_0018
-|IS
-|R/O
-|0x0000_0000
-
-|0x2001_001C
-|CAP
-|R/O
-|`{VERSION[31:16], TX_DEPTH[15:8], RX_DEPTH[7:0]}`
-|===
-
 === DMA Global Registers
 
 [cols="1,2,1,2"]
 |===
 |Address |Name |Access |Reset Value
 
-|0x2003_0F00
+|0x2000_0F00
 |IRQ_STAT
 |R/W1C
 |0x0000_0000
 
-|0x2003_0F04
+|0x2000_0F04
 |IRQ_EN
 |R/W
 |0x0000_0000
 
-|0x2003_0F08
+|0x2000_0F08
 |DMA_ID
 |R/O
 |0xD4A0_0100
 
-|0x2003_0F0C
+|0x2000_0F0C
 |CAPABILITY
 |R/O
 |`{VERSION[31:16], NUM_CHANNELS[15:8], MAX_BURST_LEN[7:0]}`
 
-|0x2003_0F10
+|0x2000_0F10
 |PERF_CTRL
 |R/W
 |0x0000_0000
 
-|0x2003_0F14
+|0x2000_0F14
 |PERF_CYCLES
 |R/O
 |0x0000_0000
 
-|0x2003_0F18
+|0x2000_0F18
 |PERF_RD_BYTES
 |R/O
 |0x0000_0000
 
-|0x2003_0F1C
+|0x2000_0F1C
 |PERF_WR_BYTES
 |R/O
 |0x0000_0000
@@ -2908,57 +2949,57 @@ For questions or support, contact: support@example.com
 |===
 |Address |Name |Access |Reset Value
 
-|0x2004_0000
+|0x2005_0000
 |DATA_OUT0
 |R/W
 |0x0000_0000
 
-|0x2004_0010
+|0x2005_0010
 |SET0
 |W/O
 |-
 
-|0x2004_0020
+|0x2005_0020
 |CLEAR0
 |W/O
 |-
 
-|0x2004_0030
+|0x2005_0030
 |DATA_IN0
 |R/O
 |(pin state)
 
-|0x2004_0040
+|0x2005_0040
 |DIR0
 |R/W
 |0x0000_0000
 
-|0x2004_0050
+|0x2005_0050
 |IE0
 |R/W
 |0x0000_0000
 
-|0x2004_0060
+|0x2005_0060
 |TRIGGER0
 |R/W
 |0x0000_0000
 
-|0x2004_0070
+|0x2005_0070
 |POLARITY0
 |R/W
 |0x0000_0000
 
-|0x2004_0080
+|0x2005_0080
 |IS0
 |W1C
 |0x0000_0000
 
-|0x2004_0090
+|0x2005_0090
 |LOOPBACK0
 |R/W
 |0x0000_0000
 
-|0x2004_00A0
+|0x2005_00A0
 |CAPABILITY
 |R/O
 |`0x0001_0120`
@@ -2970,37 +3011,37 @@ For questions or support, contact: support@example.com
 |===
 |Address |Name |Access |Reset Value
 
-|0x2005_0000
+|0x2004_0000
 |COUNT0
 |R/W
 |0x0000_0000
 
-|0x2005_0004
+|0x2004_0004
 |COMPARE1_0
 |R/W
 |0x0000_0000
 
-|0x2005_0008
+|0x2004_0008
 |COMPARE2_0
 |R/W
-|0xFFFF_FFFF
+|0x4000_FFFF
 
-|0x2005_000C
+|0x2004_000C
 |CTRL0
 |R/W
 |0x0000_0000
 
-|0x2005_0080
+|0x2004_0080
 |INT_STATUS
 |W1C
 |0x0000_0000
 
-|0x2005_0084
+|0x2004_0084
 |INT_ENABLE
 |R/W
 |0x0000_0000
 
-|0x2005_0088
+|0x2004_0088
 |CAPABILITY
 |R/O
 |`0x0001_0420`

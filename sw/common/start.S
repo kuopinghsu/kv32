@@ -8,6 +8,9 @@
 // program termination.
 // ============================================================================
 
+#define KV_PLATFORM_NO_INLINE_HELPERS
+#include "kv_platform.h"
+
     .section .text.init
     .global _start
     .type _start, @function
@@ -58,10 +61,10 @@ _start:
     // interrupts would immediately take cause-7 with no registered handler.
     // Write HI = 0xFFFFFFFF first (matching kv_clint_set_mtimecmp order)
     // to prevent a glitch if mtime_lo is also near max.
-    li   t1, 0x02004004    // KV_CLINT_MTIMECMP_HI (CLINT_BASE + 0x4004)
+    li   t1, (KV_CLINT_BASE + KV_CLINT_MTIMECMP_HI_OFF)  // 0x02004004
     li   t0, -1            // 0xFFFFFFFF
     sw   t0, 0(t1)
-    li   t1, 0x02004000    // KV_CLINT_MTIMECMP_LO (CLINT_BASE + 0x4000)
+    li   t1, (KV_CLINT_BASE + KV_CLINT_MTIMECMP_LO_OFF)  // 0x02004000
     sw   t0, 0(t1)
     // HI is already 0xFFFFFFFF → full 64-bit mtimecmp = UINT64_MAX
 

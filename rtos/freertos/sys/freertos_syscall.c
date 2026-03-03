@@ -7,15 +7,10 @@
 #include <sys/times.h>
 #include <errno.h>
 #include <stdint.h>
+#include "kv_platform.h"
 
 #undef errno
 extern int errno;
-
-/* Console output via magic address */
-#define CONSOLE_ADDR 0xFFFFFFF4
-
-/* Exit via magic address */
-#define EXIT_ADDR 0xFFFFFFF0
 
 /* Memory management */
 extern char __heap_start[];
@@ -69,16 +64,11 @@ int _read(int file, char *ptr, int len)
 
 int _write(int file, char *ptr, int len)
 {
-    int i;
-    volatile uint32_t *console = (volatile uint32_t *)CONSOLE_ADDR;
-
-    for (i = 0; i < len; i++) {
-        if (ptr[i] == '\n') {
-            *console = '\r';
-        }
-        *console = ptr[i];
+    for (int i = 0; i < len; i++) {
+        if (ptr[i] == '\n')
+            kv_magic_putc('\r');
+        kv_magic_putc(ptr[i]);
     }
-
     return len;
 }
 

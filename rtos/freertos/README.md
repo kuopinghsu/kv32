@@ -38,7 +38,7 @@ rtos/freertos/
 - **RAM**: 2MB @ 0x80000000
 - **ROM**: Code in RAM (no separate ROM)
 - **Timer**: CLINT machine timer @ 0x02000000
-- **Console**: Magic address write @ 0xFFFFFFF4
+- **Console**: Magic address write @ 0x40000000
 - **Clock**: 50 MHz system clock
 
 ### Memory Layout
@@ -254,7 +254,7 @@ make freertos-rtl-perf
 
 **Implemented calls**:
 - `_sbrk()`: Heap allocation for malloc/free
-- `_write()`: Console output to magic address (0xFFFFFFF4)
+- `_write()`: Console output to magic address (0x40000000)
 - `_exit()`: Program termination
 
 **Stubs** (not implemented):
@@ -504,7 +504,7 @@ int main(void) {
 ### Runtime Issues
 
 **No console output**
-- Verify magic address (0xFFFFFFF4) is implemented in testbench
+- Verify magic address (0x40000000) is implemented in testbench
 - Check that `_write()` syscall is linked
 - Ensure printf buffer is flushed (use `\n` or `fflush()`)
 

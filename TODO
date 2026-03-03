@@ -1,0 +1,92 @@
+1. [DONE]
+
+Add null addrdocess access (load/store and function call) to bus_err.c.
+Ensure memory access to address 0 from instruction and data path will trigger bus error exception.
+
+1.1. [DONE]
+
+Update Makefile, for C++, C and Verilator compiler, take warning as error and exit
+
+2.
+
+Add WFI instruction, add a output signal to indicate that no outstanding request and store buffer is empty when WFI is executed. Stall the pipeline and waiting for intrrupt occurs.
+Add kv32_pm.sv to control the clock gating to kv32_core module. Add Xilinx cell for clock latch.
+
+Add kv32_pm.sv to the complie list of fpga and syn.
+
+Update software simulator.
+
+Add sw/wfi to test WFI
+
+Update uart.c to use WFI, transfer small data from FIFO to test WFI
+
+2.1. [DONE]
+
+Update the description of power manager (rv32_pm.sv) for clock gating to following docs
+
+Update README.md
+Update docs/kv32_soc_block_diagram.svg
+Update docs/kv32_soc_datasheet.adoc
+
+3. [DONE]
+
+Update FreeRTOS rtos/freertos/sys/freertos_syscall.c use SDK include for magic address
+Update Zephyr rtos/zephyr/drivers/console/ to use SDK include for magic address
+
+4. [DONE]
+
+Rearrange memory map base address.
+
+Slave 9 -> Slave 1: Magic Address: base 0x4000_0000, 0x4000_0000 is console output, 0x4000_0004 is exit
+Slave 1 -> 2, CLINT, base no changed
+Slave 2 -> 3, PLIC, base no changed
+Slave 4 DMA, base 0x2000_0000
+Slave 5 UART, base 0x2001_0000
+Slave 6 I2C, base 0x2002_0000
+Slave 7 SPI, base 0x2003_0000
+Slave 8 Timer/PWM, base 0x2004_0000
+Slave 9 GPIO, base 0x2005_0000
+
+Update sw/common/start.S use SDK include
+Update sw/include,
+Update spike plug-in and Makefile
+Update README.md
+Update docs/kv32_soc_block_diagram.svg
+Update docs/kv32_soc_datasheet.adoc
+Update docs/sdk_api_reference.adoc
+Others need to be updated
+
+4.1 [DONE]
+Update rtos/zephyr/samples to use SDK API (for exit)
+Update rtos/zephyr/soc/riscv/kv32/soc.h, use SDK API include
+Update rtos/zephyr and rtos/freertos, use SDK API
+
+Update sw/icache, check if icache is not enabled, exit tests. run "make ICACHE_EN=0 rtl-icache"
+
+5.
+
+add PMA, check bit[31], 0->non-cacheable, 1->cacheable
+
+6.
+
+Add ddr4_axi4_slave.sv to base address 0x8000_0000. Add MEM_TYPE configuration,
+If MEM_TYPE=sram, connect axi_memory.sv, if MEM_TYPE=ddr4, connect ddr4_axi4_slave.sv.
+Add MEM_TYPE to Makefile, default MEM_TYPE=sram.
+Update ddr4_axi4_slave.sv for elf program load.
+
+7.
+
+Redo icache test, for SRAM with read/write latency with 1 and ddr4. Update docs/icache_benchmark_report.md
+
+8.
+
+Test Google RISCV-DV
+
+9.
+
+Add github CI workflow
+
+10.
+
+Update Zephyr porting
+

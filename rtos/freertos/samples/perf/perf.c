@@ -26,6 +26,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "kv_platform.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
@@ -918,7 +919,7 @@ void test(void* pArg)
     mutexTest();
     eventTest();
     queueTest();
-    exit(0);
+    kv_magic_exit(0);
 }
 
 int main(void)

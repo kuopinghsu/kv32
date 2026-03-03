@@ -8,7 +8,7 @@
 // TX and RX paths each have a FIFO_DEPTH-entry FIFO.  An interrupt is raised
 // whenever an enabled FIFO condition is true.
 //
-// Register Map (relative to base 0x2000_0000):
+// Register Map (relative to base 0x2001_0000):
 //   0x00: DATA   - write: push to TX FIFO; read: pop from RX FIFO
 //   0x04: STATUS - [0]=tx_full (busy: 1=can't-write, 0=ready), [1]=tx_full (full flag),
 //                   [2]=rx_not_empty (rx_ready), [3]=rx_full (overrun flag)

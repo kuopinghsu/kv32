@@ -9,7 +9,7 @@
 //   - Compare-match interrupts
 //   - PWM output generation
 //
-// Register Map (relative to base 0x2005_0000):
+// Register Map (relative to base 0x2004_0000):
 //   Timer 0:
 //   0x00: TIMER0_COUNT     - Counter value (read/write)
 //   0x04: TIMER0_COMPARE1  - Compare 1 (timer interrupt / PWM set point)

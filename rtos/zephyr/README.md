@@ -36,7 +36,7 @@ rtos/zephyr/
 
 - **CPU**: RV32IM (32-bit RISC-V with multiply/divide)
 - **Memory**: 2MB RAM @ 0x80000000
-- **Console**: Magic address @ 0xFFFFFFF4 (fast simulation output)
+- **Console**: Magic address @ 0x40000000 (fast simulation output)
 - **UART**: Custom UART with TX FIFO @ 0x10000000 (optional, hardware accurate)
 - **Timer**: RISC-V machine timer (CLINT) @ 0x02000000
   - mtime register @ 0x0200BFF8
@@ -50,7 +50,7 @@ rtos/zephyr/
 Two console drivers are provided:
 
 ### 1. Magic Address Console (Default - Recommended for Simulation)
-- **Address**: 0xFFFFFFF4
+- **Address**: 0x40000000
 - **Performance**: Very fast - no hardware timing simulation
 - **Use Case**: Simulation and testing
 - **Config**: `CONFIG_CONSOLE_KV32=y`
@@ -248,7 +248,7 @@ Consumer: consumed item, counter = 1
   - Heap: Minimal C library heap (if enabled)
 - **UART**: 0x10000000
 - **CLINT/Timer**: 0x02000000
-- **Console**: 0xFFFFFFF4 (magic address)
+- **Console**: 0x40000000 (magic address)
 
 ### System Clock
 
@@ -261,7 +261,7 @@ The SoC is configured for 50 MHz (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC=50000000)
   - Heap: Minimal C library heap (if enabled)
 - **UART**: 0x10000000
 - **CLINT/Timer**: 0x02000000
-- **Console**: 0xFFFFFFF4 (magic address)
+- **Console**: 0x40000000 (magic address)
 
 ### Threading Configuration
 
@@ -444,7 +444,7 @@ This automatically creates the init entry with proper sub-priority handling.
 
 1. **No console output**:
    - Check that `CONFIG_CONSOLE_KV32=y` is set
-   - Verify magic address (0xFFFFFFF4) is implemented in testbench
+   - Verify magic address (0x40000000) is implemented in testbench
    - For UART: verify baud rate matches testbench (115200)
 
 2. **Timer not working**:

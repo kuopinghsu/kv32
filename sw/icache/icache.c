@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <csr.h>
+#include "kv_platform.h"
 
 // ---------------------------------------------------------------------------
 // Helper: output one character via UART MMIO
@@ -94,6 +95,12 @@ void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
 
 int main(void) {
     int fails = 0;
+
+#if !defined(ICACHE_EN) || ICACHE_EN == 0
+    my_puts("\nICACHE_EN=0: I-Cache not present, skipping cache tests\n");
+    kv_magic_exit(0);
+    return 0;
+#endif
 
     my_puts("\n");
     my_puts("========================================\n");

@@ -8,9 +8,9 @@
 // false, which Spike translates into a load/store access-fault exception on
 // the hart (mirrors RTL AXI SLVERR behaviour).
 //
-// Register Map (offsets relative to KV_MAGIC_BASE = 0xFFFF_0000):
-//   0xFFF0  KV_MAGIC_CONSOLE_OFF  - W  Console: low byte written to stdout
-//   0xFFF4  KV_MAGIC_EXIT_OFF     - W  Exit: low 32-bit word = exit code
+// Register Map (offsets relative to KV_MAGIC_BASE = 0x4000_0000):
+//   0x0000  KV_MAGIC_CONSOLE_OFF  - W  Console: low byte written to stdout
+//   0x0004  KV_MAGIC_EXIT_OFF     - W  Exit: low 32-bit word = exit code
 //   ...     —                     * *  Bus error (load/store access-fault)
 //
 // Bus Error Detection:
@@ -19,7 +19,7 @@
 //
 // Usage:
 //   spike --extlib=./plugin_magic.so \
-//         --device="plugin_magic,0xffff0000" ...
+//         --device="plugin_magic,0x40000000" ...
 // ============================================================================
 
 #include <riscv/abstract_device.h>
@@ -84,9 +84,9 @@ public:
         // status registers).  Currently a no-op placeholder.
     }
 
-    // KV_MAGIC_BASE(0xffff0000) + KV_MAGIC_SIZE(0x10000) = 0x1_0000_0000.
+    // KV_MAGIC_BASE(0x40000000) + KV_MAGIC_SIZE(0x10000) = 0x4001_0000.
     // reg_t is uint64_t, so no overflow occurs; Spike routes every rv32
-    // address in [0xffff0000, 0xffffffff] to this device.  Offsets other than
+    // address in [0x40000000, 0x4000ffff] to this device.  Offsets other than
     // CONSOLE_OFF and EXIT_OFF trigger a bus error.
     reg_t size() override { return (reg_t)KV_MAGIC_SIZE; }
 };

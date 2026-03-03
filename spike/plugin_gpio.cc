@@ -4,7 +4,7 @@
 // Description: Spike MMIO plugin for the KV32 GPIO peripheral
 //              with edge/level interrupt detection and PLIC IRQ.
 //
-// Register Map (relative to KV_GPIO_BASE = 0x2004_0000):
+// Register Map (relative to KV_GPIO_BASE = 0x2005_0000):
 //   0x00-0x0C  DATA_OUT[0-3]  - Output data (R/W)
 //   0x10-0x1C  SET[0-3]       - Write-1-to-set output bits
 //   0x20-0x2C  CLEAR[0-3]     - Write-1-to-clear output bits

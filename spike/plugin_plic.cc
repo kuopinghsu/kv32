@@ -3,7 +3,7 @@
 // Project: KV32 RISC-V Processor
 // Description: Spike MMIO plugin for the KV32 PLIC, with MEIP signal routing
 //
-// Register Map (relative to KV_PLIC_BASE = 0x0C00_0000, size 64 MB):
+// Register Map (relative to KV_PLIC_BASE = 0x0C00_0000, size 16 MB):
 //   0x000000 + n*4  Source priority[n]    (R/W, n = 1..PLIC_NUM_SOURCES-1)
 //   0x001000        Pending bits          (RO)
 //   0x002000        Enable bits, ctx 0    (R/W)

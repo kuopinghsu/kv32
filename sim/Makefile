@@ -10,8 +10,8 @@ BUILD_DIR = ../build
 # Compiler settings
 CC = gcc
 CXX = g++
-CFLAGS = -std=c11 -O2 -Wall
-CXXFLAGS = -std=c++14 -O2 -Wall
+CFLAGS = -std=c11 -O2 -Wall -Werror
+CXXFLAGS = -std=c++14 -O2 -Wall -Werror
 
 # Source files
 SOURCES = kv32sim.cpp riscv-dis.cpp gdb_stub.c device.cpp

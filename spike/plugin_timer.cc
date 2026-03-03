@@ -3,7 +3,7 @@
 // Project: KV32 RISC-V Processor
 // Description: Spike MMIO plugin for the KV32 Timer/PWM peripheral
 //
-// Register Map (relative to KV_TIMER_BASE = 0x2005_0000):
+// Register Map (relative to KV_TIMER_BASE = 0x2004_0000):
 //   Per-channel (4 channels, stride = 0x20):
 //     ch*0x20 + 0x00  COUNT     - Counter value (R/W)
 //     ch*0x20 + 0x04  COMPARE1  - Compare 1: interrupt trigger / PWM rise (R/W)

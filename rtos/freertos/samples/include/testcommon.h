@@ -6,15 +6,11 @@
 #define TESTCOMMON_RISCV_H
 
 #include <stdint.h>
+#include "kv_platform.h"
 
-/* Console I/O via magic address */
-#define CONSOLE_ADDR 0xFFFFFFF4
-#define EXIT_ADDR    0xFFFFFFF0
-
-/* Simple console output */
+/* Console I/O and exit helpers - use SDK API from kv_platform.h */
 static inline void console_putc(char c) {
-    volatile uint32_t *console = (volatile uint32_t *)CONSOLE_ADDR;
-    *console = c;
+    kv_magic_putc(c);
 }
 
 static inline void console_puts(const char *s) {
@@ -25,9 +21,7 @@ static inline void console_puts(const char *s) {
 
 /* Exit simulation */
 static inline void exit_sim(int code) {
-    volatile uint32_t *exit_reg = (volatile uint32_t *)EXIT_ADDR;
-    *exit_reg = code;
-    while(1);
+    kv_magic_exit(code);
 }
 
 #endif /* TESTCOMMON_RISCV_H */

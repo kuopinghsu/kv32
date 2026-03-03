@@ -5,15 +5,15 @@
 //
 // Routes AXI4 transactions from a single master to ten slave devices:
 //   - Slave 0: Main RAM       (0x8000_0000 - 0x801F_FFFF)
-//   - Slave 1: CLINT Timer    (0x0200_0000 - 0x020B_FFFF)
-//   - Slave 2: PLIC           (0x0C00_0000 - 0x0CFF_FFFF)
-//   - Slave 3: UART           (0x2000_0000 - 0x2000_FFFF)
-//   - Slave 4: I2C            (0x2001_0000 - 0x2001_FFFF)
-//   - Slave 5: SPI            (0x2002_0000 - 0x2002_FFFF)
-//   - Slave 6: DMA            (0x2003_0000 - 0x2003_0FFF)
-//   - Slave 7: GPIO           (0x2004_0000 - 0x2004_FFFF)
-//   - Slave 8: Timer/PWM      (0x2005_0000 - 0x2005_FFFF)
-//   - Slave 9: Magic Device   (0xFFFF_0000 - 0xFFFF_FFFF)
+//   - Slave 1: Magic Device   (0x4000_0000 - 0x4000_FFFF)
+//   - Slave 2: CLINT Timer    (0x0200_0000 - 0x020B_FFFF)
+//   - Slave 3: PLIC           (0x0C00_0000 - 0x0CFF_FFFF)
+//   - Slave 4: DMA            (0x2000_0000 - 0x2000_FFFF)
+//   - Slave 5: UART           (0x2001_0000 - 0x2001_FFFF)
+//   - Slave 6: I2C            (0x2002_0000 - 0x2002_FFFF)
+//   - Slave 7: SPI            (0x2003_0000 - 0x2003_FFFF)
+//   - Slave 8: Timer/PWM      (0x2004_0000 - 0x2004_FFFF)
+//   - Slave 9: GPIO           (0x2005_0000 - 0x2005_FFFF)
 //
 // Handles address decoding, channel routing with ID support, and error
 // responses for unmapped addresses. Supports multiple outstanding transactions
@@ -89,7 +89,7 @@ module axi_xbar (
     input  logic        s0_axi_rvalid,
     output logic        s0_axi_rready,
 
-    // Slave 1: CLINT (0x0200_0000 - 0x020B_FFFF)
+    // Slave 1: Magic (0x4000_0000 - 0x4000_FFFF)
     output logic [31:0] s1_axi_awaddr,
     output logic        s1_axi_awvalid,
     input  logic        s1_axi_awready,
@@ -112,7 +112,7 @@ module axi_xbar (
     input  logic        s1_axi_rvalid,
     output logic        s1_axi_rready,
 
-    // Slave 2: PLIC (0x0C00_0000 - 0x0CFF_FFFF)
+    // Slave 2: CLINT (0x0200_0000 - 0x020B_FFFF)
     output logic [31:0] s2_axi_awaddr,
     output logic        s2_axi_awvalid,
     input  logic        s2_axi_awready,
@@ -135,7 +135,7 @@ module axi_xbar (
     input  logic        s2_axi_rvalid,
     output logic        s2_axi_rready,
 
-    // Slave 3: UART (0x2000_0000 - 0x2000_FFFF)
+    // Slave 3: PLIC (0x0C00_0000 - 0x0CFF_FFFF)
     output logic [31:0] s3_axi_awaddr,
     output logic        s3_axi_awvalid,
     input  logic        s3_axi_awready,
@@ -158,7 +158,7 @@ module axi_xbar (
     input  logic        s3_axi_rvalid,
     output logic        s3_axi_rready,
 
-    // Slave 4: I2C (0x2001_0000 - 0x2001_FFFF)
+    // Slave 4: DMA (0x2000_0000 - 0x2000_FFFF)
     output logic [31:0] s4_axi_awaddr,
     output logic        s4_axi_awvalid,
     input  logic        s4_axi_awready,
@@ -181,7 +181,7 @@ module axi_xbar (
     input  logic        s4_axi_rvalid,
     output logic        s4_axi_rready,
 
-    // Slave 5: SPI (0x2002_0000 - 0x2002_FFFF)
+    // Slave 5: UART (0x2001_0000 - 0x2001_FFFF)
     output logic [31:0] s5_axi_awaddr,
     output logic        s5_axi_awvalid,
     input  logic        s5_axi_awready,
@@ -204,7 +204,7 @@ module axi_xbar (
     input  logic        s5_axi_rvalid,
     output logic        s5_axi_rready,
 
-    // Slave 6: DMA (0x2003_0000 - 0x2003_0FFF)
+    // Slave 6: I2C (0x2002_0000 - 0x2002_FFFF)
     output logic [31:0] s6_axi_awaddr,
     output logic        s6_axi_awvalid,
     input  logic        s6_axi_awready,
@@ -227,7 +227,7 @@ module axi_xbar (
     input  logic        s6_axi_rvalid,
     output logic        s6_axi_rready,
 
-    // Slave 7: GPIO (0x2004_0000 - 0x2004_FFFF)
+    // Slave 7: SPI (0x2003_0000 - 0x2003_FFFF)
     output logic [31:0] s7_axi_awaddr,
     output logic        s7_axi_awvalid,
     input  logic        s7_axi_awready,
@@ -250,7 +250,7 @@ module axi_xbar (
     input  logic        s7_axi_rvalid,
     output logic        s7_axi_rready,
 
-    // Slave 8: Timer/PWM (0x2005_0000 - 0x2005_FFFF)
+    // Slave 8: Timer/PWM (0x2004_0000 - 0x2004_FFFF)
     output logic [31:0] s8_axi_awaddr,
     output logic        s8_axi_awvalid,
     input  logic        s8_axi_awready,
@@ -273,7 +273,7 @@ module axi_xbar (
     input  logic        s8_axi_rvalid,
     output logic        s8_axi_rready,
 
-    // Slave 9: Magic (0xFFFF_0000 - 0xFFFF_FFFF)
+    // Slave 9: GPIO (0x2005_0000 - 0x2005_FFFF)
     output logic [31:0] s9_axi_awaddr,
     output logic        s9_axi_awvalid,
     input  logic        s9_axi_awready,
@@ -515,30 +515,30 @@ module axi_xbar (
 
     // Write address decode
     always_comb begin
-        sel_s0_aw = (m_axi_awaddr[31:21] == 11'h400);
-        sel_s1_aw = (m_axi_awaddr[31:20] == 12'h020) && (m_axi_awaddr[19:18] != 2'b11);
-        sel_s2_aw = (m_axi_awaddr[31:24] == 8'h0C);  // 0x0C00_0000 - 0x0CFF_FFFF (PLIC, 16 MB)
-        sel_s3_aw = (m_axi_awaddr[31:16] == 16'h2000);
-        sel_s4_aw = (m_axi_awaddr[31:16] == 16'h2001);
-        sel_s5_aw = (m_axi_awaddr[31:16] == 16'h2002);
-        sel_s6_aw = (m_axi_awaddr[31:12] == 20'h20030);  // 0x2003_0000 - 0x2003_0FFF (DMA)
-        sel_s7_aw = (m_axi_awaddr[31:16] == 16'h2004);   // GPIO
-        sel_s8_aw = (m_axi_awaddr[31:16] == 16'h2005);   // Timer/PWM
-        sel_s9_aw = (m_axi_awaddr[31:16] == 16'hFFFF);   // Magic
+        sel_s0_aw = (m_axi_awaddr[31:21] == 11'h400);                                        // RAM
+        sel_s1_aw = (m_axi_awaddr[31:16] == 16'h4000);                                       // Magic
+        sel_s2_aw = (m_axi_awaddr[31:20] == 12'h020) && (m_axi_awaddr[19:18] != 2'b11);     // CLINT
+        sel_s3_aw = (m_axi_awaddr[31:24] == 8'h0C);   // 0x0C00_0000 - 0x0CFF_FFFF (PLIC, 16 MB)
+        sel_s4_aw = (m_axi_awaddr[31:16] == 16'h2000);    // 0x2000_0000 - 0x2000_FFFF (DMA, 64 KB)
+        sel_s5_aw = (m_axi_awaddr[31:16] == 16'h2001);   // UART
+        sel_s6_aw = (m_axi_awaddr[31:16] == 16'h2002);   // I2C
+        sel_s7_aw = (m_axi_awaddr[31:16] == 16'h2003);   // SPI
+        sel_s8_aw = (m_axi_awaddr[31:16] == 16'h2004);   // Timer/PWM
+        sel_s9_aw = (m_axi_awaddr[31:16] == 16'h2005);   // GPIO
     end
 
     // Read address decode
     always_comb begin
-        sel_s0_ar = (m_axi_araddr[31:21] == 11'h400);
-        sel_s1_ar = (m_axi_araddr[31:20] == 12'h020) && (m_axi_araddr[19:18] != 2'b11);
-        sel_s2_ar = (m_axi_araddr[31:24] == 8'h0C);  // 0x0C00_0000 - 0x0CFF_FFFF (PLIC, 16 MB)
-        sel_s3_ar = (m_axi_araddr[31:16] == 16'h2000);
-        sel_s4_ar = (m_axi_araddr[31:16] == 16'h2001);
-        sel_s5_ar = (m_axi_araddr[31:16] == 16'h2002);
-        sel_s6_ar = (m_axi_araddr[31:12] == 20'h20030);  // DMA
-        sel_s7_ar = (m_axi_araddr[31:16] == 16'h2004);   // GPIO
-        sel_s8_ar = (m_axi_araddr[31:16] == 16'h2005);   // Timer/PWM
-        sel_s9_ar = (m_axi_araddr[31:16] == 16'hFFFF);   // Magic
+        sel_s0_ar = (m_axi_araddr[31:21] == 11'h400);                                       // RAM
+        sel_s1_ar = (m_axi_araddr[31:16] == 16'h4000);                                      // Magic
+        sel_s2_ar = (m_axi_araddr[31:20] == 12'h020) && (m_axi_araddr[19:18] != 2'b11);     // CLINT
+        sel_s3_ar = (m_axi_araddr[31:24] == 8'h0C);     // 0x0C00_0000 - 0x0CFF_FFFF (PLIC, 16 MB)
+        sel_s4_ar = (m_axi_araddr[31:16] == 16'h2000);  // DMA (64 KB)
+        sel_s5_ar = (m_axi_araddr[31:16] == 16'h2001);  // UART (64 KB)
+        sel_s6_ar = (m_axi_araddr[31:16] == 16'h2002);  // I2C (64 KB)
+        sel_s7_ar = (m_axi_araddr[31:16] == 16'h2003);  // SPI (64 KB)
+        sel_s8_ar = (m_axi_araddr[31:16] == 16'h2004);  // Timer/PWM (64 KB)
+        sel_s9_ar = (m_axi_araddr[31:16] == 16'h2005);  // GPIO (64 KB)
     end
 
     always @(posedge clk) begin

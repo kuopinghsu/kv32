@@ -54,7 +54,7 @@ _start:
 .type _exit, @function
 _exit:
     /* Write exit code to magic address */
-    li t0, 0xFFFFFFF0
+    li t0, 0x40000004
     sw a0, 0(t0)
     li t0, 1
 1:

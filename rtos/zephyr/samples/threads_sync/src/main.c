@@ -45,7 +45,7 @@ static k_tid_t worker3_tid;
 void sim_exit(int exit_code)
 {
     /* Write to exit magic address */
-    *((volatile uint32_t *)0xFFFFFFF0) = exit_code;
+    *((volatile uint32_t *)0x40000004) = exit_code;
 }
 
 /* Producer thread - signals consumer via semaphore */
@@ -202,6 +202,6 @@ int main(void)
     }
 
     printk("\nTest complete. Exiting...\n");
-    sim_exit(0);
+    kv_magic_exit(0);
     return 0;
 }
