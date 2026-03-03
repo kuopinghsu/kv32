@@ -274,9 +274,9 @@ module cjtag_bridge (
                             // OAC check: bits [3:0] == 4'b1100
                             // EC check: bits [7:4] == 4'b1000
                             // CP check: bits [11:8] == (bits[3:0] XOR bits[7:4])
-                            if ({tmsc_s, activation_shift[10:0]}[3:0] == 4'b1100 &&
-                                {tmsc_s, activation_shift[10:0]}[7:4] == 4'b1000 &&
-                                {tmsc_s, activation_shift[10:0]}[11:8] == ({tmsc_s, activation_shift[10:0]}[3:0] ^ {tmsc_s, activation_shift[10:0]}[7:4])) begin
+                            if (activation_shift[3:0] == 4'b1100 &&
+                                activation_shift[7:4] == 4'b1000 &&
+                                {tmsc_s, activation_shift[10:8]} == (activation_shift[3:0] ^ activation_shift[7:4])) begin
                                 state <= ST_OSCAN1;
                                 bit_pos <= 2'd0;
 

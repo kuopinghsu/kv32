@@ -200,6 +200,40 @@ module axi_dma #(
     wire cfg_rd_valid = (cfg_araddr[11:0] <= CH_ADDR_MAX) ||
                         (cfg_araddr[11:0] >= GLBL_OFF && cfg_araddr[11:0] <= GLBL_ADDR_MAX);
 
+    // ── Address decode helpers (combinational) ─────────────────────────────
+    // Config write path: slice addr/ch-index/reg-index from write address
+    // ch_idx is CH_SEL_BITS wide; comparisons with int NUM_CHANNELS implicitly widen it.
+    /* verilator lint_off WIDTHEXPAND */
+    logic [11:0]            wr_addr12;
+    logic [CH_SEL_BITS-1:0] wr_ch_idx;
+    logic [3:0]             wr_reg_idx;
+    always_comb begin
+        wr_addr12  = cfg_awaddr[11:0];
+        wr_ch_idx  = cfg_awaddr[5+CH_SEL_BITS:6];
+        wr_reg_idx = cfg_awaddr[5:2];
+    end
+
+    // Config read path
+    logic [11:0]            rd_addr12;
+    logic [CH_SEL_BITS-1:0] rd_ch_idx;
+    logic [3:0]             rd_reg_idx;
+    always_comb begin
+        rd_addr12  = cfg_araddr[11:0];
+        rd_ch_idx  = cfg_araddr[5+CH_SEL_BITS:6];
+        rd_reg_idx = cfg_araddr[5:2];
+    end
+
+    // BURST_CALC combinational: compute burst parameters from current engine state
+    logic [11:0] bc_src_off, bc_dst_off;
+    logic [31:0] bc_rem;
+    logic [39:0] bc_result;
+    always_comb begin
+        bc_src_off = (e_mode == 2'b11) ? sg_desc[0][11:0] : e_cur_src[11:0];
+        bc_dst_off = (e_mode == 2'b11) ? sg_desc[1][11:0] : e_cur_dst[11:0];
+        bc_rem     = (e_mode == 2'b11) ? sg_desc[2]       : e_rem_bytes;
+        bc_result  = calc_burst(bc_src_off, bc_dst_off, bc_rem);
+    end
+
     // wlast is purely combinatorial: high on the last beat of a write burst
     assign dma_wlast = dma_wvalid && (beat_cnt == e_beats - 8'h1);
     // wdata/wstrb combinatorial from FIFO head; fifo_pop is a wire so rd_ptr
@@ -237,34 +271,30 @@ module axi_dma #(
             if (cfg_bvalid && cfg_bready) cfg_bvalid <= 1'b0;
 
             if (cfg_awvalid && cfg_wvalid) begin
-                automatic logic [11:0] addr12 = cfg_awaddr[11:0];
-                automatic int          ch_idx = int'(addr12[11:6]);  // /0x40
-                automatic logic [3:0]  reg_idx = addr12[5:2];        // word index
-
                 cfg_bvalid <= 1'b1;
                 cfg_bresp  <= cfg_wr_valid ? 2'b00 : 2'b10;   // OKAY or SLVERR
 
-                if (addr12 < GLBL_OFF) begin
+                if (wr_addr12 < GLBL_OFF) begin
                     // Per-channel register write
-                    if (ch_idx < NUM_CHANNELS) begin
-                        case (reg_idx)
-                            4'h0: ch_ctrl[ch_idx] <= cfg_wdata[7:0];
+                    if (wr_ch_idx < NUM_CHANNELS) begin
+                        case (wr_reg_idx)
+                            4'h0: ch_ctrl[wr_ch_idx] <= cfg_wdata[7:0];
                             // 0x04 = STATUS: W1C handled below
-                            4'h2: ch_src_addr[ch_idx]    <= cfg_wdata;
-                            4'h3: ch_dst_addr[ch_idx]    <= cfg_wdata;
-                            4'h4: ch_xfer_cnt[ch_idx]    <= cfg_wdata;
-                            4'h5: ch_src_stride[ch_idx]  <= cfg_wdata;
-                            4'h6: ch_dst_stride[ch_idx]  <= cfg_wdata;
-                            4'h7: ch_row_cnt[ch_idx]     <= cfg_wdata;
-                            4'h8: ch_src_pstride[ch_idx] <= cfg_wdata;
-                            4'h9: ch_dst_pstride[ch_idx] <= cfg_wdata;
-                            4'hA: ch_plane_cnt[ch_idx]   <= cfg_wdata;
-                            4'hB: ch_sg_addr[ch_idx]     <= cfg_wdata;
-                            4'hC: ch_sg_cnt[ch_idx]      <= cfg_wdata;
+                            4'h2: ch_src_addr[wr_ch_idx]    <= cfg_wdata;
+                            4'h3: ch_dst_addr[wr_ch_idx]    <= cfg_wdata;
+                            4'h4: ch_xfer_cnt[wr_ch_idx]    <= cfg_wdata;
+                            4'h5: ch_src_stride[wr_ch_idx]  <= cfg_wdata;
+                            4'h6: ch_dst_stride[wr_ch_idx]  <= cfg_wdata;
+                            4'h7: ch_row_cnt[wr_ch_idx]     <= cfg_wdata;
+                            4'h8: ch_src_pstride[wr_ch_idx] <= cfg_wdata;
+                            4'h9: ch_dst_pstride[wr_ch_idx] <= cfg_wdata;
+                            4'hA: ch_plane_cnt[wr_ch_idx]   <= cfg_wdata;
+                            4'hB: ch_sg_addr[wr_ch_idx]     <= cfg_wdata;
+                            4'hC: ch_sg_cnt[wr_ch_idx]      <= cfg_wdata;
                             default: ;
                         endcase
                     end
-                end else if (addr12 == GLBL_OFF + 12'h004) begin   // IRQ_EN
+                end else if (wr_addr12 == GLBL_OFF + 12'h004) begin   // IRQ_EN
                     glb_irq_en <= cfg_wdata[NUM_CHANNELS-1:0];
                 end
                 // GLBL_OFF+0x008 (DMA_ID) is read-only
@@ -282,10 +312,9 @@ module axi_dma #(
             if (cfg_awvalid && cfg_wvalid &&
                 (cfg_awaddr[11:0] < GLBL_OFF) &&
                 (cfg_awaddr[5:2] == 4'h1)) begin          // STAT register
-                automatic int ci = int'(cfg_awaddr[11:6]);
-                if (ci < NUM_CHANNELS) begin
-                    if (cfg_wdata[1]) ch_done[ci] <= 1'b0;  // clear DONE
-                    if (cfg_wdata[2]) ch_err[ci]  <= 1'b0;  // clear ERR
+                if (wr_ch_idx < NUM_CHANNELS) begin
+                    if (cfg_wdata[1]) ch_done[wr_ch_idx] <= 1'b0;  // clear DONE
+                    if (cfg_wdata[2]) ch_err[wr_ch_idx]  <= 1'b0;  // clear ERR
                 end
             end
             // Also clear via IRQ_STAT W1C at 0xF00
@@ -313,12 +342,11 @@ module axi_dma #(
             if (cfg_awvalid && cfg_wvalid &&
                 (cfg_awaddr[11:0] < GLBL_OFF) &&
                 (cfg_awaddr[5:2] == 4'h0)) begin
-                automatic int ci = int'(cfg_awaddr[11:6]);
-                if (ci < NUM_CHANNELS) begin
+                if (wr_ch_idx < NUM_CHANNELS) begin
                     if (!cfg_wdata[0]) begin
-                        ch_armed[ci] <= 1'b0;  // EN cleared → disarm
+                        ch_armed[wr_ch_idx] <= 1'b0;  // EN cleared → disarm
                     end else if (cfg_wdata[1]) begin
-                        ch_armed[ci] <= 1'b1;  // EN=1 and START=1 → arm
+                        ch_armed[wr_ch_idx] <= 1'b1;  // EN=1 and START=1 → arm
                     end
                 end
             end
@@ -369,38 +397,34 @@ module axi_dma #(
             cfg_rresp  <= 2'b00;
         end else begin
             if (cfg_arvalid && !cfg_rvalid) begin
-                automatic logic [11:0] addr12 = cfg_araddr[11:0];
-                automatic int          ch_idx = int'(addr12[11:6]);
-                automatic logic [3:0]  reg_idx = addr12[5:2];
-
                 cfg_rvalid <= 1'b1;
                 cfg_rresp  <= cfg_rd_valid ? 2'b00 : 2'b10;   // OKAY or SLVERR
                 cfg_rdata  <= '0;
 
-                if (addr12 < GLBL_OFF) begin
-                    if (ch_idx < NUM_CHANNELS) begin
-                        case (reg_idx)
-                            4'h0: cfg_rdata <= {24'h0, ch_ctrl[ch_idx]};
+                if (rd_addr12 < GLBL_OFF) begin
+                    if (rd_ch_idx < NUM_CHANNELS) begin
+                        case (rd_reg_idx)
+                            4'h0: cfg_rdata <= {24'h0, ch_ctrl[rd_ch_idx]};
                             4'h1: cfg_rdata <= {29'h0,
-                                                ch_err[ch_idx],
-                                                ch_done[ch_idx],
-                                                ch_busy[ch_idx]};
-                            4'h2: cfg_rdata <= ch_src_addr[ch_idx];
-                            4'h3: cfg_rdata <= ch_dst_addr[ch_idx];
-                            4'h4: cfg_rdata <= ch_xfer_cnt[ch_idx];
-                            4'h5: cfg_rdata <= ch_src_stride[ch_idx];
-                            4'h6: cfg_rdata <= ch_dst_stride[ch_idx];
-                            4'h7: cfg_rdata <= ch_row_cnt[ch_idx];
-                            4'h8: cfg_rdata <= ch_src_pstride[ch_idx];
-                            4'h9: cfg_rdata <= ch_dst_pstride[ch_idx];
-                            4'hA: cfg_rdata <= ch_plane_cnt[ch_idx];
-                            4'hB: cfg_rdata <= ch_sg_addr[ch_idx];
-                            4'hC: cfg_rdata <= ch_sg_cnt[ch_idx];
+                                                ch_err[rd_ch_idx],
+                                                ch_done[rd_ch_idx],
+                                                ch_busy[rd_ch_idx]};
+                            4'h2: cfg_rdata <= ch_src_addr[rd_ch_idx];
+                            4'h3: cfg_rdata <= ch_dst_addr[rd_ch_idx];
+                            4'h4: cfg_rdata <= ch_xfer_cnt[rd_ch_idx];
+                            4'h5: cfg_rdata <= ch_src_stride[rd_ch_idx];
+                            4'h6: cfg_rdata <= ch_dst_stride[rd_ch_idx];
+                            4'h7: cfg_rdata <= ch_row_cnt[rd_ch_idx];
+                            4'h8: cfg_rdata <= ch_src_pstride[rd_ch_idx];
+                            4'h9: cfg_rdata <= ch_dst_pstride[rd_ch_idx];
+                            4'hA: cfg_rdata <= ch_plane_cnt[rd_ch_idx];
+                            4'hB: cfg_rdata <= ch_sg_addr[rd_ch_idx];
+                            4'hC: cfg_rdata <= ch_sg_cnt[rd_ch_idx];
                             default: cfg_rdata <= '0;
                         endcase
                     end
                 end else begin
-                    case (addr12 - GLBL_OFF)
+                    case (rd_addr12 - GLBL_OFF)
                         12'h000: cfg_rdata <= {{(32-NUM_CHANNELS){1'b0}}, irq_stat_wire};
                         12'h004: cfg_rdata <= {{(32-NUM_CHANNELS){1'b0}}, glb_irq_en};
                         12'h008: cfg_rdata <= 32'hD4A0_0100;  // DMA_ID
@@ -417,6 +441,7 @@ module axi_dma #(
             end
         end
     end
+    /* verilator lint_on WIDTHEXPAND */
 
     // ========================================================================
     // Internal FIFO (beat buffer between read and write phases)
@@ -492,20 +517,24 @@ module axi_dma #(
     logic                                          no_pending;
     logic [$clog2(NUM_CHANNELS > 1 ? NUM_CHANNELS : 2)-1:0] sched_ch;
 
+    /* verilator lint_off WIDTHEXPAND */
+    /* verilator lint_off WIDTHTRUNC */
     always_comb begin : scheduler
         sched_ch   = '0;
         no_pending = 1'b1;
-        // Round-robin: scan NUM_CHANNELS slots starting from rr_ptr
-        for (int k = 0; k < NUM_CHANNELS; k++) begin
-            if (ch_ctrl[(int'(rr_ptr) + k) % NUM_CHANNELS][0] &&    // EN
-                ch_armed[(int'(rr_ptr) + k) % NUM_CHANNELS]   &&    // START pending
-                !ch_busy[(int'(rr_ptr) + k) % NUM_CHANNELS]) begin  // not running
-                sched_ch   = CH_SEL_BITS'((int'(rr_ptr) + k) % NUM_CHANNELS);
+        // Reverse scan so lowest offset from rr_ptr wins (last assignment wins).
+        // Equivalent to a forward scan with break, without requiring break/int'.
+        for (int k = NUM_CHANNELS - 1; k >= 0; k = k - 1) begin
+            if (ch_ctrl[(rr_ptr + k) % NUM_CHANNELS][0] &&    // EN
+                ch_armed[(rr_ptr + k) % NUM_CHANNELS]   &&    // START pending
+                !ch_busy[(rr_ptr + k) % NUM_CHANNELS]) begin  // not running
+                sched_ch   = (rr_ptr + k) % NUM_CHANNELS;
                 no_pending = 1'b0;
-                break;
             end
         end
     end
+    /* verilator lint_on WIDTHTRUNC */
+    /* verilator lint_on WIDTHEXPAND */
 
     // Compute burst size clamped to MAX_BURST_LEN and 4K-page boundaries.
     // Returns {burst_bytes[31:0], beats[7:0]} packed into 40 bits.
@@ -517,17 +546,18 @@ module axi_dma #(
         input logic [11:0] dst,
         input logic [31:0] rem
     );
-        logic [31:0] max_b, lim, lim_al, sp_lim, dp_lim, bb;
-        max_b  = 32'(MAX_BURST_LEN) * 32'(BPB);
+        logic [31:0] max_b, lim, lim_al, sp_lim, dp_lim, bb, beats32;
+        max_b  = (MAX_BURST_LEN * BPB);
         lim    = (rem < max_b) ? rem : max_b;
-        lim_al = (lim  / 32'(BPB)) * 32'(BPB);
+        lim_al = (lim  / BPB) * BPB;
         sp_lim = (lim_al < (32'h1000 - {20'h0, src})) ?
                   lim_al : (32'h1000 - {20'h0, src});
         dp_lim = (sp_lim < (32'h1000 - {20'h0, dst})) ?
                   sp_lim : (32'h1000 - {20'h0, dst});
-        bb     = (dp_lim / 32'(BPB)) * 32'(BPB);
-        if (bb < 32'(BPB)) bb = 32'(BPB);
-        return {bb, 8'(bb[8:0] / 9'(BPB))};
+        bb     = (dp_lim / BPB) * BPB;
+        if (bb < BPB) bb = BPB;
+        beats32    = bb / BPB;
+        calc_burst = {bb, beats32[7:0]};
     endfunction
     /* verilator lint_on UNUSEDSIGNAL */
 
@@ -659,12 +689,8 @@ module axi_dma #(
                     // Pick up src/dst/rem from either normal or scatter-gather mode,
                     // then compute the burst parameters via calc_burst().
                     begin : bc
-                        automatic logic [11:0] bc_src = (e_mode == 2'b11) ? sg_desc[0][11:0] : e_cur_src[11:0];
-                        automatic logic [11:0] bc_dst = (e_mode == 2'b11) ? sg_desc[1][11:0] : e_cur_dst[11:0];
-                        automatic logic [31:0] bc_rem = (e_mode == 2'b11) ? sg_desc[2] : e_rem_bytes;
-                        automatic logic [39:0] result = calc_burst(bc_src, bc_dst, bc_rem);
-                        e_burst_bytes <= result[39:8];
-                        e_beats       <= result[7:0];
+                        e_burst_bytes <= bc_result[39:8];
+                        e_beats       <= bc_result[7:0];
                     end
 
                     if (e_mode == 2'b11) begin

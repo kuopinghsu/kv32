@@ -201,7 +201,7 @@ update_compile_order -fileset sources_1
 # ============================================================================
 set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
 set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} \
-    -value {-verilog_define SYNTHESIS} \
+    -value {-verilog_define SYNTHESIS -verilog_define FPGA_SYNTHESIS} \
     -objects [get_runs synth_1]
 
 # ============================================================================

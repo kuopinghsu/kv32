@@ -93,7 +93,7 @@ module kv32_pm (
                   | software_irq_i
                   | irq_wake_pending;
 
-`ifdef SYNTHESIS
+`ifdef FPGA_SYNTHESIS
     // =========================================================================
     // Xilinx UltraScale+ BUFGCE Instantiation
     // =========================================================================

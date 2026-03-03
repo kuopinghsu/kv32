@@ -112,8 +112,12 @@ module axi_plic #(
     logic        do_write;
     logic        complete_wr;
     logic [25:0] aw_off;                   // registered write offset
+    logic [31:0] wr_src_idx;               // write src index = aw_off[14:2] (32-bit to match int NUM_IRQ comparisons)
+    logic [31:0] rd_src_idx;               // read src index = ar_addr_latch[14:2] (32-bit to match int NUM_IRQ comparisons)
 
-    always_comb aw_off = aw_addr_latch[25:0];
+    always_comb aw_off     = aw_addr_latch[25:0];
+    always_comb wr_src_idx = 32'(aw_off[14:2]);
+    always_comb rd_src_idx = 32'(ar_addr_latch[14:2]);
 
     // Latch write address and data
     logic [31:0] aw_addr_latch;
@@ -134,12 +138,10 @@ module axi_plic #(
     //   Claim/Complete: 0x200004
     logic wr_addr_valid;
     always_comb begin : plic_wr_addr_check
-        automatic logic [25:0] off = aw_off;
-        automatic int          src = int'(off[14:2]);
-        wr_addr_valid = (off == 26'h002000)                        ||  // Enable
-                        (off == 26'h200000)                        ||  // Threshold
-                        (off == 26'h200004)                        ||  // Complete
-                        (off[25:15] == '0 && src >= 1 && src <= NUM_IRQ); // Priority
+        wr_addr_valid = (aw_off == 26'h002000)                        ||  // Enable
+                        (aw_off == 26'h200000)                        ||  // Threshold
+                        (aw_off == 26'h200004)                        ||  // Complete
+                        (aw_off[25:15] == '0 && wr_src_idx >= 1 && wr_src_idx <= NUM_IRQ); // Priority
     end
 
     // Valid read offsets:
@@ -150,13 +152,11 @@ module axi_plic #(
     //   Claim         : 0x200004
     logic rd_addr_valid;
     always_comb begin : plic_rd_addr_check
-        automatic logic [25:0] off = ar_addr_latch[25:0];
-        automatic int          src = int'(off[14:2]);
-        rd_addr_valid = (off == 26'h001000)                        ||  // Pending
-                        (off == 26'h002000)                        ||  // Enable
-                        (off == 26'h200000)                        ||  // Threshold
-                        (off == 26'h200004)                        ||  // Claim
-                        (off[25:15] == '0 && src >= 0 && src <= NUM_IRQ); // Priority
+        rd_addr_valid = (ar_addr_latch[25:0] == 26'h001000)                        ||  // Pending
+                        (ar_addr_latch[25:0] == 26'h002000)                        ||  // Enable
+                        (ar_addr_latch[25:0] == 26'h200000)                        ||  // Threshold
+                        (ar_addr_latch[25:0] == 26'h200004)                        ||  // Claim
+                        (ar_addr_latch[25:15] == '0 && rd_src_idx <= NUM_IRQ); // Priority
     end
 
     // Pending update
@@ -245,19 +245,17 @@ module axi_plic #(
         end else if (do_write) begin
             // Byte-enable masked write helper (only lower 4 bits used for
             // priority/threshold; full 32-bit for enable word and claim/complete)
-            automatic logic [25:0] off = aw_off;
-            if (off == 26'h200000) begin
+            if (aw_off == 26'h200000) begin
                 // Threshold
                 if (w_strb_latch[0]) threshold_r <= w_data_latch[3:0];
-            end else if (off == 26'h002000) begin
+            end else if (aw_off == 26'h002000) begin
                 // Enable word (sources 1..min(NUM_IRQ,31))
                 for (int i = 1; i <= NUM_IRQ && i <= 31; i++)
                     if (w_strb_latch[i/8]) enable_r[i] <= w_data_latch[i];
-            end else if (off[25:15] == '0) begin
-                // Priority registers: off[14:2] = source index
-                automatic int src = int'(off[14:2]);
-                if (src >= 1 && src <= NUM_IRQ)
-                    if (w_strb_latch[0]) priority_r[src] <= w_data_latch[3:0];
+            end else if (aw_off[25:15] == '0) begin
+                // Priority registers: aw_off[14:2] = source index
+                if (wr_src_idx >= 1 && wr_src_idx <= NUM_IRQ)
+                    if (w_strb_latch[0]) priority_r[wr_src_idx] <= w_data_latch[3:0];
             end
             // offset 0x200004 (complete) is handled in pending logic above
         end
@@ -287,24 +285,22 @@ module axi_plic #(
 
     // Read data mux (combinational, uses latched ar address)
     always_comb begin
-        automatic logic [25:0] off = ar_addr_latch[25:0];
         rd_data = 32'h0;
-        if (off == 26'h001000) begin
+        if (ar_addr_latch[25:0] == 26'h001000) begin
             rd_data = pending_word;
-        end else if (off == 26'h002000) begin
+        end else if (ar_addr_latch[25:0] == 26'h002000) begin
             rd_data = enable_word;
-        end else if (off == 26'h200000) begin
+        end else if (ar_addr_latch[25:0] == 26'h200000) begin
             rd_data = {28'h0, threshold_r};
-        end else if (off == 26'h200004) begin
+        end else if (ar_addr_latch[25:0] == 26'h200004) begin
             // Claim: return ID of best pending interrupt; side-effect handled below
             rd_data = {27'h0, claim_id};
-        end else if (off[25:15] == '0) begin
+        end else if (ar_addr_latch[25:15] == '0) begin
             // Priority register
-            automatic int src = int'(off[14:2]);
-            if (src == 0)
+            if (rd_src_idx == 0)
                 rd_data = 32'h0;
-            else if (src >= 1 && src <= NUM_IRQ)
-                rd_data = {28'h0, priority_r[src]};
+            else if (rd_src_idx >= 1 && rd_src_idx <= NUM_IRQ)
+                rd_data = {28'h0, priority_r[rd_src_idx]};
         end
     end
 

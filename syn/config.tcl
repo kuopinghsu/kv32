@@ -48,6 +48,10 @@ set RTL_FILES [list \
     "$RTL_ROOT/mem_axi_ro.sv" \
     "$RTL_ROOT/kv32_icache.sv" \
     "$RTL_ROOT/kv32_pm.sv" \
+    "$RTL_ROOT/kv32_dtm.sv" \
+    "$RTL_ROOT/jtag/jtag_tap.sv" \
+    "$RTL_ROOT/jtag/cjtag_bridge.sv" \
+    "$RTL_ROOT/jtag/jtag_top.sv" \
     "$RTL_ROOT/kv32_soc.sv" \
 ]
 
