@@ -2091,3 +2091,4 @@ module kv32_soc #(
 `endif // ASSERTION
 
 endmodule
+

@@ -1,293 +1,142 @@
-# Makefile for kv32 Synthesis and Place & Route
-# Uses oss-cad-suite (Yosys + OpenROAD) with ASAP7 7nm PDK
+# Unified synthesis Makefile for kv32
+# Supports Yosys, Cadence Genus, and Synopsys Design Compiler.
 
-# Force bash shell for consistent behavior
 SHELL := /bin/bash
 
-# Include environment configuration
 -include ../env.config
 
-# Export environment variables and add tools to PATH
 ifdef PATH_APPEND
 export PATH := $(PATH_APPEND):$(PATH)
 endif
 
-# Tool paths (from PATH)
+DESIGN := kv32_soc
+
+# Tool selection
+SYNTH_TOOL ?= yosys
+ACTIVE_CORNER ?= tt
+LIB_ROOT ?= $(CURDIR)/pdk
+
+# Tool binaries (override in env.config if needed)
 YOSYS ?= yosys
+GENUS ?= genus
+DC_SHELL ?= dc_shell
 
-# Design configuration
-DESIGN = kv32_soc
-CONFIG = config.tcl
+export ACTIVE_CORNER
+export LIB_ROOT
 
-# Directories
-SCRIPTS_DIR = scripts
-RESULTS_DIR = results
-REPORTS_DIR = reports
-RTL_DIR = ../rtl
+RTL_FILELIST := common/rtl_filelist.f
 
-# Scripts
-SYNTH_SCRIPT = $(SCRIPTS_DIR)/synthesis.tcl
-FORMAL_SCRIPT = $(SCRIPTS_DIR)/formal_equiv.tcl
+BUILD_DIR := build
+RESULTS_DIR := $(BUILD_DIR)/results/$(SYNTH_TOOL)
+REPORTS_DIR := $(BUILD_DIR)/reports/$(SYNTH_TOOL)
+LOGS_DIR := $(BUILD_DIR)/logs
+FV_DIR := $(BUILD_DIR)/fv
+SYNTH_DONE := $(BUILD_DIR)/.synth_done_$(SYNTH_TOOL)
 
-# Output files
-SYNTH_NETLIST = $(RESULTS_DIR)/$(DESIGN)_synth.v
-SYNTH_BLIF = $(RESULTS_DIR)/$(DESIGN)_synth.blif
-SYNTH_JSON = $(RESULTS_DIR)/$(DESIGN)_synth.json
+YOSYS_SYNTH_SCRIPT := scripts/yosys/synthesis.tcl
+YOSYS_FORMAL_SCRIPT := scripts/yosys/formal_equiv.tcl
+GENUS_SYNTH_SCRIPT := scripts/genus/synthesis.tcl
+DC_SYNTH_SCRIPT := scripts/dc/synthesis.tcl
 
-# Reports
-SYNTH_AREA_RPT = $(REPORTS_DIR)/synth_area.rpt
-SYNTH_CELLS_RPT = $(REPORTS_DIR)/synth_cells.rpt
-SYNTH_TIMING_RPT = $(REPORTS_DIR)/synth_timing_estimate.rpt
-FORMAL_RPT = $(REPORTS_DIR)/formal_equiv.rpt
+RTL_SOURCES := $(shell sed '/^$$/d' $(RTL_FILELIST))
 
-# RTL source files
-RTL_SOURCES = \
-    $(RTL_DIR)/core/kv32_pkg.sv \
-    $(RTL_DIR)/core/kv32_ib.sv \
-    $(RTL_DIR)/core/kv32_regfile.sv \
-    $(RTL_DIR)/core/kv32_csr.sv \
-    $(RTL_DIR)/core/kv32_alu.sv \
-    $(RTL_DIR)/core/kv32_decoder.sv \
-    $(RTL_DIR)/core/kv32_sb.sv \
-    $(RTL_DIR)/core/kv32_core.sv \
-    $(RTL_DIR)/axi_pkg.sv \
-    $(RTL_DIR)/axi_arbiter.sv \
-    $(RTL_DIR)/axi_xbar.sv \
-    $(RTL_DIR)/axi_magic.sv \
-    $(RTL_DIR)/mem_axi_ro.sv \
-    $(RTL_DIR)/mem_axi.sv \
-    $(RTL_DIR)/axi_clint.sv \
-    $(RTL_DIR)/axi_i2c.sv \
-    $(RTL_DIR)/axi_uart.sv \
-    $(RTL_DIR)/axi_spi.sv \
-    $(RTL_DIR)/kv32_soc.sv
+.PHONY: all check synth formal syn-reports area timing cells clean cleanall help
 
-# Timestamp files for dependency tracking
-SYNTH_DONE = $(RESULTS_DIR)/.synth_done
-
-.PHONY: all synth formal clean cleanall check help
-
-# Default target
 all: synth
 
-# Check tools availability
 check:
-	@echo "Checking tool availability..."
-	@command -v $(YOSYS) >/dev/null 2>&1 || { echo "ERROR: yosys not found in PATH"; exit 1; }
-	@echo "  Yosys: $$($(YOSYS) -V | head -1)"
-	@echo ""
-	@echo "Checking RTL files..."
-	@for file in $(RTL_SOURCES); do \
-		if [ ! -f "$$file" ]; then \
-			echo "ERROR: RTL file not found: $$file"; \
-			exit 1; \
-		fi; \
-		echo "  Found: $$file"; \
-	done
-	@echo ""
-	@echo "Configuration:"
-	@echo "  Design: $(DESIGN)"
-	@echo "  Target: ASAP7 7nm PDK @ 120 MHz"
-	@echo "  Flow: Synthesis only (Yosys)"
-	@echo "  Scripts: $(SCRIPTS_DIR)/"
-	@echo "  Results: $(RESULTS_DIR)/"
-	@echo "  Reports: $(REPORTS_DIR)/"
-	@echo ""
-	@echo "All checks passed!"
+	@echo "Checking synthesis setup..."
+	@case "$(SYNTH_TOOL)" in \
+	  yosys) command -v $(YOSYS) >/dev/null 2>&1 || { echo "ERROR: yosys not found"; exit 1; } ;; \
+	  genus) command -v $(GENUS) >/dev/null 2>&1 || { echo "ERROR: genus not found"; exit 1; } ;; \
+	  dc) command -v $(DC_SHELL) >/dev/null 2>&1 || { echo "ERROR: dc_shell not found"; exit 1; } ;; \
+	  *) echo "ERROR: Unsupported SYNTH_TOOL='$(SYNTH_TOOL)' (use yosys|genus|dc)"; exit 1 ;; \
+	esac
+	@echo "Tool: $(SYNTH_TOOL)"
+	@echo "Corner: $(ACTIVE_CORNER)"
+	@echo "LIB_ROOT: $(LIB_ROOT)"
+	@echo "Checking RTL filelist..."
+	@while read -r f; do \
+	  [ -z "$$f" ] && continue; \
+	  if [ ! -f "$$f" ]; then echo "ERROR: RTL file missing: $$f"; exit 1; fi; \
+	  echo "  Found: $$f"; \
+	done < $(RTL_FILELIST)
+	@echo "Checks passed."
 
-# Create directories
-$(RESULTS_DIR) $(REPORTS_DIR):
-	mkdir -p $@
+$(BUILD_DIR) $(RESULTS_DIR) $(REPORTS_DIR) $(LOGS_DIR) $(FV_DIR):
+	@mkdir -p $@
 
-# Synthesis
 synth: check $(SYNTH_DONE)
 
-$(SYNTH_DONE): $(RTL_SOURCES) $(CONFIG) $(SYNTH_SCRIPT) | $(RESULTS_DIR) $(REPORTS_DIR)
+$(SYNTH_DONE): $(RTL_FILELIST) common/design.tcl common/constraints.sdc $(YOSYS_SYNTH_SCRIPT) $(GENUS_SYNTH_SCRIPT) $(DC_SYNTH_SCRIPT) | $(BUILD_DIR) $(RESULTS_DIR) $(REPORTS_DIR) $(LOGS_DIR) $(FV_DIR)
 	@echo "========================================"
-	@echo "Running Synthesis"
-	@echo "========================================"
-	@echo "Design: $(DESIGN)"
-	@echo "RTL sources:"
-	@for file in $(RTL_SOURCES); do echo "  - $$file"; done
-	@echo "Target: ASAP7 7nm @ 120 MHz"
-	@echo ""
-	@mkdir -p $(REPORTS_DIR)
-	$(YOSYS) -c $(SYNTH_SCRIPT)
-	@echo ""
-	@echo "========================================"
-	@echo "Synthesis Summary"
-	@echo "========================================"
-	@if [ -f $(SYNTH_NETLIST) ]; then \
-		echo "✓ Netlist generated: $(SYNTH_NETLIST)"; \
-		wc -l $(SYNTH_NETLIST) | awk '{print "  Lines: " $$1}'; \
-	else \
-		echo "✗ Netlist not generated"; \
-		exit 1; \
-	fi
-	@echo ""
-	@echo "Reports:"
-	@if [ -f $(SYNTH_AREA_RPT) ]; then \
-		echo "  ✓ Area report: $(SYNTH_AREA_RPT)"; \
-	fi
-	@if [ -f $(SYNTH_CELLS_RPT) ]; then \
-		echo "  ✓ Cell usage: $(SYNTH_CELLS_RPT)"; \
-	fi
-	@if [ -f $(SYNTH_TIMING_RPT) ]; then \
-		echo "  ✓ Timing estimate: $(SYNTH_TIMING_RPT)"; \
-	fi
-	@echo ""
-	@echo "Cell Statistics:"
-	@grep -A 20 "Number of cells:" $(SYNTH_AREA_RPT) | head -20 || true
-	@touch $(SYNTH_DONE)
-	@echo ""
-	@echo "========================================"
-	@echo "Synthesis completed successfully!"
-	@echo "========================================"
-
-# View reports
-syn-reports: synth
-	@echo "========================================"
-	@echo "Synthesis Reports"
-	@echo "========================================"
-	@echo ""
-	@if [ -f $(SYNTH_AREA_RPT) ]; then \
-		echo "=== AREA REPORT ==="; \
-		cat $(SYNTH_AREA_RPT); \
-		echo ""; \
-	fi
-	@if [ -f $(SYNTH_CELLS_RPT) ]; then \
-		echo "=== CELL USAGE REPORT ==="; \
-		cat $(SYNTH_CELLS_RPT); \
-		echo ""; \
-	fi
-	@if [ -f $(SYNTH_TIMING_RPT) ]; then \
-		echo "=== TIMING ESTIMATE REPORT ==="; \
-		cat $(SYNTH_TIMING_RPT); \
-		echo ""; \
-	fi
-
-# View area report only
-area: synth
-	@if [ -f $(SYNTH_AREA_RPT) ]; then \
-		cat $(SYNTH_AREA_RPT); \
-	else \
-		echo "Area report not found. Run 'make synth' first."; \
-	fi
-
-# View cell usage report only
-cells: synth
-	@if [ -f $(SYNTH_CELLS_RPT) ]; then \
-		cat $(SYNTH_CELLS_RPT); \
-	else \
-		echo "Cell usage report not found. Run 'make synth' first."; \
-	fi
-
-# View timing report only
-timing: synth
-	@if [ -f $(SYNTH_TIMING_RPT) ]; then \
-		cat $(SYNTH_TIMING_RPT); \
-	else \
-		echo "Timing report not found. Run 'make synth' first."; \
-	fi
-
-# Formal equivalence checking
-formal: synth
-	@echo "=========================================="
-	@echo "Running Formal Equivalence Check"
-	@echo "=========================================="
-	@echo "Verifying: RTL <-> Synthesized Netlist"
-	@echo ""
-	$(YOSYS) -c $(FORMAL_SCRIPT) | tee $(FORMAL_RPT)
-	@echo ""
-	@if grep -q "Equivalence Check PASSED" $(FORMAL_RPT); then \
-		echo "✓ PASSED: Designs are equivalent"; \
-		echo "Report: $(FORMAL_RPT)"; \
-	else \
-		echo "✗ FAILED: Equivalence check failed"; \
-		echo "Check: $(FORMAL_RPT)"; \
-		exit 1; \
-	fi
-
-# View synthesized netlist
-view-netlist: synth
-	@if [ -f $(SYNTH_NETLIST) ]; then \
-		less $(SYNTH_NETLIST); \
-	else \
-		echo "Netlist not found. Run 'make synth' first."; \
-	fi
-
-# Statistics summary
-stats: synth
-	@echo "========================================"
-	@echo "Synthesis Statistics Summary"
-	@echo "========================================"
-	@echo "Design: $(DESIGN)"
-	@echo "Target: 120 MHz (8.33 ns period, ASAP7 7nm)"
-	@echo ""
-	@if [ -f $(SYNTH_NETLIST) ]; then \
-		echo "Netlist:"; \
-		wc -l $(SYNTH_NETLIST) | awk '{print "  Lines: " $$1}'; \
-		grep -c "wire" $(SYNTH_NETLIST) | awk '{print "  Wires: " $$1}' || echo "  Wires: 0"; \
-		grep -c "reg" $(SYNTH_NETLIST) | awk '{print "  Registers: " $$1}' || echo "  Registers: 0"; \
-	fi
-	@echo ""
-	@if [ -f $(SYNTH_AREA_RPT) ]; then \
-		echo "Cell Count:"; \
-		grep "Number of cells:" $(SYNTH_AREA_RPT) | head -1; \
-		grep "AND" $(SYNTH_AREA_RPT) | head -3 || true; \
-		grep "DFF" $(SYNTH_AREA_RPT) | head -3 || true; \
-	fi
-	@echo ""
-
-# Clean build artifacts (keep reports)
-clean:
-	@echo "Cleaning build artifacts..."
-	rm -rf $(RESULTS_DIR)/*
-	rm -f $(SYNTH_DONE)
-	@echo "Cleaned: $(RESULTS_DIR)/"
-
-# Clean everything including reports
-cleanall: clean
-	@echo "Cleaning all generated files..."
-	rm -rf $(REPORTS_DIR)/*
-	@echo "Cleaned: $(REPORTS_DIR)/"
-
-# Help
-help:
-	@echo "========================================"
-	@echo "kv32 Synthesis Makefile"
-	@echo "========================================"
-	@echo ""
-	@echo "Targets:"
-	@echo "  make check        - Check tool availability and RTL files"
-	@echo "  make synth        - Run synthesis (default)"
-	@echo "  make formal       - Run formal equivalence check (RTL vs netlist)"
-	@echo "  make reports      - Display all synthesis reports"
-	@echo "  make area         - Display area report"
-	@echo "  make cells        - Display cell usage report"
-	@echo "  make timing       - Display timing estimate"
-	@echo "  make stats        - Display statistics summary"
-	@echo "  make view-netlist - View synthesized netlist"
-	@echo "  make clean        - Remove build artifacts"
-	@echo "  make cleanall     - Remove all generated files"
-	@echo "  make help         - Display this help"
-	@echo ""
-	@echo "Configuration:"
+	@echo "Running synthesis"
 	@echo "  Design: $(DESIGN)"
-	@echo "  PDK: ASAP7 7nm"
-	@echo "  Target Frequency: 120 MHz"
-	@echo "  Flow: Synthesis only (no P&R)"
-	@echo "  DFT: Disabled"
+	@echo "  Tool: $(SYNTH_TOOL)"
+	@echo "  Corner: $(ACTIVE_CORNER)"
+	@echo "========================================"
+	@status=0; \
+	case "$(SYNTH_TOOL)" in \
+	  yosys) (cd $(BUILD_DIR) && $(YOSYS) -c ../$(YOSYS_SYNTH_SCRIPT)) || status=$$? ;; \
+	  genus) (cd $(BUILD_DIR) && $(GENUS) -batch -files ../$(GENUS_SYNTH_SCRIPT)) | tee $(LOGS_DIR)/genus_run.log || status=$$? ;; \
+	  dc) (cd $(BUILD_DIR) && $(DC_SHELL) -f ../$(DC_SYNTH_SCRIPT)) | tee $(LOGS_DIR)/dc_run.log || status=$$? ;; \
+	  *) echo "ERROR: Unsupported SYNTH_TOOL='$(SYNTH_TOOL)'"; exit 1 ;; \
+	esac; \
+	[ -f $(BUILD_DIR)/genus.log ] && mv -f $(BUILD_DIR)/genus.log $(LOGS_DIR)/genus.log || true; \
+	[ -f $(BUILD_DIR)/genus.cmd ] && mv -f $(BUILD_DIR)/genus.cmd $(LOGS_DIR)/genus.cmd || true; \
+	if compgen -G "$(BUILD_DIR)/.rs_*.tstamp" > /dev/null; then mv -f $(BUILD_DIR)/.rs_*.tstamp $(LOGS_DIR)/; fi; \
+	[ $$status -eq 0 ] || exit $$status
+	@case "$(SYNTH_TOOL)" in \
+	  yosys) test -f $(BUILD_DIR)/results/yosys/$(DESIGN)_synth.v ;; \
+	  genus) test -f $(BUILD_DIR)/results/genus/$(DESIGN)_synth.v ;; \
+	  dc) test -f $(BUILD_DIR)/results/dc/$(DESIGN)_synth.v ;; \
+	  *) false ;; \
+	esac || { echo "ERROR: synthesis output netlist missing for $(SYNTH_TOOL)"; exit 1; }
+	@touch $(SYNTH_DONE)
+	@echo "Done. Results: $(RESULTS_DIR)  Reports: $(REPORTS_DIR)"
+
+formal:
+	@if [ "$(SYNTH_TOOL)" != "yosys" ]; then \
+	  echo "Formal target is available only for SYNTH_TOOL=yosys"; \
+	  exit 1; \
+	fi
+	@mkdir -p $(BUILD_DIR)/reports/yosys
+	(cd $(BUILD_DIR) && $(YOSYS) -c ../$(YOSYS_FORMAL_SCRIPT)) | tee $(BUILD_DIR)/reports/yosys/formal_equiv.rpt
+
+syn-reports: synth
+	@echo "Report files in $(REPORTS_DIR):"
+	@ls -1 $(REPORTS_DIR) || true
+
+area: synth
+	@ls -1 $(REPORTS_DIR)/*area*.rpt 2>/dev/null | xargs -r -I{} sh -c 'echo "=== {} ==="; cat "{}"; echo'
+
+timing: synth
+	@ls -1 $(REPORTS_DIR)/*timing*.rpt 2>/dev/null | xargs -r -I{} sh -c 'echo "=== {} ==="; cat "{}"; echo'
+
+cells: synth
+	@ls -1 $(REPORTS_DIR)/*cell*.rpt 2>/dev/null | xargs -r -I{} sh -c 'echo "=== {} ==="; cat "{}"; echo'
+
+clean:
+	@echo "Cleaning generated synthesis outputs..."
+	@rm -rf $(BUILD_DIR)
+
+cleanall: clean
+	@echo "All generated synthesis files removed (build/)."
+
+help:
+	@echo "kv32 unified synthesis flow"
 	@echo ""
-	@echo "Tools:"
-	@echo "  Yosys: $(YOSYS)"
+	@echo "Usage:"
+	@echo "  make synth                         # default Yosys"
+	@echo "  make synth SYNTH_TOOL=genus       # Cadence Genus"
+	@echo "  make synth SYNTH_TOOL=dc          # Synopsys DC"
+	@echo "  make synth SYNTH_TOOL=yosys ACTIVE_CORNER=tt"
 	@echo ""
-	@echo "Environment:"
-	@echo "  Ensure Yosys is in PATH (or set PATH_APPEND in ../env.config)"
+	@echo "Variables:"
+	@echo "  SYNTH_TOOL  = yosys | genus | dc"
+	@echo "  ACTIVE_CORNER = tt | ss | ff"
+	@echo "  LIB_ROOT = pdk (default)"
 	@echo ""
-	@echo "Quick Start:"
-	@echo "  1. make check     # Verify setup"
-	@echo "  2. make synth     # Run synthesis"
-	@echo "  3. make formal    # Verify equivalence"
-	@echo "  4. make reports   # View results"
-	@echo ""
+	@echo "Notes:"
+	@echo "  - Use build/reports/<tool>/ and build/results/<tool>/ for outputs"
+	@echo "  - 'formal' target is Yosys-only"

@@ -308,3 +308,4 @@ module jtag_tap #(
     `endif // SYNTHESIS
 
 endmodule
+

@@ -40,6 +40,7 @@
 `ifdef SYNTHESIS
 import kv32_pkg::*;
 `endif
+
 module kv32_core #(
     parameter int IB_DEPTH = 4,  // Instruction buffer depth (outstanding fetches); must be power-of-2 and >= effective_latency+1
     parameter int SB_DEPTH = 4,  // Store buffer depth (buffered stores)
@@ -153,77 +154,6 @@ module kv32_core #(
     assign stall_count = stall_counter;
     assign first_retire_cycle = first_retire_cycle_reg;
     assign last_retire_cycle = last_retire_cycle_reg;
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            cycle_counter <= 64'd0;
-            instret_counter <= 64'd0;
-            stall_counter <= 64'd0;
-            first_retire_cycle_reg <= 64'd0;
-            last_retire_cycle_reg <= 64'd0;
-            started_retiring <= 1'b0;
-            last_retired_pc <= 32'd0;
-            last_retired_instr <= 32'd0;
-            last_wb_valid <= 1'b0;
-        end else begin
-            cycle_counter <= cycle_counter + 64'd1;
-            // Increment instruction counter on retirement
-            if (retire_instr) begin
-                instret_counter <= instret_counter + 64'd1;
-                last_retire_cycle_reg <= cycle_counter;  // Latch current cycle
-                if (!started_retiring) begin
-                    first_retire_cycle_reg <= cycle_counter;
-                    started_retiring <= 1'b1;
-                end
-                // Update last retired instruction when it actually retires
-                last_retired_pc <= pc_wb;
-                last_retired_instr <= instr_wb;
-            end
-            last_wb_valid <= wb_valid;
-            if (id_ex_stall) begin
-                stall_counter <= stall_counter + 64'd1;
-            end
-        end
-    end
-
-`ifndef SYNTHESIS
-    // Timeout detection - flag if no instructions retire for STALL_TIMEOUT cycles
-    logic [31:0] cycles_since_retire;
-    logic        timeout_error_reg;
-
-    assign timeout_error = timeout_error_reg;
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            cycles_since_retire <= 32'd0;
-            timeout_error_reg <= 1'b0;
-        end else begin
-            if (retire_instr || (wb_valid && !mem_wb_stall) || wfi_stall) begin
-                // Reset counter when instruction retires OR WB advances to new instruction
-                // or when waiting in WFI (normal low-power state, not a deadlock)
-                cycles_since_retire <= 32'd0;
-            end else if (started_retiring && !timeout_error_reg) begin
-                // Only count after first instruction and before timeout
-                cycles_since_retire <= cycles_since_retire + 32'd1;
-                if (cycles_since_retire >= STALL_TIMEOUT) begin
-                    timeout_error_reg <= 1'b1;
-                    // Do not handle the timeout here; delegate it to the testbench.
-                    //$error("TIMEOUT: No instructions retired for %0d cycles", STALL_TIMEOUT);
-                    `DEBUG1(("TIMEOUT ERROR: PC=0x%h, outstanding_reqs=%0d, if_valid=%b",
-                           pc_if, ib_outstanding, if_valid));
-                    `DEBUG1(("  FETCH STATE: imem_req_valid=%b imem_req_ready=%b imem_resp_valid=%b",
-                           imem_req_valid, imem_req_ready, imem_resp_valid));
-                    `DEBUG1(("  DEDUP STATE: last_issued_valid=%b last_issued_pc=0x%h ib_resp_discard=%b",
-                           last_issued_valid, last_issued_fetch_pc, ib_resp_discard));
-                    `DEBUG1(("  PIPELINE: if_id_stall=%b non_branch_flush=%b if_flush=%b",
-                           if_id_stall, non_branch_flush, if_flush));
-                    `DEBUG1(("  IMEM: req_addr=0x%h resp_pc=0x%h fetch_issued_for_effective_pc=%b",
-                           imem_req_addr, ib_resp_pc, fetch_issued_for_effective_pc));
-                end
-            end
-        end
-    end
-`endif
 
     // ====== Fetch Stage (IF) ======
     // The fetch stage reads instructions from memory using the program counter.
@@ -414,11 +344,14 @@ module kv32_core #(
     logic        mem_read_wb;
     logic        mem_write_wb;
     logic [31:0] store_data_wb;
+    logic [2:0]  csr_op_wb;
+    logic [31:0] csr_rdata_wb;
+    /* verilator lint_off UNUSEDSIGNAL */
+    // Probed from testbench via DPI-C; not used within RTL
     logic [31:0] csr_wdata_wb;
     logic [4:0]  csr_zimm_wb;
-    logic [2:0]  csr_op_wb;
     logic [11:0] csr_addr_wb;
-    logic [31:0] csr_rdata_wb;
+    /* verilator lint_on UNUSEDSIGNAL */
     logic        is_amo_wb;
 `ifdef SYNTHESIS
     logic [4:0]  amo_op_wb;
@@ -640,6 +573,8 @@ module kv32_core #(
     // AXI rule "VALID must not deassert before READY".
     logic dedup_consuming;
     assign dedup_consuming = dedup_consumed && imem_req_ready;
+
+    logic branch_flushed;  // Flushed for current branch in EX (primary decl: branch tracking section)
 
     // imem_req_addr / imem_req_valid:
     //   Combinational address and valid.
@@ -1025,6 +960,11 @@ module kv32_core #(
     //   3. Register file (baseline)
     logic [31:0] rs1_data_id, rs2_data_id;
     logic [31:0] wb_write_data_next;  // Data that will be in WB next cycle
+    // Forward declarations: used in forwarding/stall/routing below before their primary section
+    logic [31:0] mem_data_wb_next;       // Load data to propagate to WB (primary decl: MEM response section)
+    logic        dmem_resp_valid_buf;    // Valid flag for buffered response (primary decl: MEM response section)
+    logic        load_req_issued;        // Tracks if load request has been issued (primary decl: Memory Routing)
+    logic        sb_cpu_ready;           // Store buffer can accept store (primary decl: Store Buffer section)
 
     // Calculate what will be written to WB on next cycle from current MEM stage
     always_comb begin
@@ -1493,7 +1433,6 @@ module kv32_core #(
 
     // Track if we've already flushed for the current branch in EX
     // Without this, during stalls, if_flush stays high and discards the target instruction
-    logic branch_flushed;
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             branch_flushed <= 1'b0;
@@ -1546,6 +1485,7 @@ module kv32_core #(
     // to the interrupt handler.  mepc = pc_ex + 4 so that MRET resumes at WFI+4.
     assign wfi_active = is_wfi_ex && ex_valid;
     assign wfi_stall  = wfi_active && !irq_pending && !exception;
+    logic        sb_store_pending;       // Stores are pending in buffer (primary decl: Store Buffer section)
 
 `ifdef DEBUG_LEVEL_2
     always_ff @(posedge clk) begin
@@ -1847,15 +1787,13 @@ module kv32_core #(
     // The store buffer allows stores to complete without blocking the pipeline.
     // It maintains a FIFO of pending stores and issues them to memory when ready.
     logic        sb_cpu_valid;           // CPU has store to buffer
-    logic        sb_cpu_ready;           // Store buffer can accept store
     logic [31:0] sb_mem_addr;            // Address for buffered store
     logic [31:0] sb_mem_data;            // Data for buffered store
     logic [3:0]  sb_mem_strb;            // Byte enables for buffered store
     logic        sb_mem_valid;           // Store buffer has memory request
     logic        sb_mem_ready;           // Memory accepts buffered store
-    logic        sb_store_pending;       // Stores are pending in buffer
     logic        sb_addr_hit;             // A buffered store's lower 10 bits match incoming load
-    logic [1:0]  sb_buffered_count;      // Number of stores in buffer
+    logic [$clog2(SB_DEPTH+1)-1:0] sb_buffered_count; // Number of stores in buffer
 
     // Store Response Tracking
     // Track whether a pending memory response belongs to the store buffer or a load.
@@ -1890,9 +1828,14 @@ module kv32_core #(
     //   Loads must wait only when a buffered store's lower 10 address bits match
     //   the incoming load address, avoiding unnecessary stalls on non-conflicting
     //   stores. The stall persists until ALL matching entries have drained (flush-out).
+    // Forward declarations: AMO signals used inside the load_req_issued always_ff below
+    logic amo_mem_req;
+    logic [31:0] amo_req_addr;
+    logic [3:0] amo_req_we;
+    logic [31:0] amo_req_wdata;
+    logic amo_req_issued;  // Track if request has been issued and accepted
     logic        load_req_valid;
     logic        store_req_valid;
-    logic        load_req_issued;   // Tracks if load request has been issued
 
     // Track whether load request has been issued to prevent duplicate requests
     always_ff @(posedge clk or negedge rst_n) begin
@@ -2305,13 +2248,6 @@ module kv32_core #(
 
     // AMO Memory Request Logic
     // Generate memory requests for AMO operations
-    logic amo_mem_req;
-    logic [31:0] amo_req_addr;
-    logic [3:0] amo_req_we;
-    logic [31:0] amo_req_wdata;
-    logic amo_req_issued;  // Track if request has been issued and accepted
-
-    // Track when AMO request has been issued and accepted
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             amo_req_issued <= 1'b0;
@@ -2433,6 +2369,7 @@ module kv32_core #(
 
     // ── Store-access fault via FENCE: fires when FENCE exits MEM stage carrying
     // a latched B-channel SLVERR (store_error_pending).
+    logic store_error_pending;  // Latched store B-channel SLVERR (primary decl: Store Access Fault section)
     logic store_fault_via_fence;
     assign store_fault_via_fence = is_fence_mem && mem_valid && store_error_pending;
 
@@ -2487,13 +2424,11 @@ module kv32_core #(
     //
     // Response buffering signals:
     logic [31:0] mem_data_aligned;       // Load data after extraction/alignment
-    logic [31:0] mem_data_wb_next;       // Load data to propagate to WB stage
     logic [4:0]  rd_addr_mem_reg;        // Saved destination register address
     logic        reg_we_mem_reg;         // Saved register write enable
     logic        mem_read_mem_reg;       // Saved memory read indicator
     logic        mem_valid_reg;          // Saved valid flag for MEM stage
     logic [31:0] dmem_resp_data_buf;     // Buffered memory response data
-    logic        dmem_resp_valid_buf;    // Valid flag for buffered response
     logic        dmem_resp_error_buf;    // Error flag for buffered response
 
     // Memory Response Buffer Register
@@ -2527,7 +2462,6 @@ module kv32_core #(
     // When the store buffer drains an entry and the B-channel returns SLVERR,
     // latch the error here.  The fault is consumed when the next FENCE instruction
     // exits the MEM stage (store_fault_via_fence), raising EXC_STORE_ACCESS_FAULT.
-    logic store_error_pending;
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             store_error_pending <= 1'b0;
@@ -2685,11 +2619,11 @@ module kv32_core #(
             mem_read_wb   <= 1'b0;
             mem_write_wb  <= 1'b0;
             store_data_wb <= 32'd0;
+            csr_op_wb     <= 3'd0;
+            csr_rdata_wb  <= 32'd0;
             csr_wdata_wb  <= 32'd0;
             csr_zimm_wb   <= 5'd0;
-            csr_op_wb     <= 3'd0;
             csr_addr_wb   <= 12'd0;
-            csr_rdata_wb  <= 32'd0;
             is_amo_wb     <= 1'b0;
             amo_op_wb     <= AMO_ADD;
             wb_valid      <= 1'b0;
@@ -2716,11 +2650,11 @@ module kv32_core #(
             mem_read_wb   <= mem_read_mem;
             mem_write_wb  <= mem_write_mem;
             store_data_wb <= rs2_data_mem;
+            csr_op_wb     <= csr_op_mem;
+            csr_rdata_wb  <= csr_rdata;
             csr_wdata_wb  <= rs1_data_mem;
             csr_zimm_wb   <= rs1_addr_mem;
-            csr_op_wb     <= csr_op_mem;
             csr_addr_wb   <= csr_addr_mem;
-            csr_rdata_wb  <= csr_rdata;
             is_amo_wb     <= is_amo_mem;
             amo_op_wb     <= amo_op_mem;
             wb_valid      <= mem_valid && !irq_pending && !wb_exception;
@@ -3428,4 +3362,77 @@ module kv32_core #(
     assign _unused_ok_misc = &{1'b0, system_mem, csr_illegal, irq_cause,
                                last_wb_valid, amo_op_wb};
 
+    // ====== Performance Counter Update (moved here so pipeline signal declarations appear first) ======
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            cycle_counter <= 64'd0;
+            instret_counter <= 64'd0;
+            stall_counter <= 64'd0;
+            first_retire_cycle_reg <= 64'd0;
+            last_retire_cycle_reg <= 64'd0;
+            started_retiring <= 1'b0;
+            last_retired_pc <= 32'd0;
+            last_retired_instr <= 32'd0;
+            last_wb_valid <= 1'b0;
+        end else begin
+            cycle_counter <= cycle_counter + 64'd1;
+            // Increment instruction counter on retirement
+            if (retire_instr) begin
+                instret_counter <= instret_counter + 64'd1;
+                last_retire_cycle_reg <= cycle_counter;  // Latch current cycle
+                if (!started_retiring) begin
+                    first_retire_cycle_reg <= cycle_counter;
+                    started_retiring <= 1'b1;
+                end
+                // Update last retired instruction when it actually retires
+                last_retired_pc <= pc_wb;
+                last_retired_instr <= instr_wb;
+            end
+            last_wb_valid <= wb_valid;
+            if (id_ex_stall) begin
+                stall_counter <= stall_counter + 64'd1;
+            end
+        end
+    end
+
+`ifndef SYNTHESIS
+    // Timeout detection - flag if no instructions retire for STALL_TIMEOUT cycles
+    logic [31:0] cycles_since_retire;
+    logic        timeout_error_reg;
+
+    assign timeout_error = timeout_error_reg;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            cycles_since_retire <= 32'd0;
+            timeout_error_reg <= 1'b0;
+        end else begin
+            if (retire_instr || (wb_valid && !mem_wb_stall) || wfi_stall) begin
+                // Reset counter when instruction retires OR WB advances to new instruction
+                // or when waiting in WFI (normal low-power state, not a deadlock)
+                cycles_since_retire <= 32'd0;
+            end else if (started_retiring && !timeout_error_reg) begin
+                // Only count after first instruction and before timeout
+                cycles_since_retire <= cycles_since_retire + 32'd1;
+                if (cycles_since_retire >= STALL_TIMEOUT) begin
+                    timeout_error_reg <= 1'b1;
+                    // Do not handle the timeout here; delegate it to the testbench.
+                    //$error("TIMEOUT: No instructions retired for %0d cycles", STALL_TIMEOUT);
+                    `DEBUG1(("TIMEOUT ERROR: PC=0x%h, outstanding_reqs=%0d, if_valid=%b",
+                           pc_if, ib_outstanding, if_valid));
+                    `DEBUG1(("  FETCH STATE: imem_req_valid=%b imem_req_ready=%b imem_resp_valid=%b",
+                           imem_req_valid, imem_req_ready, imem_resp_valid));
+                    `DEBUG1(("  DEDUP STATE: last_issued_valid=%b last_issued_pc=0x%h ib_resp_discard=%b",
+                           last_issued_valid, last_issued_fetch_pc, ib_resp_discard));
+                    `DEBUG1(("  PIPELINE: if_id_stall=%b non_branch_flush=%b if_flush=%b",
+                           if_id_stall, non_branch_flush, if_flush));
+                    `DEBUG1(("  IMEM: req_addr=0x%h resp_pc=0x%h fetch_issued_for_effective_pc=%b",
+                           imem_req_addr, ib_resp_pc, fetch_issued_for_effective_pc));
+                end
+            end
+        end
+    end
+`endif
+
 endmodule
+

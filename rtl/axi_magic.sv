@@ -390,3 +390,4 @@ module axi_magic (
 `endif // SYNTHESIS
 
 endmodule
+

@@ -115,12 +115,13 @@ module axi_plic #(
     logic [31:0] wr_src_idx;               // write src index = aw_off[14:2] (32-bit to match int NUM_IRQ comparisons)
     logic [31:0] rd_src_idx;               // read src index = ar_addr_latch[14:2] (32-bit to match int NUM_IRQ comparisons)
 
+    logic [31:0] aw_addr_latch;            // forward declaration
+    logic [31:0] ar_addr_latch;            // forward declaration
     always_comb aw_off     = aw_addr_latch[25:0];
     always_comb wr_src_idx = 32'(aw_off[14:2]);
     always_comb rd_src_idx = 32'(ar_addr_latch[14:2]);
 
     // Latch write address and data
-    logic [31:0] aw_addr_latch;
     logic [31:0] w_data_latch;
     logic [3:0]  w_strb_latch;
     logic        aw_recv, w_recv;
@@ -328,8 +329,7 @@ module axi_plic #(
         end
     end
 
-    // Latched AR address
-    logic [31:0] ar_addr_latch;
+    // Latched AR address (declared earlier as forward declaration)
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -363,3 +363,4 @@ module axi_plic #(
     assign _unused_ok = &{1'b0, aw_addr_latch[31:26], ar_addr_latch[31:26]};
 
 endmodule
+

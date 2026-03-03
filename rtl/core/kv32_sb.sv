@@ -45,6 +45,7 @@
 `ifdef SYNTHESIS
 import kv32_pkg::*;
 `endif
+
 module kv32_sb #(
     parameter int DEPTH = 2,      // Number of stores that can be buffered
     parameter int ADDR_WIDTH = 32,
@@ -589,3 +590,4 @@ module kv32_sb #(
                              };
 
 endmodule
+

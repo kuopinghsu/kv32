@@ -20,6 +20,7 @@
 import kv32_pkg::*;
 import axi_pkg::*;
 `endif
+
 module mem_axi #(
 `ifndef SYNTHESIS
     parameter string BRIDGE_NAME = "AXI_BRIDGE",
@@ -539,3 +540,4 @@ module mem_axi #(
 `endif // ASSERTION
 
 endmodule
+

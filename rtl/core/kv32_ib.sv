@@ -38,6 +38,7 @@
 `ifdef SYNTHESIS
 import kv32_pkg::*;
 `endif
+
 module kv32_ib #(
     parameter int DEPTH = 2,  // Number of outstanding requests supported
     parameter int ADDR_WIDTH = 32
@@ -533,3 +534,4 @@ module kv32_ib #(
 `endif // ASSERTION
 
 endmodule
+

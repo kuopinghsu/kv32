@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+syn/build/
 *.o
 *.d
 *.a

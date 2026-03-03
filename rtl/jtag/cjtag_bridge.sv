@@ -482,3 +482,4 @@ module cjtag_bridge (
     `endif
 
 endmodule
+

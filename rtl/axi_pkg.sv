@@ -25,3 +25,4 @@ package axi_pkg;
     typedef logic [AXI_ID_WIDTH-1:0] axi_id_t;
 
 endpackage
+

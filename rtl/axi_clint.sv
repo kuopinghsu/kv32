@@ -313,3 +313,4 @@ module axi_clint (
                                 trace_store_addr[31:16]};
 
 endmodule
+

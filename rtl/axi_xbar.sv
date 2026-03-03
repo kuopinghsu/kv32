@@ -541,6 +541,11 @@ module axi_xbar (
         sel_s9_ar = (m_axi_araddr[31:16] == 16'h2005);  // GPIO (64 KB)
     end
 
+    // Forward declarations needed by debug always block and W-channel routing below
+    logic [3:0] w_sel;
+    logic w_transaction_active;
+    logic [3:0] active_w_dest;
+
     always @(posedge clk) begin
         if (m_axi_arvalid) begin
             `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AR: addr=0x%h sel=%b%b%b%b%b%b%b%b%b%b",
@@ -633,9 +638,9 @@ module axi_xbar (
     end
 
     // Write data channel routing
-    logic [3:0] w_sel;
+    // w_sel: declared earlier as forward declaration
     logic [3:0] w_sel_next;  // Next destination for incoming AW
-    logic w_transaction_active;  // Track if write transaction is in progress
+    // w_transaction_active: declared earlier as forward declaration
     logic write_decode_err_w_done;   // Track if W data received for decode error
 
     // Compute next destination from current AW address
@@ -697,7 +702,7 @@ module axi_xbar (
     end
 
     // Use w_sel for W channel routing, but override with incoming AW destination
-    logic [3:0] active_w_dest;
+    // active_w_dest: declared earlier as forward declaration
     always_comb begin
         if (m_axi_awvalid && !w_transaction_active) begin
             active_w_dest = w_sel_next;
@@ -1197,3 +1202,4 @@ module axi_xbar (
 `endif // ASSERTION
 
 endmodule
+

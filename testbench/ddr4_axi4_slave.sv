@@ -385,7 +385,7 @@ module ddr4_axi4_slave #(
 
         case (wr_state)
             WR_IDLE: begin
-                if (s_axi_awvalid)
+                if (s_axi_awvalid && s_axi_awready)
                     wr_next_state = WR_ADDR_WAIT;
             end
 
@@ -555,7 +555,7 @@ module ddr4_axi4_slave #(
 
         case (rd_state)
             RD_IDLE: begin
-                if (s_axi_arvalid)
+                if (s_axi_arvalid && s_axi_arready)
                     rd_next_state = RD_ADDR_WAIT;
             end
 

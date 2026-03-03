@@ -230,3 +230,4 @@ module jtag_top #(
     assign _unused_ok_jtag = &{1'b0, jtag_tck, jtag_tms, jtag_tdi, jtag_tdo};
 
 endmodule
+

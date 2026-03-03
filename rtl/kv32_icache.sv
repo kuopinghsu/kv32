@@ -632,6 +632,8 @@ module kv32_icache #(
         end
     end
 
+    logic tag_fill_commit; // forward declaration (assigned later, used in valid_array section)
+
     // =========================================================================
     // valid_array / victim_ptr flip-flop write logic
     //   tag and data are written exclusively via the SRAM write ports below.
@@ -788,7 +790,7 @@ module kv32_icache #(
             : new_req_index;
 
     // Tag fill commit strobe (last beat, no error) – fires in any fill state
-    logic tag_fill_commit;
+    // tag_fill_commit: declared earlier as forward declaration
     assign tag_fill_commit = (state == S_MISS_R || state == S_FILL_REST ||
                               (state == S_RESP && fill_active_r))
                              && axi_rvalid && axi_rready
@@ -1087,9 +1089,10 @@ module kv32_icache #(
     // (cache operates on aligned cacheline addresses), and internal tracking
     // signals reserved for future use.
     logic _unused_ok;
-    assign _unused_ok = &{1'b0, req_addr_r[1:0], cmo_addr_r[4:0],
+    assign _unused_ok = &{1'b0, req_addr_r[1:0], cmo_addr_r[5:0],
                                 imem_req_addr_fill[1:0], axi_ar_accepted};
 
 `endif // ASSERTION
 
 endmodule
+

@@ -230,6 +230,43 @@ RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
 SW_BUILD_PARAMS  = ICACHE_EN=$(ICACHE_EN)
 SW_PARAMS_STAMP  = $(BUILD_DIR)/.sw_build_params
 
+# Verilator lint-only flags (all warnings enabled, -Werror-IMPLICIT, no simulation output)
+VERILATOR_LINT_FLAGS  = --lint-only -Wall -Wno-UNSIGNED
+VERILATOR_LINT_FLAGS += -sv --timing
+VERILATOR_LINT_FLAGS += --top-module tb_kv32_soc
+VERILATOR_LINT_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM
+VERILATOR_LINT_FLAGS += -Werror-IMPLICIT
+VERILATOR_LINT_FLAGS += -I$(MEM_DIR)
+VERILATOR_LINT_FLAGS += --assert
+VERILATOR_LINT_FLAGS += -pvalue+FAST_MUL=$(FAST_MUL) -pvalue+FAST_DIV=$(FAST_DIV)
+VERILATOR_LINT_FLAGS += -pvalue+ICACHE_EN=$(ICACHE_EN) -pvalue+ICACHE_SIZE=$(ICACHE_SIZE)
+VERILATOR_LINT_FLAGS += -pvalue+ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) -pvalue+ICACHE_WAYS=$(ICACHE_WAYS)
+VERILATOR_LINT_FLAGS += -pvalue+MEM_READ_LATENCY=$(MEM_READ_LATENCY)
+VERILATOR_LINT_FLAGS += -pvalue+MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY)
+VERILATOR_LINT_FLAGS += -pvalue+MEM_DUAL_PORT=$(MEM_DUAL_PORT)
+ifeq ($(MEM_TYPE),ddr4)
+  VERILATOR_LINT_FLAGS += +define+MEM_TYPE_DDR4
+endif
+
+# RTL-only sources (no testbench) used for per-module lint
+# Filters out all testbench/ files and the DDR4/SRAM TB SV stubs
+RTL_ONLY_SRCS = $(filter-out $(MEM_TB_SV) $(TB_DIR)/%, $(RTL_SOURCES))
+
+# Modules to lint individually: RTL-only, skip package files
+LINT_MODULE_LIST = $(filter-out %_pkg.sv, $(RTL_ONLY_SRCS))
+
+# Shared per-module lint flags (packages always supplied as context)
+# -Wno-UNDRIVEN:     expected when ports are unconnected at standalone top
+# -Wno-UNUSEDPARAM:  noisy for shared packages
+# -Wno-SYNCASYNCNET: false positive for async-reset FF + SVA "disable iff (!rst_n)"
+# NOTE: no -pvalue+ here; parameters use module defaults when linting individually
+LINT_MOD_FLAGS  = --lint-only -Wall -Wno-UNSIGNED -sv --timing
+LINT_MOD_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM -Wno-SYNCASYNCNET -Werror-IMPLICIT
+LINT_MOD_FLAGS += -I$(MEM_DIR) -I$(CORE_DIR) -I$(RTL_DIR)
+ifeq ($(MEM_TYPE),ddr4)
+  LINT_MOD_FLAGS += +define+MEM_TYPE_DDR4
+endif
+
 # RTL source files
 # Package files must be compiled first
 RTL_SOURCES = \
@@ -252,7 +289,7 @@ TB_SOURCES = $(TB_DIR)/tb_kv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-
 # Output executable
 BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
-.PHONY: all build-rtl build-sim rtl-build sim-build build-spike-plugins clean clean-tests clean-spike-plugins run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
+.PHONY: all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl build-spike-plugins clean clean-tests clean-spike-plugins run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
 # Default target - run all tests
 all: rtl-all sim-all compare-all spike-all freertos-compare-simple
@@ -280,6 +317,67 @@ build-rtl: $(BUILD_TARGET)
 
 # Alias for build-rtl (so both 'make build-rtl' and 'make rtl-build' work)
 rtl-build: build-rtl
+
+# Lint umbrella: runs all three lint passes in sequence.
+# Stops on the first failing pass.
+lint: lint-full lint-modules lint-decl
+
+# Full-design Verilator lint (all RTL + testbench compiled together)
+lint-full:
+	@echo "=========================================="
+	@echo "Linting RTL with Verilator"
+	@echo "=========================================="
+	@echo "Verilator: $(VERILATOR)"
+	@echo ""
+	$(VERILATOR) $(VERILATOR_LINT_FLAGS) \
+		-I$(CORE_DIR) \
+		-I$(RTL_DIR) \
+		$(RTL_SOURCES)
+	@echo ""
+	@echo "=========================================="
+	@echo "Lint passed!"
+	@echo "=========================================="
+
+# Per-module lint: lint every RTL module individually as Verilator top.
+# This catches issues (e.g. MULTIDRIVEN across clock domains) that are silently
+# dropped when modules are inlined during full-design elaboration.
+lint-modules:
+	@echo "=========================================="
+	@echo "Per-module RTL lint ($(words $(LINT_MODULE_LIST)) modules)"
+	@echo "=========================================="
+	@fail=0; \
+	for sv in $(LINT_MODULE_LIST); do \
+		mod=$$(basename $$sv .sv); \
+		printf "  %-30s ... " "$$mod"; \
+		if $(VERILATOR) $(LINT_MOD_FLAGS) --top-module $$mod \
+			$(RTL_ONLY_SRCS) >/tmp/_lint_$$mod.log 2>&1; then \
+			echo "OK"; \
+		else \
+			echo "FAIL"; \
+			cat /tmp/_lint_$$mod.log; \
+			fail=1; \
+		fi; \
+	done; \
+	if [ $$fail -eq 0 ]; then \
+		echo "=========================================="; \
+		echo "All modules passed lint!"; \
+		echo "=========================================="; \
+	else \
+		echo "=========================================="; \
+		echo "Per-module lint FAILED"; \
+		echo "=========================================="; \
+		exit 1; \
+	fi
+
+# Declaration-order check: detect signals used before their declaration line.
+# Synthesis tools (DC, Genus, Vivado strict mode) reject such forward references
+# even though SV technically allows module-scope forward references.
+# Uses scripts/check_decl_order.py which does not require any extra tools.
+lint-decl:
+	@echo "=========================================="
+	@echo "Declaration-order check ($(words $(RTL_ONLY_SRCS)) files)"
+	@echo "=========================================="
+	@python3 scripts/check_decl_order.py $(RTL_ONLY_SRCS)
 
 # Stamp rule: always runs (FORCE), but only touches the file when params changed.
 # This means kv32soc is rebuilt only when a compile-time parameter actually differs.
@@ -879,6 +977,10 @@ help:
 	@echo "               10 latency/port combinations (read=1/4/16, write=1/4/16,"
 	@echo "               dual-port=0/1) to catch memory interface bugs"
 	@echo "  build-rtl  - Build RTL with Verilator"
+	@echo "  lint       - Run all lint passes (lint-full + lint-modules + lint-decl)"
+	@echo "  lint-full  - Full-design Verilator lint (all warnings + -Werror-IMPLICIT)"
+	@echo "  lint-modules - Lint every RTL module as Verilator top (catches MULTIDRIVEN etc.)"
+	@echo "  lint-decl    - Check signal declaration order (use-before-declare, synthesis strict mode)"
 	@echo "  build-sim  - Build software simulator (kv32sim)"
 	@echo "  clean      - Remove all build artifacts"
 	@echo "  clean-tests- Remove only test program builds"

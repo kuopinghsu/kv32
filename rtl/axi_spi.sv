@@ -40,6 +40,7 @@
 `ifdef SYNTHESIS
 import kv32_pkg::*;
 `endif
+
 module axi_spi #(
     parameter CLK_FREQ   = 100_000_000,  // System clock frequency
     parameter FIFO_DEPTH = 8             // Must be a power of 2
@@ -135,6 +136,7 @@ module axi_spi #(
     // ========================================================================
     // RX FIFO
     // ========================================================================
+    logic [7:0]  shift_reg_rx;            // forward declaration (used in RX FIFO push below)
     logic [7:0]           rxf_mem  [0:FIFO_DEPTH-1];
     logic [FIFO_BITS-1:0] rxf_wr_ptr, rxf_rd_ptr;
     logic [FIFO_BITS:0]   rxf_count;
@@ -197,7 +199,7 @@ module axi_spi #(
     spi_state_t state;
     logic [3:0]  bit_counter;
     logic [7:0]  shift_reg_tx;
-    logic [7:0]  shift_reg_rx;
+    // shift_reg_rx: declared earlier as forward declaration
     logic        sclk_int;
     logic        busy;
     logic        tx_ready;
@@ -403,3 +405,4 @@ module axi_spi #(
                                 axi_araddr[31:16], rx_data, tx_ready, tx_being_written};
 
 endmodule
+

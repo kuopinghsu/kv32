@@ -20,6 +20,7 @@
 import kv32_pkg::*;
 import axi_pkg::*;
 `endif
+
 module axi_arbiter #(
     parameter int OUTSTANDING_DEPTH = 4
 ) (
@@ -532,3 +533,4 @@ module axi_arbiter #(
 `endif // ASSERTION
 
 endmodule
+

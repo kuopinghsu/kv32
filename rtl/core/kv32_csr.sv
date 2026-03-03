@@ -19,6 +19,7 @@
 `ifdef SYNTHESIS
 import kv32_pkg::*;
 `endif
+
 module kv32_csr (
     input  logic        clk,
     input  logic        rst_n,
@@ -319,3 +320,4 @@ module kv32_csr (
     assign _unused_ok_csr = &{1'b0, mpie, mtie, msie, meie};
 
 endmodule
+

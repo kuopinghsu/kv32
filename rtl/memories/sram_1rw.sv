@@ -288,3 +288,4 @@ module sram_1rw #(
 `endif  // INTEL_FPGA / default
 
 endmodule
+

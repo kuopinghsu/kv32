@@ -223,6 +223,41 @@ module axi_dma #(
         rd_reg_idx = cfg_araddr[5:2];
     end
 
+    // Forward declarations needed by BURST_CALC and wlast/wdata assigns below
+    logic [DATA_WIDTH-1:0] fifo_rdata;
+    logic [1:0]  e_mode;
+    logic [31:0] e_cur_src;
+    logic [31:0] e_cur_dst;
+    logic [31:0] e_rem_bytes;
+    logic [7:0]  e_beats;
+    logic [7:0]  beat_cnt;
+    logic [31:0] sg_desc [0:3];
+
+    // Compute burst size clamped to MAX_BURST_LEN and 4K-page boundaries.
+    // Returns {burst_bytes[31:0], beats[7:0]} packed into 40 bits.
+    // Only the lower 12 bits of src/dst (page offsets) are needed for 4K-boundary checks.
+    // NOTE: VLT cannot lint automatic function internals; suppress UNUSEDSIGNAL for this function.
+    /* verilator lint_off UNUSEDSIGNAL */
+    function automatic logic [39:0] calc_burst(
+        input logic [11:0] src,
+        input logic [11:0] dst,
+        input logic [31:0] rem
+    );
+        logic [31:0] max_b, lim, lim_al, sp_lim, dp_lim, bb, beats32;
+        max_b  = (MAX_BURST_LEN * BPB);
+        lim    = (rem < max_b) ? rem : max_b;
+        lim_al = (lim  / BPB) * BPB;
+        sp_lim = (lim_al < (32'h1000 - {20'h0, src})) ?
+                  lim_al : (32'h1000 - {20'h0, src});
+        dp_lim = (sp_lim < (32'h1000 - {20'h0, dst})) ?
+                  sp_lim : (32'h1000 - {20'h0, dst});
+        bb     = (dp_lim / BPB) * BPB;
+        if (bb < BPB) bb = BPB;
+        beats32    = bb / BPB;
+        calc_burst = {bb, beats32[7:0]};
+    endfunction
+    /* verilator lint_on UNUSEDSIGNAL */
+
     // BURST_CALC combinational: compute burst parameters from current engine state
     logic [11:0] bc_src_off, bc_dst_off;
     logic [31:0] bc_rem;
@@ -240,6 +275,10 @@ module axi_dma #(
     // advances on the same clock edge the beat is accepted.
     assign dma_wdata = fifo_rdata;
     assign dma_wstrb = {(DATA_WIDTH/8){dma_wvalid}};
+
+    // Forward declarations needed by Write path below
+    logic                                          no_pending;
+    logic [$clog2(NUM_CHANNELS > 1 ? NUM_CHANNELS : 2)-1:0] sched_ch;
 
     // Write path
     always_ff @(posedge clk or negedge rst_n) begin
@@ -457,7 +496,7 @@ module axi_dma #(
 
     logic fifo_push;
     wire  fifo_pop = dma_wvalid && dma_wready && !fifo_empty;  // combinatorial pop
-    logic [DATA_WIDTH-1:0] fifo_wdata, fifo_rdata;
+    logic [DATA_WIDTH-1:0] fifo_wdata;
 
     assign fifo_rdata = fifo_mem[fifo_rd_ptr[FIFO_BITS-1:0]];
     // wdata/wstrb/wlast are driven combinatorially from fifo_rdata.
@@ -488,35 +527,25 @@ module axi_dma #(
 
     // Snapshot of active channel's configuration (loaded at IDLE→schedule)
     logic [7:0]  e_ctrl;
-    logic [1:0]  e_mode;
     logic        e_src_inc, e_dst_inc;
 
     // Running counters (updated in ADVANCE)
-    logic [31:0] e_cur_src;       // current source address
-    logic [31:0] e_cur_dst;       // current destination address
-    logic [31:0] e_rem_bytes;     // bytes remaining in current row / 1D total
+
     logic [31:0] e_row_rem;       // rows remaining (2D/3D)
     logic [31:0] e_plane_rem;     // planes remaining (3D)
     logic [31:0] e_sg_rem;        // SG descriptors remaining
     logic [31:0] e_sg_ptr;        // address of next SG descriptor
 
     // Burst parameters (set in BURST_CALC)
-    logic [7:0]  e_beats;         // beats in current burst (arlen = beats-1)
     logic [31:0] e_burst_bytes;   // bytes in current burst = beats * BPB
 
-    // Beat counter for RD_DATA / WR_DATA
-    logic [7:0]  beat_cnt;
-
+    // Beat counter for RD_DATA / WR_DATA (just the sg_word counter beside)
     // SG descriptor receive buffer (4 words)
-    logic [31:0] sg_desc [0:3];
     logic [1:0]  sg_word_cnt;
 
     // ── channel scheduler ──────────────────────────────────────────────────
     // Returns an active channel index or sets no_pending if none is ready.
     // A channel is "ready" when:  EN=1, START=1, BUSY=0, DONE=0 (not already done/running)
-    logic                                          no_pending;
-    logic [$clog2(NUM_CHANNELS > 1 ? NUM_CHANNELS : 2)-1:0] sched_ch;
-
     /* verilator lint_off WIDTHEXPAND */
     /* verilator lint_off WIDTHTRUNC */
     always_comb begin : scheduler
@@ -535,31 +564,6 @@ module axi_dma #(
     end
     /* verilator lint_on WIDTHTRUNC */
     /* verilator lint_on WIDTHEXPAND */
-
-    // Compute burst size clamped to MAX_BURST_LEN and 4K-page boundaries.
-    // Returns {burst_bytes[31:0], beats[7:0]} packed into 40 bits.
-    // Only the lower 12 bits of src/dst (page offsets) are needed for 4K-boundary checks.
-    // NOTE: VLT cannot lint automatic function internals; suppress UNUSEDSIGNAL for this function.
-    /* verilator lint_off UNUSEDSIGNAL */
-    function automatic logic [39:0] calc_burst(
-        input logic [11:0] src,
-        input logic [11:0] dst,
-        input logic [31:0] rem
-    );
-        logic [31:0] max_b, lim, lim_al, sp_lim, dp_lim, bb, beats32;
-        max_b  = (MAX_BURST_LEN * BPB);
-        lim    = (rem < max_b) ? rem : max_b;
-        lim_al = (lim  / BPB) * BPB;
-        sp_lim = (lim_al < (32'h1000 - {20'h0, src})) ?
-                  lim_al : (32'h1000 - {20'h0, src});
-        dp_lim = (sp_lim < (32'h1000 - {20'h0, dst})) ?
-                  sp_lim : (32'h1000 - {20'h0, dst});
-        bb     = (dp_lim / BPB) * BPB;
-        if (bb < BPB) bb = BPB;
-        beats32    = bb / BPB;
-        calc_burst = {bb, beats32[7:0]};
-    endfunction
-    /* verilator lint_on UNUSEDSIGNAL */
 
     // ── engine main always_ff ─────────────────────────────────────────────
     always_ff @(posedge clk or negedge rst_n) begin : eng
@@ -960,3 +964,4 @@ module axi_dma #(
 `endif // ASSERTION
 
 endmodule
+

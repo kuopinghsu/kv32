@@ -41,6 +41,7 @@
 `ifdef SYNTHESIS
 import kv32_pkg::*;
 `endif
+
 module axi_i2c #(
     parameter CLK_FREQ   = 100_000_000,  // System clock frequency
     parameter FIFO_DEPTH = 8             // Must be a power of 2
@@ -139,6 +140,7 @@ module axi_i2c #(
     // ========================================================================
     // RX FIFO
     // ========================================================================
+    logic [7:0]  rx_data;             // forward declaration (used below, declared later)
     logic [7:0]           rxf_mem  [0:FIFO_DEPTH-1];
     logic [FIFO_BITS-1:0] rxf_wr_ptr, rxf_rd_ptr;
     logic [FIFO_BITS:0]   rxf_count;
@@ -227,7 +229,7 @@ module axi_i2c #(
     logic [3:0]  bit_counter;
     logic [7:0]  shift_reg;
     logic [1:0]  scl_phase;  // 0=low, 1=rising, 2=high, 3=falling
-    logic [7:0]  rx_data;    // captured byte from READ state
+    // rx_data: declared earlier (forward declaration before RX FIFO section)
 
     // ========================================================================
     // AXI4-Lite Interface - Always ready for register access
@@ -567,3 +569,4 @@ module axi_i2c #(
                                 axi_araddr[31:16], i2c_scl_i, tx_ready};
 
 endmodule
+

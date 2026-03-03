@@ -209,8 +209,16 @@ module kv32_dtm #(
     logic [2:0]  sbcs_error_clr_latch; // Latched clear mask, sampled on toggle edge
     // sbcs_sbaccess synced to CLK domain so FSM can check access width at SBA trigger
     logic [2:0]  sbcs_sbaccess_clk;    // CLK-domain copy of sbcs_sbaccess (2-stage sync)
-    logic [31:0] sbaddress0;           // SBA address
-    logic [31:0] sbdata0;              // SBA data (written = start write; read = last result)
+    logic [31:0] sbaddress0;           // SBA address (TCK domain — written by TCK/DMI only)
+    logic [31:0] sbdata0;              // SBA data (TCK domain — written by TCK/DMI only)
+    // CLK-domain copies driven exclusively by the SBA FSM.
+    // sbaddress0_clk is seeded from sbaddress0 at trigger and auto-incremented here;
+    // sbdata0_clk captures SBA read results here and is synced back to TCK.
+    logic [31:0] sbaddress0_clk;       // CLK domain: SBA address (seeded + auto-incremented)
+    logic [31:0] sbdata0_clk;          // CLK domain: SBA data (write operand / read result)
+    // Handshake flags: CLK sets when an SBA op completes; edge-detect in TCK domain
+    logic        sbdata0_result_valid;     // CLK domain: new SBA read result in sbdata0_clk
+    logic        sbaddress0_result_valid;  // CLK domain: sbaddress0_clk updated (autoincrement)
     logic        sba_wr_toggle_tck;    // TCK domain: toggles to trigger SBA write
     logic        sba_rd_toggle_tck;    // TCK domain: toggles to trigger SBA read
     // Remaining SBA localparams
@@ -553,6 +561,11 @@ module kv32_dtm #(
     logic [2:0] abstractcs_cmderr_sync [2:0];
     logic [31:0] data0_result_sync [2:0];
     logic data0_result_valid_sync [2:0];
+    // CLK→TCK sync chains for SBA results (mirrors data0_result_sync mechanism)
+    logic [31:0] sbdata0_result_sync [2:0];
+    logic        sbdata0_result_valid_sync [2:0];
+    logic [31:0] sbaddress0_result_sync [2:0];
+    logic        sbaddress0_result_valid_sync [2:0];
 
     always_ff @(posedge tck_i or negedge ntrst_i) begin
         if (!ntrst_i) begin
@@ -565,6 +578,18 @@ module kv32_dtm #(
             data0_result_valid_sync[0] <= 1'b0;
             data0_result_valid_sync[1] <= 1'b0;
             data0_result_valid_sync[2] <= 1'b0;
+            sbdata0_result_sync[0] <= 32'b0;
+            sbdata0_result_sync[1] <= 32'b0;
+            sbdata0_result_sync[2] <= 32'b0;
+            sbdata0_result_valid_sync[0] <= 1'b0;
+            sbdata0_result_valid_sync[1] <= 1'b0;
+            sbdata0_result_valid_sync[2] <= 1'b0;
+            sbaddress0_result_sync[0] <= 32'b0;
+            sbaddress0_result_sync[1] <= 32'b0;
+            sbaddress0_result_sync[2] <= 32'b0;
+            sbaddress0_result_valid_sync[0] <= 1'b0;
+            sbaddress0_result_valid_sync[1] <= 1'b0;
+            sbaddress0_result_valid_sync[2] <= 1'b0;
         end else begin
             abstractcs_cmderr_sync[0] <= abstractcs_cmderr_sys;
             abstractcs_cmderr_sync[1] <= abstractcs_cmderr_sync[0];
@@ -575,6 +600,19 @@ module kv32_dtm #(
             data0_result_valid_sync[0] <= data0_result_valid;
             data0_result_valid_sync[1] <= data0_result_valid_sync[0];
             data0_result_valid_sync[2] <= data0_result_valid_sync[1];
+            // SBA result sync chains (CLK→TCK)
+            sbdata0_result_sync[0] <= sbdata0_clk;
+            sbdata0_result_sync[1] <= sbdata0_result_sync[0];
+            sbdata0_result_sync[2] <= sbdata0_result_sync[1];
+            sbdata0_result_valid_sync[0] <= sbdata0_result_valid;
+            sbdata0_result_valid_sync[1] <= sbdata0_result_valid_sync[0];
+            sbdata0_result_valid_sync[2] <= sbdata0_result_valid_sync[1];
+            sbaddress0_result_sync[0] <= sbaddress0_clk;
+            sbaddress0_result_sync[1] <= sbaddress0_result_sync[0];
+            sbaddress0_result_sync[2] <= sbaddress0_result_sync[1];
+            sbaddress0_result_valid_sync[0] <= sbaddress0_result_valid;
+            sbaddress0_result_valid_sync[1] <= sbaddress0_result_valid_sync[0];
+            sbaddress0_result_valid_sync[2] <= sbaddress0_result_valid_sync[1];
         end
     end
 
@@ -629,6 +667,15 @@ module kv32_dtm #(
             if (abstractcs_cmderr_sync[2] != abstractcs_cmderr) begin
                 abstractcs_cmderr <= abstractcs_cmderr_sync[2];
                 `DEBUG1(("[DTM] Sync ABSTRACTCS cmderr = %0d", abstractcs_cmderr_sync[2]));
+            end
+            // Sync SBA results back from CLK domain (edge-detect rising valid)
+            if (sbdata0_result_valid_sync[2] && !sbdata0_result_valid_sync[1]) begin
+                sbdata0 <= sbdata0_result_sync[2];
+                `DEBUG1(("[DTM] Sync SBDATA0 result = 0x%h", sbdata0_result_sync[2]));
+            end
+            if (sbaddress0_result_valid_sync[2] && !sbaddress0_result_valid_sync[1]) begin
+                sbaddress0 <= sbaddress0_result_sync[2];
+                `DEBUG1(("[DTM] Sync SBADDRESS0 after autoincrement = 0x%h", sbaddress0_result_sync[2]));
             end
 
             // Process write operations (op == 2'b10)
@@ -776,6 +823,11 @@ module kv32_dtm #(
             sbcs_error_clr_r     <= 1'b0;
             sbcs_error_clr_latch <= 3'b0;
             sbcs_sbaccess_clk    <= SBA_ACCESS32;
+            // CLK-domain SBA registers
+            sbaddress0_clk         <= 32'b0;
+            sbdata0_clk            <= 32'b0;
+            sbdata0_result_valid   <= 1'b0;
+            sbaddress0_result_valid <= 1'b0;
         end else begin
             cmd_wr_toggle_sync <= {cmd_wr_toggle_sync[1:0], cmd_wr_toggle_tck};
             cmd_wr_toggle_r    <= cmd_wr_toggle_sync[2];
@@ -931,9 +983,18 @@ module kv32_dtm #(
                     // SBA: handle pending SBA read/write (independent of halt/abstract state)
                     if (!command_valid_sys || abstractcs_busy) begin
                         if (sba_rd_toggle_sync[2] != sba_rd_toggle_r && !mem_req_pending) begin
+                            // Sample TCK-domain address into CLK-domain register (safe: toggle has synced)
+                            sbaddress0_clk          <= sbaddress0;
+                            sbdata0_result_valid    <= 1'b0;
+                            sbaddress0_result_valid <= 1'b0;
                             cmd_state    <= CMD_SBA_READ;
                             sba_wait_cnt <= 4'b0;
                         end else if (sba_wr_toggle_sync[2] != sba_wr_toggle_r && !mem_req_pending) begin
+                            // Sample TCK-domain address and data into CLK-domain registers
+                            sbaddress0_clk          <= sbaddress0;
+                            sbdata0_clk             <= sbdata0;
+                            sbdata0_result_valid    <= 1'b0;
+                            sbaddress0_result_valid <= 1'b0;
                             cmd_state    <= CMD_SBA_WRITE;
                             sba_wait_cnt <= 4'b0;
                         end
@@ -1080,20 +1141,25 @@ module kv32_dtm #(
                             sbcs_error <= 3'd4;
                             cmd_state  <= CMD_IDLE;
                         end else begin
-                            // Issue SBA memory read
+                            // Issue SBA memory read using CLK-domain address
                             dbg_mem_req_o   <= 1'b1;
-                            dbg_mem_addr_o  <= sbaddress0;
+                            dbg_mem_addr_o  <= sbaddress0_clk;
                             dbg_mem_we_o    <= 4'b0;
                             mem_req_pending <= 1'b1;
                             sba_wait_cnt    <= 4'b0;
                         end
                     end else if (dbg_mem_ready_i) begin
-                        sbdata0         <= dbg_mem_rdata_i;
+                        // Store result in CLK-domain register and signal TCK to sync
+                        sbdata0_clk          <= dbg_mem_rdata_i;
+                        sbdata0_result_valid <= 1'b1;
                         dbg_mem_req_o   <= 1'b0;
                         mem_req_pending <= 1'b0;
-                        if (sbcs_autoincrement) sbaddress0 <= sbaddress0 + 4;
+                        if (sbcs_autoincrement) begin
+                            sbaddress0_clk           <= sbaddress0_clk + 4;
+                            sbaddress0_result_valid  <= 1'b1;
+                        end
                         cmd_state <= CMD_IDLE;
-                        `DEBUG1(("[DTM] SBA Read [0x%h] = 0x%h", sbaddress0, dbg_mem_rdata_i));
+                        `DEBUG1(("[DTM] SBA Read [0x%h] = 0x%h", sbaddress0_clk, dbg_mem_rdata_i));
                     end else begin
                         sba_wait_cnt <= sba_wait_cnt + 1;
                         if (sba_wait_cnt == 4'b1111) begin
@@ -1113,10 +1179,10 @@ module kv32_dtm #(
                             sbcs_error <= 3'd4;
                             cmd_state  <= CMD_IDLE;
                         end else begin
-                            // Issue SBA memory write
+                            // Issue SBA memory write using CLK-domain address and data
                             dbg_mem_req_o   <= 1'b1;
-                            dbg_mem_addr_o  <= sbaddress0;
-                            dbg_mem_wdata_o <= sbdata0;
+                            dbg_mem_addr_o  <= sbaddress0_clk;
+                            dbg_mem_wdata_o <= sbdata0_clk;
                             dbg_mem_we_o    <= 4'b1111;
                             mem_req_pending <= 1'b1;
                             sba_wait_cnt    <= 4'b0;
@@ -1124,9 +1190,12 @@ module kv32_dtm #(
                     end else if (dbg_mem_ready_i) begin
                         dbg_mem_req_o   <= 1'b0;
                         mem_req_pending <= 1'b0;
-                        if (sbcs_autoincrement) sbaddress0 <= sbaddress0 + 4;
+                        if (sbcs_autoincrement) begin
+                            sbaddress0_clk          <= sbaddress0_clk + 4;
+                            sbaddress0_result_valid <= 1'b1;
+                        end
                         cmd_state <= CMD_IDLE;
-                        `DEBUG1(("[DTM] SBA Write [0x%h] = 0x%h", sbaddress0, sbdata0));
+                        `DEBUG1(("[DTM] SBA Write [0x%h] = 0x%h", sbaddress0_clk, sbdata0_clk));
                     end else begin
                         sba_wait_cnt <= sba_wait_cnt + 1;
                         if (sba_wait_cnt == 4'b1111) begin
@@ -1203,3 +1272,4 @@ module kv32_dtm #(
         halted_sync, halted_sync_r};  // TCK-domain synced versions; system domain uses halted_sync_clk
 
 endmodule
+

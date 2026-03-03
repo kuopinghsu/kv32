@@ -61,7 +61,6 @@ SV_KEYWORDS = frozenset("""
     MEM_READ_LATENCY MEM_WRITE_LATENCY MEM_DUAL_PORT
 """.split())
 
-
 def strip_comments_and_strings(line: str) -> str:
     """Remove // line comments and string literals from a line."""
     # Remove string literals
@@ -72,19 +71,53 @@ def strip_comments_and_strings(line: str) -> str:
         line = line[:idx]
     return line
 
+def prepare_for_decl_scan(line: str) -> str:
+    """
+    Prepare a line for declaration scanning by removing constructs that
+    would cause false positives:
+      - System tasks/functions like $time, $display → removed so 'time' isn't
+        matched as the 'time' type keyword
+      - Type casts like int'(...), logic'(...) → the type name is removed so it
+        isn't treated as a declaration keyword
+      - Non-blocking / relational assignment operators (<=, >=, ==, !=)
+        are neutralised so we can split at '=' to get the LHS only
+      - Bit literals like 1'b0, 8'hFF → removed so 'b0', 'hFF', etc. are not
+        extracted as identifiers
+    Returns a string suitable for extracting declared names only.
+    """
+    s = line
+    # Strip system tasks/functions: $word
+    s = re.sub(r'\$\w+', '', s)
+    # Strip bit literals: <digits>'<radix_char><digits/letters>
+    s = re.sub(r"\d+\s*'[shbodSHBOD][0-9xzXZa-fA-F_]*", '', s)
+    # Strip type casts: word'( → remove the word so 'int'(' becomes '('
+    s = re.sub(r"\b\w+\s*'(?=\s*\()", '', s)
+    # Neutralise compound operators so they aren't split as '='
+    s = s.replace('<=', '##').replace('>=', '##').replace('==', '##').replace('!=', '##')
+    # Now split at the first bare '=' and take only the LHS; this stops
+    # RHS initialiser expressions from polluting the declared-name set.
+    s = s.split('=')[0]
+    return s
 
 def parse_module_ports(header_lines: list) -> set:
     """
-    Extract port names from the ANSI module header
+    Extract port names AND parameter names from the ANSI module header
     (between 'module name (' and the first ');').
     These count as declared at line 0 (module header).
     """
     ports = set()
     combined = ' '.join(header_lines)
-    # Find the port list: #(...) for params, then (...)
-    # Strip parameter list
-    combined = re.sub(r'#\s*\(.*?\)', '', combined, flags=re.DOTALL)
-    m = re.search(r'\((.*?)\)', combined, re.DOTALL)
+    # Extract parameter names from #(...)
+    m_params = re.search(r'#\s*\((.*?)\)', combined, re.DOTALL)
+    if m_params:
+        param_body = m_params.group(1)
+        for tok in IDENT.finditer(param_body):
+            name = tok.group(1)
+            if name not in SV_KEYWORDS:
+                ports.add(name)
+    # Strip parameter list to get port-only body
+    combined_no_params = re.sub(r'#\s*\(.*?\)', '', combined, flags=re.DOTALL)
+    m = re.search(r'\((.*?)\)', combined_no_params, re.DOTALL)
     if not m:
         return ports
     port_body = m.group(1)
@@ -94,7 +127,6 @@ def parse_module_ports(header_lines: list) -> set:
         if name not in SV_KEYWORDS:
             ports.add(name)
     return ports
-
 
 def check_file(path: str) -> list:
     """
@@ -159,14 +191,16 @@ def check_file(path: str) -> list:
 
             # ── Detect declarations ──────────────────────────────────────
             if DECL_KW.search(clean):
-                # Extract identifiers after declaration keyword(s)
-                # Strategy: tokenise; once we see a decl keyword, the next
-                # non-keyword identifier is the signal name.
-                # Handle comma-separated lists: 'logic a, b, c;'
-                # Strip type modifiers like [n:0], signed, unsigned, etc.
-                decl_line_str = re.sub(r'\[.*?\]', '', clean)   # remove dimensions
+                # Use the sanitised LHS-only string to extract declared names.
+                # This avoids false positives from:
+                #   - type casts like int'(expr)
+                #   - bit literals like 1'b0 → 'b0' identifier
+                #   - RHS initialiser expressions (wire foo = expr)
+                decl_scan_str = prepare_for_decl_scan(clean)
+                # Strip array dimensions to avoid false positives from ranges
+                decl_scan_str = re.sub(r'\[.*?\]', '', decl_scan_str)
                 in_decl = False
-                for tok in IDENT.finditer(decl_line_str):
+                for tok in IDENT.finditer(decl_scan_str):
                     name = tok.group(1)
                     if name in SV_KEYWORDS:
                         if DECL_KW.match(name):
@@ -182,7 +216,10 @@ def check_file(path: str) -> list:
 
             # ── Detect localparam / parameter names ─────────────────────
             if re.search(r'\b(localparam|parameter)\b', clean):
-                for tok in IDENT.finditer(clean):
+                # Use the sanitised LHS-only string to avoid RHS false positives
+                const_scan_str = prepare_for_decl_scan(clean)
+                const_scan_str = re.sub(r'\[.*?\]', '', const_scan_str)
+                for tok in IDENT.finditer(const_scan_str):
                     name = tok.group(1)
                     if name not in SV_KEYWORDS:
                         const_names.add(name)
@@ -195,7 +232,10 @@ def check_file(path: str) -> list:
                 const_names.add(m_def.group(1))
 
             # ── Record uses ──────────────────────────────────────────────
-            for tok in IDENT.finditer(clean):
+            # Strip system tasks/functions before scanning to avoid false
+            # positives like 'time' extracted from '$time'.
+            clean_for_uses = re.sub(r'\$\w+', '', clean)
+            for tok in IDENT.finditer(clean_for_uses):
                 name = tok.group(1)
                 if name in SV_KEYWORDS:
                     continue
@@ -217,7 +257,6 @@ def check_file(path: str) -> list:
         i = header_end
 
     return violations
-
 
 def main():
     import argparse
@@ -244,7 +283,6 @@ def main():
     elif not args.quiet:
         print('\nAll files clean.')
     sys.exit(0)
-
 
 if __name__ == '__main__':
     main()

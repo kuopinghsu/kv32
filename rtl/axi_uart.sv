@@ -158,6 +158,7 @@ module axi_uart #(
     // ========================================================================
     // RX FIFO
     // ========================================================================
+    logic [7:0]  rx_data;             // forward declaration (used in FIFO push below)
     logic [7:0]           rxf_mem  [0:FIFO_DEPTH-1];
     logic [FIFO_BITS-1:0] rxf_wr_ptr, rxf_rd_ptr;
     logic [FIFO_BITS:0]   rxf_count;
@@ -196,7 +197,7 @@ module axi_uart #(
     assign irq = |(ie_r & is_wire);
 
     // RX state machine output signals
-    logic [7:0] rx_data;
+    // rx_data: declared earlier as forward declaration
     logic       rx_valid;
 
     // ========================================================================
@@ -297,6 +298,7 @@ module axi_uart #(
 
     // Synchronize input
     logic uart_rx_sync1, uart_rx_sync2;
+    logic loopback_en;          // forward declaration (used in sync block below)
 
     // When loopback_en is set, feed uart_tx back into the RX synchronizer
     // so the receive path samples the core's own transmitted signal.
@@ -392,8 +394,7 @@ module axi_uart #(
     // RX FIFO pop: AXI read of offset 0x00 (advance pointer)
     assign rxf_pop = axi_arvalid && (axi_araddr[7:0] == 8'h00) && !rxf_empty;
 
-    // ── Loopback control ──────────────────────────────────────────────────────
-    logic loopback_en;
+    // loopback_en: declared earlier as forward declaration
 
     // ── Write Response + IE/CTRL registers ───────────────────────────────────
     always_ff @(posedge clk or negedge rst_n) begin
@@ -461,3 +462,4 @@ module axi_uart #(
                                 axi_wdata[31:8], axi_araddr[31:8]};
 
 endmodule
+

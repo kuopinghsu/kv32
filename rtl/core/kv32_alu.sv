@@ -27,6 +27,7 @@
 `ifdef SYNTHESIS
 import kv32_pkg::*;
 `endif
+
 module kv32_alu #(
     parameter FAST_MUL = 1, // 1=combinatorial multiply, 0=serial multiplier
     parameter FAST_DIV = 1  // 1=combinatorial divide, 0=serial divider
@@ -500,3 +501,4 @@ module kv32_alu #(
     assign _unused_clk = &{1'b0, clk, rst_n};
 
 endmodule
+

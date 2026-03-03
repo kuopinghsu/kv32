@@ -228,3 +228,4 @@ package kv32_pkg;
     } csr_addr_e;
 
 endpackage
+

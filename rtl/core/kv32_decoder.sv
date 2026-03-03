@@ -19,6 +19,7 @@
 `ifdef SYNTHESIS
 import kv32_pkg::*;
 `endif
+
 module kv32_decoder (
     input  logic [31:0] instr,
     input  logic        valid,
@@ -311,3 +312,4 @@ module kv32_decoder (
     end
 
 endmodule
+

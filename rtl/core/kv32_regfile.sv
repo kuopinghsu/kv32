@@ -70,3 +70,4 @@ module kv32_regfile (
     end
 
 endmodule
+
