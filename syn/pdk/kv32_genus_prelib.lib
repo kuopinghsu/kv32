@@ -1,0 +1,90 @@
+library(kv32_genus_prelib) {
+  delay_model : table_lookup;
+  time_unit : "1ns";
+  voltage_unit : "1V";
+  current_unit : "1mA";
+  pulling_resistance_unit : "1ohm";
+  capacitive_load_unit(1, pf);
+  leakage_power_unit : "1nW";
+
+  nom_process : 1.0;
+  nom_voltage : 0.7;
+  nom_temperature : 25.0;
+
+  lu_table_template(kv32_tt_1x1) {
+    variable_1 : input_net_transition;
+    variable_2 : total_output_net_capacitance;
+    index_1("0.01");
+    index_2("0.01");
+  }
+
+  cell(INVX1_KV32) {
+    area : 1.0;
+    cell_leakage_power : 0.0;
+
+    pin(A) {
+      direction : input;
+      capacitance : 0.001;
+      rise_capacitance : 0.001;
+      fall_capacitance : 0.001;
+    }
+
+    pin(Y) {
+      direction : output;
+      function : "!A";
+      max_capacitance : 10.0;
+
+      timing() {
+        related_pin : "A";
+        timing_sense : negative_unate;
+        cell_rise(kv32_tt_1x1) { values("0.01"); }
+        cell_fall(kv32_tt_1x1) { values("0.01"); }
+        rise_transition(kv32_tt_1x1) { values("0.01"); }
+        fall_transition(kv32_tt_1x1) { values("0.01"); }
+      }
+    }
+  }
+
+  cell(AND2X1_KV32) {
+    area : 1.0;
+    cell_leakage_power : 0.0;
+
+    pin(A) {
+      direction : input;
+      capacitance : 0.001;
+      rise_capacitance : 0.001;
+      fall_capacitance : 0.001;
+    }
+
+    pin(B) {
+      direction : input;
+      capacitance : 0.001;
+      rise_capacitance : 0.001;
+      fall_capacitance : 0.001;
+    }
+
+    pin(Y) {
+      direction : output;
+      function : "A & B";
+      max_capacitance : 10.0;
+
+      timing() {
+        related_pin : "A";
+        timing_sense : positive_unate;
+        cell_rise(kv32_tt_1x1) { values("0.01"); }
+        cell_fall(kv32_tt_1x1) { values("0.01"); }
+        rise_transition(kv32_tt_1x1) { values("0.01"); }
+        fall_transition(kv32_tt_1x1) { values("0.01"); }
+      }
+
+      timing() {
+        related_pin : "B";
+        timing_sense : positive_unate;
+        cell_rise(kv32_tt_1x1) { values("0.01"); }
+        cell_fall(kv32_tt_1x1) { values("0.01"); }
+        rise_transition(kv32_tt_1x1) { values("0.01"); }
+        fall_transition(kv32_tt_1x1) { values("0.01"); }
+      }
+    }
+  }
+}
