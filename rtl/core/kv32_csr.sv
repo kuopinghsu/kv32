@@ -239,10 +239,11 @@ module kv32_csr (
         endcase
     end
 
+    assign misa = 32'h4014_1101;        // RV32IMASU (A+I+M+S+U, matches rv32sim/spike)
+
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            mstatus   <= 32'h0000_0000;  // Match simulator reset state
-            misa      <= 32'h4014_1101;  // RV32IMASU (A+I+M+S+U, matches rv32sim/spike)
+            mstatus   <= 32'h0000_0000; // Match simulator reset state
             mie       <= 32'd0;
             mtvec_r   <= 32'd0;
             mscratch  <= 32'd0;

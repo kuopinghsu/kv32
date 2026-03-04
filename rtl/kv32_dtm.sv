@@ -807,67 +807,10 @@ module kv32_dtm #(
     // cmd_wr_toggle_tck declared above; toggles once per COMMAND write in TCK domain.
     // The 3-stage sync chain converts the toggle to a reliable edge in clk domain.
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            cmd_wr_toggle_sync <= 3'b0;
-            cmd_wr_toggle_r    <= 1'b0;
-            command_reg_sys    <= 32'b0;
-            data0_sys          <= 32'b0;
-            command_valid_sys  <= 1'b0;
-            sba_wr_toggle_sync <= 3'b0;
-            sba_wr_toggle_r    <= 1'b0;
-            sba_rd_toggle_sync <= 3'b0;
-            sba_rd_toggle_r    <= 1'b0;
-            sba_wait_cnt       <= 4'b0;
-            sbcs_error_clr_sync  <= 3'b0;
-            sbcs_error_clr_r     <= 1'b0;
-            sbcs_error_clr_latch <= 3'b0;
-            sbcs_sbaccess_clk    <= SBA_ACCESS32;
-            // CLK-domain SBA registers
-            sbaddress0_clk         <= 32'b0;
-            sbdata0_clk            <= 32'b0;
-            sbdata0_result_valid   <= 1'b0;
-            sbaddress0_result_valid <= 1'b0;
-        end else begin
-            cmd_wr_toggle_sync <= {cmd_wr_toggle_sync[1:0], cmd_wr_toggle_tck};
-            cmd_wr_toggle_r    <= cmd_wr_toggle_sync[2];
-
-            // Sync sbcs_sbaccess to CLK (stable before any SBA trigger toggle fires)
-            sbcs_sbaccess_clk    <= sbcs_sbaccess;
-
-            // sbcs_error W1C toggle-sync from TCK domain
-            sbcs_error_clr_sync  <= {sbcs_error_clr_sync[1:0], sbcs_error_clr_toggle_tck};
-            sbcs_error_clr_r     <= sbcs_error_clr_sync[2];
-            if (sbcs_error_clr_sync[2] != sbcs_error_clr_r) begin
-                sbcs_error_clr_latch <= sbcs_error_clr_tck;
-                sbcs_error           <= sbcs_error & ~sbcs_error_clr_tck;
-            end
-
-            // SBA write/read toggle syncs
-            sba_wr_toggle_sync <= {sba_wr_toggle_sync[1:0], sba_wr_toggle_tck};
-            sba_rd_toggle_sync <= {sba_rd_toggle_sync[1:0], sba_rd_toggle_tck};
-            sba_wr_toggle_r    <= sba_wr_toggle_sync[2];
-            sba_rd_toggle_r    <= sba_rd_toggle_sync[2];
-
-            if (cmd_wr_toggle_sync[2] != cmd_wr_toggle_r) begin
-                // New command edge from TCK domain - latch command & data
-                command_reg_sys   <= command_reg;
-                data0_sys         <= data0;
-                command_valid_sys <= 1'b1;
-                data0_result_valid <= 1'b0;
-                `DEBUG1(("[DTM] Toggle-sync: command latched = 0x%h", command_reg));
-            end else if (cmd_state == CMD_DONE ||
-                         (command_valid_sys && abstractcs_cmderr_sys != 3'b0)) begin
-                // Clear after FSM finishes or rejected the command (error set)
-                command_valid_sys <= 1'b0;
-            end
-        end
-    end
-
-    // ========================================================================
-    // Abstract Command Execution State Machine (System Clock Domain)
-    // ========================================================================
-    // This runs in the system clock domain to interact with the CPU
+    // Toggle-sync, W1C, and command-execution FSM are combined into one
+    // always_ff block so every CLK-domain signal has exactly one driver.
+    // Splitting across two always_ff blocks with overlapping non-blocking
+    // assignments is a Verilator multi-driver blind spot (see axi_clint.sv).
 
     // Decode command when written
     wire cmd_is_access_reg = (command_reg_sys[31:24] == CMD_ACCESS_REG);
@@ -888,20 +831,40 @@ module kv32_dtm #(
     logic [2:0]  mem_size;  // reserved for future cmdtype==2 implementation
     wire mem_write_cmd = command_reg_sys[16];
 
-    // Command execution logic
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            cmd_state <= CMD_IDLE;
-            abstractcs_busy <= 1'b0;
+            // Toggle-sync state
+            cmd_wr_toggle_sync   <= 3'b0;
+            cmd_wr_toggle_r      <= 1'b0;
+            command_reg_sys      <= 32'b0;
+            data0_sys            <= 32'b0;
+            command_valid_sys    <= 1'b0;
+            sba_wr_toggle_sync   <= 3'b0;
+            sba_wr_toggle_r      <= 1'b0;
+            sba_rd_toggle_sync   <= 3'b0;
+            sba_rd_toggle_r      <= 1'b0;
+            sba_wait_cnt         <= 4'b0;
+            sbcs_error_clr_sync  <= 3'b0;
+            sbcs_error_clr_r     <= 1'b0;
+            sbcs_error_clr_latch <= 3'b0;
+            sbcs_sbaccess_clk    <= SBA_ACCESS32;
+            // CLK-domain SBA registers
+            sbaddress0_clk          <= 32'b0;
+            sbdata0_clk             <= 32'b0;
+            sbdata0_result_valid    <= 1'b0;
+            sbaddress0_result_valid <= 1'b0;
+            // State machine
+            cmd_state             <= CMD_IDLE;
+            abstractcs_busy       <= 1'b0;
             abstractcs_cmderr_sys <= 3'b0;
-            data0_result <= 32'b0;
-            data0_result_valid <= 1'b0;
-            dbg_reg_we_o <= 1'b0;
-            dbg_pc_we_o <= 1'b0;
-            dbg_mem_req_o <= 1'b0;
-            dbg_mem_we_o <= 4'b0;
-            mem_req_pending <= 1'b0;
-            mem_wait_cnt <= 4'b0;
+            data0_result          <= 32'b0;
+            data0_result_valid    <= 1'b0;
+            dbg_reg_we_o          <= 1'b0;
+            dbg_pc_we_o           <= 1'b0;
+            dbg_mem_req_o         <= 1'b0;
+            dbg_mem_we_o          <= 4'b0;
+            mem_req_pending       <= 1'b0;
+            mem_wait_cnt          <= 4'b0;
             // Synthetic CSRs — CLK domain only
             dcsr_reg      <= 32'h40000003; // xdebugver=4 [31:28], prv=3 [1:0]
             dscratch0_reg <= 32'b0;
@@ -909,11 +872,55 @@ module kv32_dtm #(
             // sbcs_error — CLK domain only
             sbcs_error    <= 3'b0;
         end else begin
+            // ----------------------------------------------------------------
+            // Part 1: Unconditional synchronizer advances (always run)
+            // ----------------------------------------------------------------
+            cmd_wr_toggle_sync <= {cmd_wr_toggle_sync[1:0], cmd_wr_toggle_tck};
+            cmd_wr_toggle_r    <= cmd_wr_toggle_sync[2];
+
+            // Sync sbcs_sbaccess to CLK (stable before any SBA trigger toggle fires)
+            sbcs_sbaccess_clk    <= sbcs_sbaccess;
+
+            // sbcs_error W1C: priority LOWER than the state-machine error-set
+            // below (NBA ordering: state machine assignment later in source wins
+            // if both fire on the same cycle — a new bus error beats an old clear).
+            sbcs_error_clr_sync  <= {sbcs_error_clr_sync[1:0], sbcs_error_clr_toggle_tck};
+            sbcs_error_clr_r     <= sbcs_error_clr_sync[2];
+            if (sbcs_error_clr_sync[2] != sbcs_error_clr_r) begin
+                sbcs_error_clr_latch <= sbcs_error_clr_tck;
+                sbcs_error           <= sbcs_error & ~sbcs_error_clr_tck;
+            end
+
+            // SBA write/read toggle syncs
+            sba_wr_toggle_sync <= {sba_wr_toggle_sync[1:0], sba_wr_toggle_tck};
+            sba_rd_toggle_sync <= {sba_rd_toggle_sync[1:0], sba_rd_toggle_tck};
+            sba_wr_toggle_r    <= sba_wr_toggle_sync[2];
+            sba_rd_toggle_r    <= sba_rd_toggle_sync[2];
+
+            // ----------------------------------------------------------------
+            // Part 2: Command-write toggle edge detection
+            // ----------------------------------------------------------------
+            if (cmd_wr_toggle_sync[2] != cmd_wr_toggle_r) begin
+                // New command edge from TCK domain - latch command & data
+                command_reg_sys    <= command_reg;
+                data0_sys          <= data0;
+                command_valid_sys  <= 1'b1;
+                data0_result_valid <= 1'b0;
+                `DEBUG1(("[DTM] Toggle-sync: command latched = 0x%h", command_reg));
+            end else if (cmd_state == CMD_DONE ||
+                         (command_valid_sys && abstractcs_cmderr_sys != 3'b0)) begin
+                // Clear after FSM finishes or rejected (error set)
+                command_valid_sys <= 1'b0;
+            end
+
+            // ----------------------------------------------------------------
+            // Part 3: Abstract command FSM (defaults then case)
+            // ----------------------------------------------------------------
             cmd_state <= cmd_state_next;
 
             // Default: deassert control signals
             dbg_reg_we_o <= 1'b0;
-            dbg_pc_we_o <= 1'b0;
+            dbg_pc_we_o  <= 1'b0;
 
             case (cmd_state)
                 CMD_IDLE: begin

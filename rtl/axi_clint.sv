@@ -81,20 +81,46 @@ module axi_clint (
     logic [63:0] mtime;
     logic [63:0] mtimecmp;
 
-    // Timer counter
-    // In trace mode mtime advances once per retired instruction so that its
+    // Timer counter + AXI write update — single always_ff block so mtime has
+    // exactly one driver.  (Multiple always_ff blocks driving overlapping bits
+    // of the same variable via non-blocking assigns are a Verilator blind spot:
+    // whole-var vs part-select writes are not cross-checked for overlap.)
+    //
+    // Priority: AXI write > increment.  A firmware write to MTIME_OFFSET
+    // atomically replaces the relevant bytes on the same clock edge; the
+    // increment is suppressed for those bytes only on the write cycle.
+    //
+    // Trace-mode: mtime advances once per retired instruction so that its
     // value is independent of CPI and matches the software simulator exactly.
-    // Exception: when the core is sleeping (WFI clock-gated, core_sleep_i=1)
-    // no instructions retire, so we fall back to wall-clock ticking to allow
-    // the timer interrupt to fire and wake the core.
+    // Exception: when the core is sleeping (WFI; core_sleep_i=1) no
+    // instructions retire, so fall back to wall-clock ticking.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             mtime <= 64'd0;
         end else begin
+            // Default: increment mtime (gated in trace mode)
 `ifndef SYNTHESIS
             if (!trace_mode || retire_instr || core_sleep_i)
 `endif
                 mtime <= mtime + 64'd1;
+
+            // AXI write to MTIME takes priority over the increment for the
+            // written bytes.  Use axi_awaddr[15:0] directly so that
+            // write_addr_offset (declared later) is not referenced out-of-order.
+            if (axi_awvalid && axi_wvalid &&
+                axi_awaddr[15:0] == MTIME_OFFSET) begin
+                if (axi_wstrb[0]) mtime[7:0]   <= axi_wdata[7:0];
+                if (axi_wstrb[1]) mtime[15:8]  <= axi_wdata[15:8];
+                if (axi_wstrb[2]) mtime[23:16] <= axi_wdata[23:16];
+                if (axi_wstrb[3]) mtime[31:24] <= axi_wdata[31:24];
+            end
+            if (axi_awvalid && axi_wvalid &&
+                axi_awaddr[15:0] == MTIME_OFFSET + 16'd4) begin
+                if (axi_wstrb[0]) mtime[39:32] <= axi_wdata[7:0];
+                if (axi_wstrb[1]) mtime[47:40] <= axi_wdata[15:8];
+                if (axi_wstrb[2]) mtime[55:48] <= axi_wdata[23:16];
+                if (axi_wstrb[3]) mtime[63:56] <= axi_wdata[31:24];
+            end
         end
     end
 
@@ -252,16 +278,11 @@ module axi_clint (
                         if (axi_wstrb[3]) mtimecmp[63:56] <= axi_wdata[31:24];
                     end
                     MTIME_OFFSET: begin
-                        if (axi_wstrb[0]) mtime[7:0]   <= axi_wdata[7:0];
-                        if (axi_wstrb[1]) mtime[15:8]  <= axi_wdata[15:8];
-                        if (axi_wstrb[2]) mtime[23:16] <= axi_wdata[23:16];
-                        if (axi_wstrb[3]) mtime[31:24] <= axi_wdata[31:24];
+                        // mtime writes are handled in the mtime always_ff block above;
+                        // only the write response (bresp/bvalid) is handled here.
                     end
                     MTIME_OFFSET + 16'd4: begin
-                        if (axi_wstrb[0]) mtime[39:32] <= axi_wdata[7:0];
-                        if (axi_wstrb[1]) mtime[47:40] <= axi_wdata[15:8];
-                        if (axi_wstrb[2]) mtime[55:48] <= axi_wdata[23:16];
-                        if (axi_wstrb[3]) mtime[63:56] <= axi_wdata[31:24];
+                        // same as above
                     end
                     default: begin
                         // Ignore writes to undefined addresses
