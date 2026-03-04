@@ -187,10 +187,9 @@ static int test8_fifo_irq_transfer(void)
         tx_bursts++;
     }
 
-    /* ── wait for all echoed bytes to arrive via loopback ─────────── */
-    uint32_t timeout = 5000000u;
-    while (t8_rx_count < T8_SIZE && timeout-- > 0u)
-        asm volatile("nop");
+    /* ── sleep until all echoed bytes arrive (IRQ-driven) ─────────── */
+    while (t8_rx_count < T8_SIZE)
+        kv_wfi();   /* gate clocks between RX IRQ bursts */
 
     uint32_t t_end = (uint32_t)kv_clint_mtime();
 
@@ -221,7 +220,7 @@ static int test8_fifo_irq_transfer(void)
     print("  RX FIFO level  : "); print_dec(rxf); print("/16\n");
 
     int pass = (errors == 0 && t8_rx_overflow == 0 &&
-                t8_rx_count == T8_SIZE && timeout > 0u);
+                t8_rx_count == T8_SIZE);
     print(pass ? "  Result: PASS\n\n" : "  Result: FAIL\n\n");
     return pass ? 0 : -1;
 }

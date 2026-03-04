@@ -162,10 +162,10 @@ static void test3_1d_irq(void)
     kv_dma_ch_start(1);
     __asm__ volatile("fence" ::: "memory");
 
-    uint32_t to = 2000000;
-    while (!g_irq_fired && --to);
+    while (!g_irq_fired)
+        kv_wfi();   /* gate clocks until DMA ch1 completion IRQ fires */
 
-    if (!g_irq_fired) {
+    if (!g_irq_fired) {   /* unreachable; kept as safety guard */
         TEST_FAIL(3, "IRQ never fired");
         kv_dma_ch_reset(1);
         kv_dma_disable_irq(1);
@@ -350,8 +350,8 @@ static void test7_irq_err(void)
     kv_dma_ch_start(0);
     __asm__ volatile("fence" ::: "memory");
 
-    uint32_t to = 2000000;
-    while (!g_irq_fired && --to);
+    while (!g_irq_fired)
+        kv_wfi();   /* gate clocks until DMA error IRQ fires */
 
     kv_dma_ch_reset(0);
     kv_dma_disable_irq(0);

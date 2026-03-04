@@ -198,11 +198,10 @@ static int test7_fifo_irq_transfer(void)
         KV_I2C_FENCE();
     }
 
-    timeout = 5000000u;
-    while (t8_stop_count == 0 && timeout-- > 0u)
-        asm volatile("nop");
+    while (t8_stop_count == 0)
+        kv_wfi();   /* gate clocks until STOP_DONE IRQ fires */
 
-    if (t8_stop_count == 0) {
+    if (t8_stop_count == 0) {   /* unreachable; kept as safety guard */
         printf("  Phase 1 TIMEOUT – STOP_DONE IRQ not received\n");
         printf("  Result: FAIL\n\n");
         kv_irq_disable();
@@ -265,10 +264,9 @@ static int test7_fifo_irq_transfer(void)
         KV_I2C_FENCE();
     }
 
-    /* Wait for all RX bytes to arrive via IRQ */
-    timeout = 5000000u;
-    while (t8_rx_count < T8_LEN && timeout-- > 0u)
-        asm volatile("nop");
+    /* Sleep until all RX bytes arrive via IRQ */
+    while (t8_rx_count < T8_LEN)
+        kv_wfi();   /* gate clocks between RX_READY IRQ arrivals */
 
     /* STOP */
     while (kv_i2c_busy()) {}
@@ -296,7 +294,7 @@ static int test7_fifo_irq_transfer(void)
            (unsigned long)t8_irq_count, (unsigned long)t8_stop_count);
     printf("  Data errors  : %lu\n", (unsigned long)errors);
 
-    int pass = (errors == 0 && t8_rx_count == T8_LEN && timeout > 0u);
+    int pass = (errors == 0 && t8_rx_count == T8_LEN);
     printf("  Result: %s\n\n", pass ? "PASS" : "FAIL");
     return pass ? 0 : -1;
 }

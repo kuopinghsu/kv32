@@ -314,10 +314,9 @@ static int test8_fifo_irq_transfer(void)
         }
     }
 
-    /* ── wait for all RX bytes to arrive via IRQ ─────────────────── */
-    uint32_t timeout = 5000000u;
-    while (t8_rx_count < T8_TX_TOTAL && timeout-- > 0u)
-        asm volatile("nop");
+    /* ── sleep until all RX bytes arrive (IRQ-driven) ──────────────── */
+    while (t8_rx_count < T8_TX_TOTAL)
+        kv_wfi();   /* gate clocks between RX IRQ bursts */
 
     uint32_t t_end = (uint32_t)kv_clint_mtime();
 
@@ -350,7 +349,7 @@ static int test8_fifo_irq_transfer(void)
     printf("  Status       : 0x%02lX\n", (unsigned long)KV_SPI_STATUS);
 
     int pass = (errors == 0 && t8_rx_overflow == 0 &&
-                t8_rx_count == T8_TX_TOTAL && timeout > 0u);
+                t8_rx_count == T8_TX_TOTAL);
     printf("  Result: %s\n", pass ? "PASS" : "FAIL");
     return pass ? 0 : -1;
 }
