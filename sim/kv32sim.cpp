@@ -18,6 +18,7 @@
 #include <unordered_set>
 #include <vector>
 #include <unistd.h>
+#include <cctype>
 #include <csignal>
 #include <cstdio>
 #include <csignal>
@@ -135,7 +136,7 @@ KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
 
     // Initialize CSRs
     csr_mstatus = 0x00000000; // Start with cleared mstatus (spike behavior)
-    csr_misa = 0x40141101;    // RV32IMASU — A+I+M+S+U, matches spike default (M+S+U) configuration
+    csr_misa = 0x40141101;    // RV32IMASU default (no C); overridden by compute_misa() in main()
     csr_mie = 0;
     csr_mtvec = 0;
     csr_mscratch = 0;
@@ -466,8 +467,8 @@ void KV32Simulator::write_csr(uint32_t csr, uint32_t value) {
         csr_mscratch = value;
         break;
     case CSR_MEPC:
-        csr_mepc = value & ~3;
-        break; // Aligned to 4 bytes
+        csr_mepc = value & ~1u;  // RVC: 2-byte aligned; non-RVC would be ~3u
+        break;
     case CSR_MCAUSE:
         csr_mcause = value;
         break;
@@ -820,6 +821,244 @@ int32_t KV32Simulator::sign_extend(uint32_t value, int bits) {
     return value;
 }
 
+// ── Compressed-instruction expansion helpers ────────────────────────────────
+// Sign-extend a val of width `bits` to 32 bits.
+static inline int32_t c_sext(uint32_t val, int bits) {
+    uint32_t sign_bit = 1U << (bits - 1);
+    if (val & sign_bit)
+        return (int32_t)(val | (~((1U << bits) - 1)));
+    return (int32_t)val;
+}
+
+// Encode a JAL instruction: JAL rd, imm (imm is a signed PC-relative offset)
+static uint32_t encode_jal(uint32_t rd, int32_t imm) {
+    uint32_t u = (uint32_t)imm;
+    return (((u >> 20) & 1) << 31) |    // imm[20]
+           (((u >>  1) & 0x3FF) << 21) | // imm[10:1]
+           (((u >> 11) & 1) << 20) |    // imm[11]
+           (((u >> 12) & 0xFF) << 12) | // imm[19:12]
+           (rd << 7) | 0x6F;
+}
+
+// Encode a B-type branch: funct3, rs1, rs2, signed imm
+static uint32_t encode_branch(uint32_t funct3, uint32_t rs1, uint32_t rs2, int32_t imm) {
+    uint32_t u = (uint32_t)imm;
+    return (((u >> 12) & 1) << 31) |
+           (((u >>  5) & 0x3F) << 25) |
+           (rs2 << 20) | (rs1 << 15) | (funct3 << 12) |
+           (((u >>  1) & 0xF) << 8) |
+           (((u >> 11) & 1) << 7) |
+           0x63;
+}
+
+// Extract C.J / C.JAL / C.J offset (12-bit signed)
+static int32_t c_j_offset(uint16_t ci) {
+    return c_sext(
+        ((ci >> 1) & 0x800) | ((ci >> 7) & 0x10) | ((ci >> 1) & 0x300) |
+        ((ci << 2) & 0x400) | ((ci >> 1) & 0x40) | ((ci << 1) & 0x80) |
+        ((ci >> 2) & 0xE)  | ((ci << 3) & 0x20), 12);
+}
+
+// Extract C.BEQZ / C.BNEZ offset (9-bit signed)
+static int32_t c_b_offset(uint16_t ci) {
+    return c_sext(
+        ((ci >> 4) & 0x100) | ((ci >> 7) & 0x18) | ((ci << 1) & 0xC0) |
+        ((ci >> 2) & 0x6)  | ((ci << 3) & 0x20), 9);
+}
+
+// Expand a 16-bit compressed instruction to its 32-bit equivalent.
+// Returns 0 for illegal/unsupported encodings (caller must raise illegal-instruction).
+static uint32_t expand_compressed(uint16_t ci) {
+    uint32_t quad   = ci & 0x3;
+    uint32_t funct3 = (ci >> 13) & 0x7;
+
+    if (quad == 0) {
+        // Quadrant 0
+        uint32_t rd_p  = ((ci >> 2) & 0x7) + 8; // rd'/rs2' → x8–x15
+        uint32_t rs1_p = ((ci >> 7) & 0x7) + 8; // rs1'     → x8–x15
+
+        switch (funct3) {
+        case 0x0: { // C.ADDI4SPN → ADDI rd', x2, nzuimm
+            uint32_t nzuimm =
+                ((ci >> 7) & 0x30) | ((ci >> 1) & 0x3C0) |
+                ((ci >> 4) & 0x4)  | ((ci >> 2) & 0x8);
+            if (nzuimm == 0) return 0; // illegal
+            // ADDI rd', x2, nzuimm  (I-type, funct3=0, opcode=0x13)
+            return (nzuimm << 20) | (2 << 15) | (0 << 12) | (rd_p << 7) | 0x13;
+        }
+        case 0x2: { // C.LW → LW rd', offset(rs1')
+            uint32_t uimm =
+                ((ci >> 7) & 0x38) | ((ci >> 4) & 0x4) | ((ci << 1) & 0x40);
+            // LW rd', uimm(rs1')  (I-type, funct3=2, opcode=0x03)
+            return (uimm << 20) | (rs1_p << 15) | (2 << 12) | (rd_p << 7) | 0x03;
+        }
+        case 0x6: { // C.SW → SW rs2', offset(rs1')
+            uint32_t uimm =
+                ((ci >> 7) & 0x38) | ((ci >> 4) & 0x4) | ((ci << 1) & 0x40);
+            // SW rs2', uimm(rs1')  (S-type, funct3=2, opcode=0x23)
+            uint32_t imm11_5 = (uimm >> 5) & 0x7F;
+            uint32_t imm4_0  =  uimm & 0x1F;
+            return (imm11_5 << 25) | (rd_p << 20) | (rs1_p << 15) |
+                   (2 << 12) | (imm4_0 << 7) | 0x23;
+        }
+        default:
+            return 0; // FP / reserved
+        }
+    }
+
+    if (quad == 1) {
+        // Quadrant 1
+        uint32_t rd_rs1 = (ci >> 7) & 0x1F;
+
+        switch (funct3) {
+        case 0x0: { // C.NOP / C.ADDI → ADDI rd, rd, nzimm
+            int32_t nzimm = c_sext(((ci >> 7) & 0x20) | ((ci >> 2) & 0x1F), 6);
+            // ADDI rd, rd, nzimm  (I-type, funct3=0, opcode=0x13)
+            return ((uint32_t)(nzimm & 0xFFF) << 20) | (rd_rs1 << 15) |
+                   (0 << 12) | (rd_rs1 << 7) | 0x13;
+        }
+        case 0x1: { // C.JAL (RV32) → JAL x1, offset
+            int32_t imm = c_j_offset(ci);
+            return encode_jal(1, imm);
+        }
+        case 0x2: { // C.LI → ADDI rd, x0, imm  (rd=0 is a HINT → NOP)
+            int32_t imm = c_sext(((ci >> 7) & 0x20) | ((ci >> 2) & 0x1F), 6);
+            return ((uint32_t)(imm & 0xFFF) << 20) | (0 << 15) |
+                   (0 << 12) | (rd_rs1 << 7) | 0x13;
+        }
+        case 0x3: {
+            if (rd_rs1 == 2) { // C.ADDI16SP → ADDI x2, x2, nzimm
+                int32_t nzimm = c_sext(
+                    ((ci >> 3) & 0x200) | ((ci >> 2) & 0x10) | ((ci << 1) & 0x40) |
+                    ((ci << 4) & 0x180) | ((ci << 3) & 0x20), 10);
+                if (nzimm == 0) return 0; // illegal
+                return ((uint32_t)(nzimm & 0xFFF) << 20) | (2 << 15) |
+                       (0 << 12) | (2 << 7) | 0x13;
+            } else { // C.LUI → LUI rd, nzimm[17:12]  (rd=0 is RESERVED, treat as NOP)
+                int32_t nzimm6 = c_sext(((ci >> 7) & 0x20) | ((ci >> 2) & 0x1F), 6);
+                if (nzimm6 == 0) return 0; // illegal (nzimm must be non-zero)
+                uint32_t uimm20 = (uint32_t)(nzimm6) & 0xFFFFF; // upper 20 bits
+                return (uimm20 << 12) | (rd_rs1 << 7) | 0x37;
+            }
+        }
+        case 0x4: { // Arithmetic
+            uint32_t funct2   = (ci >> 10) & 0x3;
+            uint32_t rd_p     = ((ci >> 7) & 0x7) + 8;
+            uint32_t rs2_p    = ((ci >> 2) & 0x7) + 8;
+
+            switch (funct2) {
+            case 0x0: { // C.SRLI → SRLI rd', rd', shamt
+                uint32_t shamt = ((ci >> 7) & 0x20) | ((ci >> 2) & 0x1F);
+                // SRLI: funct7=0x00, funct3=5, opcode=0x13
+                return (0 << 25) | (shamt << 20) | (rd_p << 15) |
+                       (5 << 12) | (rd_p << 7) | 0x13;
+            }
+            case 0x1: { // C.SRAI → SRAI rd', rd', shamt
+                uint32_t shamt = ((ci >> 7) & 0x20) | ((ci >> 2) & 0x1F);
+                // SRAI: funct7=0x20, funct3=5, opcode=0x13
+                return (0x20 << 25) | (shamt << 20) | (rd_p << 15) |
+                       (5 << 12) | (rd_p << 7) | 0x13;
+            }
+            case 0x2: { // C.ANDI → ANDI rd', rd', imm
+                int32_t imm = c_sext(((ci >> 7) & 0x20) | ((ci >> 2) & 0x1F), 6);
+                return ((uint32_t)(imm & 0xFFF) << 20) | (rd_p << 15) |
+                       (7 << 12) | (rd_p << 7) | 0x13;
+            }
+            case 0x3: {
+                uint32_t f1      = (ci >> 12) & 0x1;
+                uint32_t f2_low  = (ci >> 5) & 0x3;
+                if (f1 == 0) {
+                    switch (f2_low) {
+                    case 0x0: // C.SUB → SUB rd', rd', rs2' (funct7=0x20)
+                        return (0x20 << 25) | (rs2_p << 20) | (rd_p << 15) |
+                               (0 << 12) | (rd_p << 7) | 0x33;
+                    case 0x1: // C.XOR → XOR rd', rd', rs2'
+                        return (0 << 25) | (rs2_p << 20) | (rd_p << 15) |
+                               (4 << 12) | (rd_p << 7) | 0x33;
+                    case 0x2: // C.OR → OR rd', rd', rs2'
+                        return (0 << 25) | (rs2_p << 20) | (rd_p << 15) |
+                               (6 << 12) | (rd_p << 7) | 0x33;
+                    case 0x3: // C.AND → AND rd', rd', rs2'
+                        return (0 << 25) | (rs2_p << 20) | (rd_p << 15) |
+                               (7 << 12) | (rd_p << 7) | 0x33;
+                    }
+                }
+                return 0; // f1=1: RV64-only (C.ADDW / C.SUBW)
+            }
+            }
+            return 0;
+        }
+        case 0x5: { // C.J → JAL x0, offset
+            int32_t imm = c_j_offset(ci);
+            return encode_jal(0, imm);
+        }
+        case 0x6: { // C.BEQZ → BEQ rs1', x0, offset
+            uint32_t rs1_p = ((ci >> 7) & 0x7) + 8;
+            int32_t imm = c_b_offset(ci);
+            return encode_branch(0, rs1_p, 0, imm);
+        }
+        case 0x7: { // C.BNEZ → BNE rs1', x0, offset
+            uint32_t rs1_p = ((ci >> 7) & 0x7) + 8;
+            int32_t imm = c_b_offset(ci);
+            return encode_branch(1, rs1_p, 0, imm);
+        }
+        }
+        return 0;
+    }
+
+    if (quad == 2) {
+        // Quadrant 2
+        uint32_t rd_rs1 = (ci >> 7) & 0x1F;
+        uint32_t rs2    = (ci >> 2) & 0x1F;
+
+        switch (funct3) {
+        case 0x0: { // C.SLLI → SLLI rd, rd, shamt  (rd=0 or shamt=0 are HINTs → NOP)
+            uint32_t shamt = ((ci >> 7) & 0x20) | ((ci >> 2) & 0x1F);
+            // SLLI: funct7=0, funct3=1, opcode=0x13
+            return (0 << 25) | (shamt << 20) | (rd_rs1 << 15) |
+                   (1 << 12) | (rd_rs1 << 7) | 0x13;
+        }
+        case 0x2: { // C.LWSP → LW rd, offset(x2)
+            uint32_t uimm = ((ci >> 7) & 0x20) | ((ci >> 2) & 0x1C) | ((ci << 4) & 0xC0);
+            if (rd_rs1 == 0) return 0; // illegal
+            return (uimm << 20) | (2 << 15) | (2 << 12) | (rd_rs1 << 7) | 0x03;
+        }
+        case 0x4: {
+            uint32_t f1 = (ci >> 12) & 0x1;
+            if (f1 == 0) {
+                if (rs2 == 0) { // C.JR → JALR x0, rs1, 0
+                    if (rd_rs1 == 0) return 0; // illegal
+                    return (0 << 20) | (rd_rs1 << 15) | (0 << 12) | (0 << 7) | 0x67;
+                } else { // C.MV → ADD rd, x0, rs2
+                    return (0 << 25) | (rs2 << 20) | (0 << 15) |
+                           (0 << 12) | (rd_rs1 << 7) | 0x33;
+                }
+            } else {
+                if (rd_rs1 == 0 && rs2 == 0) { // C.EBREAK
+                    return 0x00100073;
+                } else if (rs2 == 0) { // C.JALR → JALR x1, rs1, 0
+                    return (0 << 20) | (rd_rs1 << 15) | (0 << 12) | (1 << 7) | 0x67;
+                } else { // C.ADD → ADD rd, rd, rs2
+                    return (0 << 25) | (rs2 << 20) | (rd_rs1 << 15) |
+                           (0 << 12) | (rd_rs1 << 7) | 0x33;
+                }
+            }
+        }
+        case 0x6: { // C.SWSP → SW rs2, offset(x2)
+            uint32_t uimm = ((ci >> 7) & 0x3C) | ((ci >> 1) & 0xC0);
+            uint32_t imm11_5 = (uimm >> 5) & 0x7F;
+            uint32_t imm4_0  =  uimm & 0x1F;
+            return (imm11_5 << 25) | (rs2 << 20) | (2 << 15) |
+                   (2 << 12) | (imm4_0 << 7) | 0x23;
+        }
+        default:
+            return 0; // FP / reserved
+        }
+    }
+
+    return 0; // quad==3: 32-bit instruction, should not be called
+}
+
 // Execute one instruction
 void KV32Simulator::step() {
     if (!running)
@@ -846,16 +1085,62 @@ void KV32Simulator::step() {
     // the device state after the *previous* instruction retired.
     tick_slaves();
 
-    uint32_t inst = read_mem(pc, 4, true);
-    uint32_t exec_pc = pc; // Save PC for logging
+    // ── Instruction fetch (supports RVC 16-bit and 32-bit) ─────────────────
+    // All bus devices support 4-byte aligned reads.  We always issue a
+    // word-aligned fetch; for a PC that is 2-byte but not 4-byte aligned we
+    // may need a second aligned fetch to get the upper halfword.
+    uint32_t aligned_pc = pc & ~3u;
+    uint32_t fetch_w0   = read_mem(aligned_pc, 4, true);
+    uint32_t exec_pc    = pc; // Save PC for logging
 
-    // Instruction fetch fault (e.g. fetch from unmapped address) — abort before decode.
-    // Like illegal instruction: the insn is not retired; undo counter/mtime increments.
     if (exception_occurred) {
         untick_slaves();
         inst_count--; csr_mcycle--; csr_minstret--;
         pc = exception_pc;
         return;
+    }
+
+    // Extract the 16-bit lower half at the actual PC.
+    uint32_t pc_off  = pc & 2u;          // 0 or 2
+    uint16_t inst_lo = (uint16_t)(fetch_w0 >> (pc_off * 8));
+
+    bool     is_compressed = (inst_lo & 0x3) != 0x3;
+    uint32_t inst_size     = is_compressed ? 2u : 4u;
+    uint32_t orig_inst;  // Raw encoding used for trace log
+    uint32_t inst;       // Instruction to decode (expanded to 32-bit if RVC)
+
+    if (is_compressed) {
+        orig_inst         = inst_lo;
+        uint32_t expanded = expand_compressed(inst_lo);
+        if (expanded == 0) {
+            // Illegal compressed instruction
+            std::cerr << "Illegal compressed instruction: 0x" << std::hex
+                      << inst_lo << " at PC 0x" << pc << std::endl;
+            take_trap(CAUSE_ILLEGAL_INSTRUCTION, inst_lo);
+            untick_slaves();
+            inst_count--; csr_mcycle--; csr_minstret--;
+            return;
+        }
+        inst = expanded;
+    } else {
+        // 32-bit instruction: may span two aligned words if pc is +2 offset.
+        uint32_t inst32;
+        if (pc_off == 0) {
+            // Fully contained in the first aligned word.
+            inst32 = fetch_w0;
+        } else {
+            // Upper halfword is in the next aligned word.
+            uint32_t fetch_w1 = read_mem(aligned_pc + 4, 4, true);
+            if (exception_occurred) {
+                untick_slaves();
+                inst_count--; csr_mcycle--; csr_minstret--;
+                pc = exception_pc;
+                return;
+            }
+            inst32 = (fetch_w0 >> 16) | (fetch_w1 << 16);
+        }
+        orig_inst = inst32;
+        inst      = inst32;
     }
 
     uint32_t opcode = inst & 0x7F;
@@ -865,7 +1150,7 @@ void KV32Simulator::step() {
     uint32_t rs2 = (inst >> 20) & 0x1F;
     uint32_t funct7 = (inst >> 25) & 0x7F;
 
-    uint32_t next_pc = pc + 4;
+    uint32_t next_pc = pc + inst_size;
     inst_count++;
     // In the software simulator every instruction counts as exactly one "cycle".
     // Both counters are always equal here, which matches the RTL trace_mode=1
@@ -910,12 +1195,12 @@ void KV32Simulator::step() {
             ((inst >> 31) << 20) | (((inst >> 12) & 0xFF) << 12) |
                 (((inst >> 20) & 0x1) << 11) | (((inst >> 21) & 0x3FF) << 1),
             21);
-        uint32_t link = pc + 4;
+        uint32_t link = pc + inst_size;
         next_pc = pc + imm;
         // Per spec: rd is written only if target is not misaligned
         // (misaligned target raises instruction-address-misaligned exception
         //  which must not commit the rd write)
-        if ((next_pc & 0x3) == 0) {
+        if ((next_pc & 0x1) == 0) {
             if (rd != 0) {
                 regs[rd] = link;
                 trace_rd = rd;
@@ -926,11 +1211,11 @@ void KV32Simulator::step() {
     }
     case 0x67: { // JALR
         int32_t imm = sign_extend((inst >> 20) & 0xFFF, 12);
-        uint32_t target = (regs[rs1] + imm) & ~1;
-        uint32_t link = pc + 4;
+        uint32_t target = (regs[rs1] + imm) & ~1u;
+        uint32_t link = pc + inst_size;
         next_pc = target;
         // Per spec: rd is written only if target is not misaligned
-        if ((next_pc & 0x3) == 0) {
+        if ((next_pc & 0x1) == 0) {
             if (rd != 0) {
                 regs[rd] = link;
                 trace_rd = rd;
@@ -1501,8 +1786,9 @@ void KV32Simulator::step() {
         // Faulting instructions are never logged — the trace only contains committed instructions.
         pc = exception_pc;
         exception_occurred = false;
-    } else if (next_pc & 0x3) {
+    } else if (next_pc & 0x1) {
         // Misaligned instruction-fetch (branch/jal taken to misaligned address)
+        // With RVC, 2-byte alignment is required; 1-byte (odd) alignment is always illegal.
         uint32_t mie_bit = (csr_mstatus >> 3) & 1;
         csr_mstatus = (csr_mstatus & ~0x1888) | (mie_bit << 7) | (3 << 11);
         write_csr(CSR_MCAUSE, 0);
@@ -1512,7 +1798,7 @@ void KV32Simulator::step() {
         pc = mtvec & ~0x3;
     } else {
         // Normal retirement: log trace entry and advance PC
-        log_commit(exec_pc, inst, trace_rd, trace_rd_val, trace_has_mem,
+        log_commit(exec_pc, orig_inst, trace_rd, trace_rd_val, trace_has_mem,
                        trace_mem_addr, trace_mem_val, trace_is_store, trace_is_csr,
                        trace_csr_num);
         pc = next_pc;
@@ -1720,12 +2006,34 @@ void KV32Simulator::run() {
     write_signature();
 }
 
+// Compute the MISA value from an ISA string such as "rv32ima" or "rv32imac_zicsr".
+// Always sets MXL=1 (RV32) plus S and U mode support.
+// Extension letters (a-z) between the "rv32" prefix and the first '_' are mapped
+// directly to MISA bits: bit = letter - 'a'.
+static uint32_t compute_misa(const char *isa) {
+    uint32_t misa = (1u << 30);             // MXL=1 → RV32
+    misa |= (1u << 20) | (1u << 18);       // U-mode (bit 20), S-mode (bit 18)
+
+    // Skip optional "rv32" prefix
+    const char *p = isa;
+    if (strncmp(p, "rv32", 4) == 0) p += 4;
+
+    // Consume single-letter extension characters until '_' or NUL
+    while (*p && *p != '_') {
+        char c = (char)tolower((unsigned char)*p);
+        if (c >= 'a' && c <= 'z')
+            misa |= (1u << (c - 'a'));
+        p++;
+    }
+    return misa;
+}
+
 void print_usage(const char *prog) {
     std::cerr << "Usage: " << prog << " [options] <elf_file>" << std::endl;
     std::cerr << "Options:" << std::endl;
-    std::cerr << "  --isa=<name>         Specify ISA (default: rv32ima_zicsr)"
+    std::cerr << "  --isa=<name>         Specify ISA (default: rv32imac)"
               << std::endl;
-    std::cerr << "                       Supported: rv32ima, rv32ima_zicsr"
+    std::cerr << "                       Supported: rv32ima, rv32imac, rv32ima_zicsr, rv32imac_zicsr"
               << std::endl;
     std::cerr
         << "  --trace              Enable Spike-format trace logging (alias "
@@ -1799,12 +2107,14 @@ int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], "--isa=", 6) == 0) {
             isa_name = argv[i] + 6;
-            // Accept rv32ima or rv32ima_zicsr
-            if (strcmp(isa_name, "rv32ima") != 0 &&
-                strcmp(isa_name, "rv32ima_zicsr") != 0) {
+            // Accept rv32ima, rv32imac, or rv32ima_zicsr variants
+            if (strcmp(isa_name, "rv32ima")         != 0 &&
+                strcmp(isa_name, "rv32imac")        != 0 &&
+                strcmp(isa_name, "rv32ima_zicsr")   != 0 &&
+                strcmp(isa_name, "rv32imac_zicsr")  != 0) {
                 std::cerr << "Error: Unsupported ISA '" << isa_name << "'"
                           << std::endl;
-                std::cerr << "Supported ISAs: rv32ima, rv32ima_zicsr"
+                std::cerr << "Supported ISAs: rv32ima, rv32imac, rv32ima_zicsr, rv32imac_zicsr"
                           << std::endl;
                 return 1;
             }
@@ -1888,7 +2198,7 @@ int main(int argc, char *argv[]) {
     // Setup SIGINT handler
     std::signal(SIGINT, handle_sigint);
 
-    std::cout << "=== RV32IMAC Software Simulator ===" << std::endl;
+    std::cout << "=== RV32IMAC (Compressed) Software Simulator ===" << std::endl;
     if (trace_enabled) {
         std::cout << "Trace: enabled -> " << log_file << std::endl;
     }
@@ -1904,6 +2214,9 @@ int main(int argc, char *argv[]) {
 
     KV32Simulator sim(mem_base, mem_size);
     g_sim_instance = &sim;
+
+    // Override misa to match the requested ISA (sets the C bit for rv32imac, etc.)
+    sim.csr_misa = compute_misa(isa_name);
 
     if (trace_enabled) {
         sim.enable_trace(log_file, rtl_trace_format);

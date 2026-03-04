@@ -83,6 +83,27 @@
 **Priority: LOW** — Broad verification; high effort, no prerequisite blockers.
 - [ ] Evaluate and run the Google RISC-V DV random instruction test suite against the kv32 RTL.
 
+### 7. Compressed Instruction Support (RVC / Zca)
+**Priority: MEDIUM** — Reduces code size by ~25%; required for GCC `-march=rv32imac` and Zephyr default builds.
+- [ ] Implement 16-bit instruction decode in `rtl/core/kv32_decoder.sv`: detect `inst[1:0] != 2'b11`, expand to 32-bit equivalent before the existing decode tree.
+- [ ] Handle fetch alignment in `rtl/core/kv32_ib.sv`: a 32-bit fetch word may contain two 16-bit instructions or a 16-bit + 32-bit split across a fetch boundary; update the instruction buffer to pack/unpack correctly.
+- [ ] Update the PC logic in `rtl/core/kv32_core.sv` to advance by 2 bytes for 16-bit instructions.
+- [ ] Update the I-cache (`rtl/kv32_icache.sv`) and instruction-fetch path to handle 16-bit-aligned accesses at cache-line boundaries.
+- [x] Extend the software simulator (`sim/kv32sim.cpp`, `sim/riscv-dis.cpp`) with RVC decode and execution.
+- [ ] Extend the Spike plugins (if needed) and update `-march` / `-mabi` flags in `sw/common/Makefile`.
+- [ ] Add `sw/rvc/` test: exercises all major RVC instruction groups (CI, CR, CL, CS, CB, CJ) and verifies correct execution and PC tracking.
+- [ ] Update `docs/pipeline_architecture.md` and `docs/kv32_soc_datasheet.adoc` with compressed-ISA support.
+- [ ] Update ISA string in `kv32_dtm.sv` IDCODE, `misa` CSR, and Makefile `-march` flags from `rv32ima` → `rv32imac`.
+
+### 8. RISC-V Architectural Tests (riscv-arch-test)
+**Priority: MEDIUM** — Formal compliance baseline; catches corner cases missed by custom tests.
+- [ ] Integrate the upstream `riscv-arch-test` suite (already present under `verif/riscv-arch-test/`) with the kv32 RTL simulation flow.
+- [ ] Add a `riscof` target configuration under `verif/riscof_targets/kv32/` (plugin `riscof_kv32.py`): invoke the Verilator simulation, capture the signature region, compare against the reference model.
+- [ ] Add `make arch-test` Makefile target: runs `riscof run` for the `rv32i`, `rv32im`, `rv32ima` (and eventually `rv32imac`) test suites; reports pass/fail count.
+- [ ] Fix any failures exposed by the suite (mismatches in edge-case ALU, CSR, exception, or memory-access behavior).
+- [ ] Add the arch-test run to the GitHub CI workflow (item #5) as a required check.
+- [ ] Document setup in `verif/riscof_targets/README.md`: Python environment, `riscof` version, reference model (Spike), and expected runtime.
+
 ---
 
 ## Completed
