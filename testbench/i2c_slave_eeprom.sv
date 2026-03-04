@@ -19,14 +19,16 @@
 // ============================================================================
 
 module i2c_slave_eeprom #(
-    parameter DEVICE_ADDR = 7'h50  // 7-bit I2C address
+    parameter DEVICE_ADDR    = 7'h50, // 7-bit I2C address
+    parameter integer STRETCH_CYCLES = 0  // Clock-stretch duration per ACK (0=disabled)
 )(
     input  logic clk,      // System clock for proper edge detection
     input  logic rst_n,
     input  logic scl,
     input  logic sda_in,
     output logic sda_out,
-    output logic sda_oe    // Output enable (1=drive low, 0=release/high-Z)
+    output logic sda_oe,   // SDA output enable (1=drive low, 0=release/high-Z)
+    output logic scl_oe    // SCL output enable: 1=hold SCL low (clock-stretch)
 );
 
     // Memory
@@ -54,6 +56,11 @@ module i2c_slave_eeprom #(
     logic       rw_bit;
     logic       addr_match;
     logic       rd_addr_acked;  // Set after scl_rising in ACK_ADDR for reads
+
+    // Clock-stretch state
+    logic        stretching;    // 1 while SCL is being held low
+    logic [15:0] stretch_cnt;   // Countdown timer
+    assign scl_oe = stretching;
 
     // Previous SCL/SDA values sampled on every system clock for edge detection
     logic scl_prev, sda_prev;
@@ -96,7 +103,16 @@ module i2c_slave_eeprom #(
             rd_addr_acked <= 1'b0;
             sda_out       <= 1'b0;
             sda_oe        <= 1'b0;
+            stretching    <= 1'b0;
+            stretch_cnt   <= 16'h0;
         end else begin
+            // --- Clock-stretch countdown (runs every clock while stretching) ---
+            if (stretching) begin
+                if (stretch_cnt == 16'h0)
+                    stretching <= 1'b0;
+                else
+                    stretch_cnt <= stretch_cnt - 1;
+            end
             // START / STOP conditions take priority over data reception
             if (start_cond) begin
                 state         <= RECV_ADDR;
@@ -153,6 +169,11 @@ module i2c_slave_eeprom #(
                                     // First scl_falling: drive ACK (SDA low)
                                     sda_out <= 1'b0;
                                     sda_oe  <= 1'b1;
+                                    // Clock-stretch: hold SCL low while processing
+                                    if (STRETCH_CYCLES > 0) begin
+                                        stretching  <= 1'b1;
+                                        stretch_cnt <= 16'(STRETCH_CYCLES) - 1;
+                                    end
                                     `DEBUG2(`DBG_GRP_I2C, ("[SLAVE] ACK_ADDR: driving ACK, rw=%b, mem_addr=0x%02h", rw_bit, mem_addr));
                                 end else begin
                                     // Second scl_falling (read only): drive MSB, enter READ_DATA
@@ -168,7 +189,7 @@ module i2c_slave_eeprom #(
                                 state  <= IDLE;
                                 `DEBUG2(`DBG_GRP_I2C, ("[SLAVE] ACK_ADDR: NACK (no addr match), addr_match=%b", addr_match));
                             end
-                        end else if (scl_rising) begin
+                        end else if (scl_rising && !stretching) begin
                             // ACK bit sampled by master
                             if (addr_match) begin
                                 if (rw_bit == 1'b0) begin
@@ -208,7 +229,11 @@ module i2c_slave_eeprom #(
                         if (scl_falling) begin
                             sda_out <= 1'b0;
                             sda_oe  <= 1'b1;  // ACK
-                        end else if (scl_rising) begin
+                            if (STRETCH_CYCLES > 0) begin
+                                stretching  <= 1'b1;
+                                stretch_cnt <= 16'(STRETCH_CYCLES) - 1;
+                            end
+                        end else if (scl_rising && !stretching) begin
                             state     <= WRITE_DATA;
                             bit_count <= 3'h0;
                         end
@@ -240,7 +265,11 @@ module i2c_slave_eeprom #(
                         if (scl_falling) begin
                             sda_out <= 1'b0;
                             sda_oe  <= 1'b1;  // ACK
-                        end else if (scl_rising) begin
+                            if (STRETCH_CYCLES > 0) begin
+                                stretching  <= 1'b1;
+                                stretch_cnt <= 16'(STRETCH_CYCLES) - 1;
+                            end
+                        end else if (scl_rising && !stretching) begin
                             state     <= WRITE_DATA;
                             bit_count <= 3'h0;
                         end

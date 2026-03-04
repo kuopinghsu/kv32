@@ -70,7 +70,9 @@ COMPARE_EXCLUDE = full i2c uart spi dma gpio timer wfi
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
 # Tests to run under Spike (excludes tests not supported by Spike; override with SPIKE_TESTS=<list>)
-SPIKE_EXCLUDE = icache
+# icache: now supported – spike plugin_magic provides NCM load/store, and the
+# icache test uses WARN (not FAIL) for timing differences that Spike cannot model.
+SPIKE_EXCLUDE =
 SPIKE_TESTS  ?= $(filter-out $(SPIKE_EXCLUDE), $(TEST_NAMES))
 
 # Tests to run with sim-all: exclude Spike-incompatible tests when SIM=spike
@@ -202,6 +204,13 @@ else
   MEM_TB_SV = $(TB_DIR)/axi_memory.sv
 endif
 
+# I2C clock-stretch: STRETCH=N makes the slave hold SCL low for N cycles after
+# each byte ACK (exercises axi_i2c.sv's clock-stretch wait loop). Default=0.
+STRETCH ?= 20
+ifneq ($(STRETCH),0)
+  VERILATOR_FLAGS += +define+I2C_STRETCH_CYCLES=$(STRETCH)
+endif
+
 # I-cache defaults (set before ifdef blocks so ?= assignments take effect)
 ICACHE_EN    ?= 1
 ICACHE_SIZE  ?= 4096
@@ -236,7 +245,7 @@ DEBUG        ?=
 DEBUG_GROUP  ?=
 # Pass I-cache parameters to C++ testbench for stats reporting
 VERILATOR_FLAGS += -CFLAGS "-DICACHE_EN=$(ICACHE_EN) -DICACHE_SIZE=$(ICACHE_SIZE) -DICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) -DICACHE_WAYS=$(ICACHE_WAYS)"
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP) COVERAGE=$(COVERAGE) MEM_READ_LATENCY=$(MEM_READ_LATENCY) MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY) MEM_DUAL_PORT=$(MEM_DUAL_PORT) MEM_TYPE=$(MEM_TYPE)
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP) COVERAGE=$(COVERAGE) MEM_READ_LATENCY=$(MEM_READ_LATENCY) MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY) MEM_DUAL_PORT=$(MEM_DUAL_PORT) MEM_TYPE=$(MEM_TYPE) STRETCH=$(STRETCH)
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
 
 # SW params stamp: tracks CFLAGS defines passed to the RISC-V compiler.
@@ -551,7 +560,7 @@ SPIKE_EXTLIBS_LOCAL = $(patsubst $(BUILD_DIR)/%,--extlib=./%,$(SPIKE_PLUGINS))
 ifeq ($(SIM),spike)
 _SIM_PREREQ = build-spike-plugins
 define _SIM_RUN
-cd $(BUILD_DIR) && $(SPIKE) --isa=rv32ima_zicsr_zicntr $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $(1).elf 2>&1 || true
+cd $(BUILD_DIR) && $(SPIKE) --isa=rv32ima_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $(1).elf 2>&1 || true
 endef
 else
 _SIM_PREREQ =
@@ -582,7 +591,7 @@ spike-%: build-spike-plugins
 	@echo "=========================================="
 	@echo "Running test '$*' with Spike"
 	@echo "=========================================="
-	cd $(BUILD_DIR) && $(SPIKE) --isa=rv32ima_zicsr_zicntr $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $*.elf 2>&1
+	cd $(BUILD_DIR) && $(SPIKE) --isa=rv32ima_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $*.elf 2>&1
 	@echo ""
 ifeq ($(TRACE),1)
 	@echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"

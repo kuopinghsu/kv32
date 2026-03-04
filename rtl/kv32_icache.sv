@@ -188,7 +188,9 @@ module kv32_icache #(
     logic [1:0]  cmo_op_r;
     logic [31:0] resp_data_r;
     logic        resp_error_r;
-    logic        cache_enable; // 1 = normal, 0 = bypass
+    logic        cache_enable; // 1 = normal, 0 = bypass (CMO-controlled global flag)
+    logic        pma_cacheable; // PMA: req_addr_r[31]=1 → cacheable (RAM), 0 → non-cacheable
+    logic        use_cache;     // per-request decision = cache_enable & pma_cacheable
 
     // =========================================================================
     // Address decomposition (from registered request)
@@ -200,6 +202,13 @@ module kv32_icache #(
     assign req_tag      = req_addr_r[31 : 32-TAG_BITS];
     assign req_index    = req_addr_r[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS];
     assign req_word_off = req_addr_r[BYTE_OFFSET_BITS-1 : 2];
+
+    // PMA: bit[31]=1 → cacheable (RAM at 0x8000_0000+), 0 → non-cacheable (I/O, NCM)
+    // This implements the Physical Memory Attribute check for the I-cache.
+    // Non-cacheable regions (e.g. NCM at 0x4000_1000) always bypass the cache,
+    // regardless of the CMO-controlled cache_enable flag.
+    assign pma_cacheable = req_addr_r[31];
+    assign use_cache     = cache_enable & pma_cacheable;
 
     // Decomposition directly from the unregistered incoming request address.
     // Used to drive SRAM reads on the same cycle a request is accepted so the
@@ -290,7 +299,7 @@ module kv32_icache #(
 
     // Incoming address targets the same cache line currently being filled.
     logic fill_same_line;
-    assign fill_same_line = cache_enable && fill_active_r &&
+    assign fill_same_line = use_cache && fill_active_r &&
         (imem_req_addr_fill[31:BYTE_OFFSET_BITS] == req_addr_r[31:BYTE_OFFSET_BITS]);
 
     // The AXI beat for the incoming (not-yet-accepted) request is on the bus now.
@@ -355,7 +364,7 @@ module kv32_icache #(
             end
 
             S_LOOKUP: begin
-                if (cache_enable && cache_hit) begin
+                if (use_cache && cache_hit) begin
                     if (imem_resp_ready) begin
                         // Zero-stall hit: serve directly in S_LOOKUP, skip S_RESP.
                         if (cmo_valid)           next_state = S_CMO;
@@ -381,7 +390,7 @@ module kv32_icache #(
                     // drained in S_FILL_REST / S_RESP after the CPU is unblocked.
                     // Also catches: bypass (axi_rlast on only beat) and the
                     // degenerate single-word-per-line case.
-                    if (axi_rlast || (fill_word_cnt == '0 && cache_enable))
+                    if (axi_rlast || (fill_word_cnt == '0 && use_cache))
                         next_state = S_RESP;
                 end
             end
@@ -608,13 +617,13 @@ module kv32_icache #(
             resp_data_r  <= '0;
             resp_error_r <= 1'b0;
         end else begin
-            if (state == S_LOOKUP && cache_enable && cache_hit) begin
+            if (state == S_LOOKUP && use_cache && cache_hit) begin
                 resp_data_r  <= hit_data;
                 resp_error_r <= 1'b0;
             end
             if (state == S_MISS_R && axi_rvalid && axi_rready) begin
-                if (!cache_enable) begin
-                    // Bypass: single beat – capture unconditionally
+                if (!use_cache) begin
+                    // Bypass: single beat (PMA non-cacheable or CMO DISABLE) – capture unconditionally
                     resp_data_r  <= axi_rdata;
                     resp_error_r <= (axi_rresp != 2'b00);
                 end else if (fill_word_cnt == '0) begin
@@ -624,7 +633,7 @@ module kv32_icache #(
                     resp_error_r <= (axi_rresp != 2'b00) | fill_error;
                 end
                 // Always propagate accumulated fill errors on last beat
-                if (axi_rlast && cache_enable && fill_error)
+                if (axi_rlast && use_cache && fill_error)
                     resp_error_r <= 1'b1;
             end
         end
@@ -792,14 +801,14 @@ module kv32_icache #(
     assign tag_fill_commit = (state == S_MISS_R || state == S_FILL_REST ||
                               (state == S_RESP && fill_active_r))
                              && axi_rvalid && axi_rready
-                             && axi_rlast && cache_enable && !fill_error
+                             && axi_rlast && use_cache && !fill_error
                              && (axi_rresp == 2'b00);
 
     // Data fill write strobe (every received beat, all fill states)
     logic data_fill_we_s;
     assign data_fill_we_s = (state == S_MISS_R || state == S_FILL_REST ||
                               (state == S_RESP && fill_active_r))
-                            && axi_rvalid && axi_rready && cache_enable;
+                            && axi_rvalid && axi_rready && use_cache;
 
     generate
         for (genvar w = 0; w < CACHE_WAYS; w++) begin : g_sram_ctrl
@@ -880,10 +889,10 @@ module kv32_icache #(
 
     assign axi_arvalid = (state == S_MISS_AR);
     assign icache_idle = (state == S_IDLE);
-    assign axi_araddr  = cache_enable ? ar_addr_cache : ar_addr_bypass;
-    assign axi_arlen   = cache_enable ? 8'(WORDS_PER_LINE - 1) : 8'h00;
+    assign axi_araddr  = use_cache ? ar_addr_cache : ar_addr_bypass;
+    assign axi_arlen   = use_cache ? 8'(WORDS_PER_LINE - 1) : 8'h00;
     assign axi_arsize  = 3'b010;   // 4 bytes per beat
-    assign axi_arburst = cache_enable ? AXI_BURST_WRAP : AXI_BURST_INCR;
+    assign axi_arburst = use_cache ? AXI_BURST_WRAP : AXI_BURST_INCR;
     // axi_arcache/arprot: constant AXI4 hints; not forwarded by the arbiter.
 
     // Accept beats in S_MISS_R (before early restart) and S_FILL_REST /
@@ -918,7 +927,7 @@ module kv32_icache #(
                               fill_pend_can_accept) ||
                              // Fill-pending: accept during remaining burst drain
                              (state == S_FILL_REST && fill_pend_can_accept) ||
-                             (state == S_LOOKUP && cache_enable && cache_hit &&
+                             (state == S_LOOKUP && use_cache && cache_hit &&
                               imem_resp_ready && !cmo_valid);
     // In the zero-stall hit path the response is valid directly in S_LOOKUP,
     // driven combinatorially from the SRAM read-data (no S_RESP register needed).
@@ -926,17 +935,17 @@ module kv32_icache #(
     // (captured directly from the AXI bus, no SRAM read).
     // OPTIMIZATION: Direct forwarding from AXI bus when the exact beat arrives.
     assign imem_resp_valid = (state == S_RESP) ||
-                             (state == S_LOOKUP && cache_enable && cache_hit) ||
+                             (state == S_LOOKUP && use_cache && cache_hit) ||
                              (state == S_FILL_REST && fill_pend_resp_r) ||
                              fill_direct_forward;
-    assign imem_resp_data  = (state == S_LOOKUP && cache_enable && cache_hit)
+    assign imem_resp_data  = (state == S_LOOKUP && use_cache && cache_hit)
                              ? hit_data
                              : fill_direct_forward
                                ? axi_rdata  // Direct combinational path from AXI
                                : (state == S_FILL_REST && fill_pend_resp_r)
                                  ? fill_pend_data_r
                                  : resp_data_r;
-    assign imem_resp_error = (state == S_LOOKUP && cache_enable && cache_hit)
+    assign imem_resp_error = (state == S_LOOKUP && use_cache && cache_hit)
                              ? 1'b0
                              : fill_direct_forward
                                ? (axi_rresp != 2'b00)
@@ -959,13 +968,21 @@ module kv32_icache #(
     //
     // Invariant: perf_req_cnt == perf_hit_cnt + perf_miss_cnt + perf_bypass_cnt
     // =========================================================================
+`ifdef DEBUG
     always_ff @(posedge clk or negedge rst_n) begin
-        if (rst_n) begin
+        if (!rst_n) begin
+            // empty
+        end else begin
             if (imem_resp_valid && (state == S_FILL_REST || state == S_RESP)) begin
                 `DEBUG2(`DBG_GRP_ICACHE, ("RESP_OUT: state=%0d fill_active=%b fill_pend_resp=%b fill_pend_data=0x%h resp_data=0x%h axi_rdata=0x%h imem_resp_data=0x%h", state, fill_active_r, fill_pend_resp_r, fill_pend_data_r, resp_data_r, axi_rdata, imem_resp_data));
             end
+            // PMA bypass: log each fetch that bypasses the cache due to non-cacheable address
+            if (state == S_LOOKUP && !pma_cacheable) begin
+                `DEBUG2(`DBG_GRP_ICACHE, ("[ICACHE] PMA bypass: addr=0x%h bit31=0 \u2192 non-cacheable, issuing single INCR fetch", req_addr_r));
+            end
         end
     end
+`endif
 
 `ifndef SYNTHESIS
     always_ff @(posedge clk or negedge rst_n) begin
@@ -980,9 +997,9 @@ module kv32_icache #(
             // S_LOOKUP is exactly one cycle per accepted fetch request.
             if (state == S_LOOKUP) begin
                 perf_req_cnt <= perf_req_cnt + 32'd1;
-                if      ( cache_enable &&  cache_hit) perf_hit_cnt    <= perf_hit_cnt    + 32'd1;
-                else if ( cache_enable && !cache_hit) perf_miss_cnt   <= perf_miss_cnt   + 32'd1;
-                else                                  perf_bypass_cnt <= perf_bypass_cnt + 32'd1;
+                if      ( use_cache &&  cache_hit) perf_hit_cnt    <= perf_hit_cnt    + 32'd1;
+                else if ( use_cache && !cache_hit) perf_miss_cnt   <= perf_miss_cnt   + 32'd1;
+                else                               perf_bypass_cnt <= perf_bypass_cnt + 32'd1;
             end
             // Successful cache-line fill: tag_fill_commit fires in any fill state
             if (tag_fill_commit)
@@ -1036,7 +1053,7 @@ module kv32_icache #(
     property p_rlast_on_final_beat;
         @(posedge clk) disable iff (!rst_n)
         (state == S_MISS_R && axi_rvalid && axi_rready && axi_rlast) |->
-            (cache_enable
+            (use_cache
                 ? (fill_word_cnt == WORD_OFFSET_BITS'(WORDS_PER_LINE - 1))
                 : (fill_word_cnt == '0));
     endproperty

@@ -36,28 +36,49 @@
 // Device implementation
 // --------------------------------------------------------------------------
 class plugin_magic_t : public abstract_device_t {
+    // Non-Cacheable Memory (NCM): 512-byte (128×32-bit word) instruction RAM.
+    // Firmware writes machine-code words here via MMIO stores, then calls them
+    // via a function pointer.  In Spike all execution is functional/sequential,
+    // so instruction fetches from NCM go through load() identically to data
+    // loads – no special cycle-accurate bypass path is needed.
+    uint32_t ncm[128];
+
 public:
-    // Loads to EXIT_OFF or CONSOLE_OFF return 0; any other offset is a bus
-    // error (returns false → Spike raises load access-fault exception).
+    plugin_magic_t() { memset(ncm, 0, sizeof(ncm)); }
+
+    // Loads to EXIT_OFF or CONSOLE_OFF return 0.
+    // Loads to NCM range return the stored instruction/data word.
+    // Any other offset is a bus error (returns false → Spike raises
+    // load access-fault exception).
     bool load(reg_t addr, size_t len, uint8_t *bytes) override
     {
-        if (addr != KV_MAGIC_EXIT_OFF && addr != KV_MAGIC_CONSOLE_OFF)
-            return false;   // out-of-range: bus error
-        memset(bytes, 0, len);
-        return true;
+        if (addr == KV_MAGIC_EXIT_OFF || addr == KV_MAGIC_CONSOLE_OFF) {
+            memset(bytes, 0, len);
+            return true;
+        }
+        // NCM: offsets [KV_NCM_OFF, KV_NCM_OFF + KV_NCM_SIZE)
+        if (addr >= KV_NCM_OFF && addr < KV_NCM_OFF + KV_NCM_SIZE) {
+            reg_t off  = addr - KV_NCM_OFF;
+            // Copy requested bytes from the NCM byte image
+            for (size_t i = 0; i < len && (off + i) < KV_NCM_SIZE; i++) {
+                uint32_t word = ncm[(off + i) / 4];
+                bytes[i] = (word >> (((off + i) % 4) * 8)) & 0xFF;
+            }
+            return true;
+        }
+        return false;   // out-of-range: bus error
     }
 
     bool store(reg_t addr, size_t len, const uint8_t *bytes) override
     {
-        switch (addr) {
-        case KV_MAGIC_CONSOLE_OFF: {
+        if (addr == KV_MAGIC_CONSOLE_OFF) {
             // console output: print least-significant byte
             char ch = static_cast<char>(bytes[0]);
             fputc(ch, stdout);
             fflush(stdout);
             return true;
         }
-        case KV_MAGIC_EXIT_OFF: {
+        if (addr == KV_MAGIC_EXIT_OFF) {
             // Decode HTIF tohost encoding (matches kv32sim device.cpp and RTL):
             //   pass (code 0) → firmware writes 1
             //   fail (code N) → firmware writes (N << 1) | 1
@@ -70,9 +91,17 @@ public:
             int code = static_cast<int>((raw >> 1) & 0x7FFFFFFF);
             exit(code);
         }
-        default:
-            return false;   // out-of-range: bus error
+        // NCM: firmware writes machine-code words before calling via fptr
+        if (addr >= KV_NCM_OFF && addr < KV_NCM_OFF + KV_NCM_SIZE) {
+            reg_t off = addr - KV_NCM_OFF;
+            for (size_t i = 0; i < len && (off + i) < KV_NCM_SIZE; i++) {
+                uint32_t &word = ncm[(off + i) / 4];
+                int shift = ((off + i) % 4) * 8;
+                word = (word & ~(0xFFu << shift)) | ((uint32_t)bytes[i] << shift);
+            }
+            return true;
         }
+        return false;   // out-of-range: bus error
     }
 
     // Called by Spike once per RTC tick.
@@ -86,8 +115,8 @@ public:
 
     // KV_MAGIC_BASE(0x40000000) + KV_MAGIC_SIZE(0x10000) = 0x4001_0000.
     // reg_t is uint64_t, so no overflow occurs; Spike routes every rv32
-    // address in [0x40000000, 0x4000ffff] to this device.  Offsets other than
-    // CONSOLE_OFF and EXIT_OFF trigger a bus error.
+    // address in [0x40000000, 0x4000ffff] to this device.  The NCM occupies
+    // offsets 0x1000–0x11FF within this window.
     reg_t size() override { return (reg_t)KV_MAGIC_SIZE; }
 };
 

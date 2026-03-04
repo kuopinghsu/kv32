@@ -127,7 +127,7 @@ help:
 	@echo "kv32 unified synthesis flow"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make synth                         # default Yosys"
+	@echo "  make synth                        # default Yosys"
 	@echo "  make synth SYNTH_TOOL=genus       # Cadence Genus"
 	@echo "  make synth SYNTH_TOOL=dc          # Synopsys DC"
 	@echo "  make synth SYNTH_TOOL=yosys ACTIVE_CORNER=tt"

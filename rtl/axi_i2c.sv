@@ -97,6 +97,20 @@ module axi_i2c #(
     localparam IS_OFFSET    = 16'h0018;
     localparam CAP_OFFSET   = 16'h001C;
 
+    // I2C state machine
+    typedef enum logic [3:0] {
+        IDLE,
+        START,
+        ADDR,
+        WRITE,
+        READ,
+        ACK_CHECK,
+        ACK_SEND,
+        STOP
+    } i2c_state_t;
+
+    i2c_state_t state;
+
     // Register address space: offsets 0x0000–0x001C (8 word-aligned registers)
     // Accesses with byte-offset > CAP_OFFSET are out-of-range → AXI SLVERR (2'b10)
     wire wr_addr_valid = (axi_awaddr[15:0] <= CAP_OFFSET); // write address in range
@@ -212,19 +226,6 @@ module axi_i2c #(
     logic        busy;
     logic        ack_received;
 
-    // I2C state machine
-    typedef enum logic [3:0] {
-        IDLE,
-        START,
-        ADDR,
-        WRITE,
-        READ,
-        ACK_CHECK,
-        ACK_SEND,
-        STOP
-    } i2c_state_t;
-
-    i2c_state_t state;
     logic [3:0]  bit_counter;
     logic [7:0]  shift_reg;
     logic [1:0]  scl_phase;  // 0=low, 1=rising, 2=high, 3=falling

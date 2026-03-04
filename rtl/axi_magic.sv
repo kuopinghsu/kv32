@@ -60,6 +60,14 @@ module axi_magic (
     // Magic addresses
     localparam CONSOLE_MAGIC_ADDR = 32'h40000000;
     localparam EXIT_MAGIC_ADDR    = 32'h40000004;
+    // Non-Cacheable Memory (NCM): 512 B (128×32-bit words) at offset 0x1000.
+    // Bit[31]=0 of every NCM address forces PMA-bypass in kv32_icache.
+    // Firmware writes machine-code here and calls it via function pointer to
+    // exercise and verify truly uncached instruction execution.
+    localparam NCM_BASE_ADDR = 32'h40001000;
+
+    // 128×32-bit instruction RAM (simulation/testbench only – not synthesised)
+    logic [31:0] ncm [0:127];
 
     // State machine for write transactions
     typedef enum logic [1:0] {
@@ -116,6 +124,7 @@ module axi_magic (
             axi_wready <= 1'b0;
             axi_bresp <= 2'b00;
             axi_bvalid <= 1'b0;
+            for (int i = 0; i < 128; i++) ncm[i] <= 32'h0;
         end else begin
             case (write_state)
                 IDLE: begin
@@ -137,33 +146,34 @@ module axi_magic (
                         axi_wready <= 1'b0;
 
                         // Handle magic address writes
-                        case (write_addr_reg & ~32'h3)  // Align to 4-byte boundary
-                            EXIT_MAGIC_ADDR: begin
-                                if (is_byte_write) begin
-                                    // Exit simulation - decode HTIF: exit_code = value >> 1
-                                    `DEBUG1(("[MAGIC] Exit simulation with code %0d", write_byte >> 1));
-                                    sim_request_exit(32'(write_byte) >> 1);
-                                end else begin
-                                    // Exit simulation - decode HTIF: exit_code = value >> 1
-                                    `DEBUG1(("[MAGIC] Exit simulation with code %0d", axi_wdata >> 1));
-                                    sim_request_exit(axi_wdata >> 1);
-                                end
+                        if ((write_addr_reg & ~32'h3) == EXIT_MAGIC_ADDR) begin
+                            if (is_byte_write) begin
+                                // Exit simulation - decode HTIF: exit_code = value >> 1
+                                `DEBUG1(("[MAGIC] Exit simulation with code %0d", write_byte >> 1));
+                                sim_request_exit(32'(write_byte) >> 1);
+                            end else begin
+                                // Exit simulation - decode HTIF: exit_code = value >> 1
+                                `DEBUG1(("[MAGIC] Exit simulation with code %0d", axi_wdata >> 1));
+                                sim_request_exit(axi_wdata >> 1);
                             end
-                            CONSOLE_MAGIC_ADDR: begin
-                                // Output character to console, disable output on debug mode
-                                `ifndef DEBUG
-                                $write("%c", write_byte);
-                                $fflush();
-                                `endif
-                            end
-                            default: begin
-                                // Ignore other addresses
-                            end
-                        endcase
+                        end else if ((write_addr_reg & ~32'h3) == CONSOLE_MAGIC_ADDR) begin
+                            // Output character to console, disable output on debug mode
+                            `ifndef DEBUG
+                            $write("%c", write_byte);
+                            $fflush();
+                            `endif
+                        end else if (write_addr_reg[31:9] == NCM_BASE_ADDR[31:9]) begin
+                            // NCM write: store word into non-cacheable instruction memory
+                            ncm[write_addr_reg[8:2]] <= axi_wdata;
+                            `DEBUG2(`DBG_GRP_ICACHE, ("[MAGIC] NCM write word[%0d] @ 0x%h = 0x%h",
+                                write_addr_reg[8:2], write_addr_reg, axi_wdata));
+                        end
+                        // else: Ignore other addresses
 
-                        // Respond OKAY only for recognised magic addresses; SLVERR otherwise
+                        // Respond OKAY for recognised magic addresses; SLVERR otherwise
                         axi_bresp <= ((write_addr_reg & ~32'h3) == EXIT_MAGIC_ADDR ||
-                                      (write_addr_reg & ~32'h3) == CONSOLE_MAGIC_ADDR)
+                                      (write_addr_reg & ~32'h3) == CONSOLE_MAGIC_ADDR ||
+                                      write_addr_reg[31:9] == NCM_BASE_ADDR[31:9])
                                      ? 2'b00 : 2'b10;  // OKAY or SLVERR
                         axi_bvalid <= 1'b1;
                         write_state <= WRITE_RESP;
@@ -182,7 +192,7 @@ module axi_magic (
         end
     end
 
-    // Read channel handling (return 0 for reads)
+    // Read channel handling (return 0 for reads, or NCM word for NCM addresses)
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             read_state <= READ_IDLE;
@@ -198,10 +208,18 @@ module axi_magic (
 
                     if (axi_arvalid && axi_arready) begin
                         axi_arready <= 1'b0;
-                        axi_rdata  <= 32'h0;
-                        // Respond OKAY only for recognised magic addresses; SLVERR otherwise
+                        // NCM read: return the stored instruction word
+                        if (axi_araddr[31:9] == NCM_BASE_ADDR[31:9]) begin
+                            axi_rdata <= ncm[axi_araddr[8:2]];
+                            `DEBUG2(`DBG_GRP_ICACHE, ("[MAGIC] NCM read word[%0d] @ 0x%h = 0x%h (fetch)",
+                                axi_araddr[8:2], axi_araddr, ncm[axi_araddr[8:2]]));
+                        end else begin
+                            axi_rdata  <= 32'h0;
+                        end
+                        // Respond OKAY for recognised addresses; SLVERR otherwise
                         axi_rresp  <= ((axi_araddr & ~32'h3) == EXIT_MAGIC_ADDR ||
-                                       (axi_araddr & ~32'h3) == CONSOLE_MAGIC_ADDR)
+                                       (axi_araddr & ~32'h3) == CONSOLE_MAGIC_ADDR ||
+                                       axi_araddr[31:9] == NCM_BASE_ADDR[31:9])
                                       ? 2'b00 : 2'b10;  // OKAY or SLVERR
                         axi_rvalid <= 1'b1;
                         read_state <= READ_RESP;

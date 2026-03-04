@@ -90,10 +90,15 @@ public:
 // Registers (window-relative offsets):
 //   0x0000: Console output (write low byte)
 //   0x0004: Exit magic (write exit code encoding)
+//   0x1000–0x11FF: NCM – 512-byte (128×32-bit word) non-cacheable instruction
+//                  RAM.  Firmware writes machine code here via MMIO stores and
+//                  calls it via a function pointer to exercise PMA-bypass in
+//                  kv32_icache (bit[31]=0 → non-cacheable).
 class MagicDevice : public Device {
 private:
     bool exit_pending;
     int exit_code;
+    uint32_t ncm[128];  // Non-Cacheable Memory: 128 × 32-bit instruction words
 
 public:
     MagicDevice();
@@ -185,7 +190,7 @@ private:
     bool rx_valid;
     bool ack_received;
 
-    // State machine
+    // State machine (master-side)
     enum class State {
         IDLE,
         START,
@@ -194,7 +199,8 @@ private:
         READ,
         ACK_CHECK,
         ACK_SEND,
-        STOP
+        STOP,
+        ACK_STRETCH  // hold BUSY for stretch_ticks_per_ack ticks after each byte ACK
     };
     State state;
 
@@ -204,9 +210,23 @@ private:
     int scl_phase;
 
     // Simulated EEPROM (256 bytes at address 0x50)
+    // The EEPROM state machine uses proper transaction-state tracking (not value-
+    // pattern matching) so any data byte value, including 0xA0/0xA1, is handled
+    // correctly.  Mirrors the state machine used by spike/plugin_i2c.cc.
+    enum class EepromTxState { IDLE, GOT_ADDR, DATA };
+    EepromTxState eeprom_tx_state;  // position within current I2C transaction
+    bool          eeprom_write_mode; // true = write direction, false = read
     uint8_t eeprom_memory[256];
-    uint8_t eeprom_addr;
-    bool eeprom_addr_set;
+    uint8_t eeprom_addr;             // current EEPROM byte pointer
+    bool eeprom_addr_set;            // address has been set by write phase
+
+    // Clock-stretch BUSY delay modeling.
+    // stretch_ticks_per_ack: extra tick() calls to hold BUSY=1 after each byte
+    // ACK phase.  Models the slave pulling SCL low (clock-stretch) before
+    // releasing it.  Default 0 = instant resolution (no stretch).
+    // Set this member before running tests that use STRETCH=N in RTL.
+    int stretch_ticks_per_ack;
+    int stretch_remaining;  // countdown for current ACK_STRETCH phase
 
     // IE/IS registers
     uint8_t ie_reg;      // [0]=rx_ne_ie, [1]=tx_e_ie, [2]=done_ie

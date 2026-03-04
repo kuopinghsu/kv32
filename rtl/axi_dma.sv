@@ -151,6 +151,26 @@ module axi_dma #(
     localparam logic [11:0] GLBL_ADDR_MAX = 12'(GLBL_OFF + 12'h01C);
 
     // ========================================================================
+    // DMA Engine State Machine
+    // ========================================================================
+    typedef enum logic [3:0] {
+        S_IDLE       = 4'd0,
+        S_FETCH_SG   = 4'd1,   // Issue AR for SG descriptor (4-beat burst)
+        S_FETCH_RDAT = 4'd2,   // Receive 4 SG descriptor words
+        S_BURST_CALC = 4'd3,   // Calculate next AXI burst parameters
+        S_RD_ADDR    = 4'd4,   // Issue AR
+        S_RD_DATA    = 4'd5,   // Receive R beats → FIFO
+        S_WR_ADDR    = 4'd6,   // Issue AW
+        S_WR_DATA    = 4'd7,   // Send W beats ← FIFO
+        S_WR_RESP    = 4'd8,   // Wait for B
+        S_ADVANCE    = 4'd9,   // Update address / counters
+        S_DONE       = 4'd10,
+        S_ERROR      = 4'd11
+    } eng_state_t;
+
+    eng_state_t eng_state;
+
+    // ========================================================================
     // Per-channel register arrays
     // ========================================================================
     logic [7:0]  ch_ctrl        [0:NUM_CHANNELS-1];
@@ -499,27 +519,6 @@ module axi_dma #(
     logic [DATA_WIDTH-1:0] fifo_wdata;
 
     assign fifo_rdata = fifo_mem[fifo_rd_ptr[FIFO_BITS-1:0]];
-    // wdata/wstrb/wlast are driven combinatorially from fifo_rdata.
-
-    // ========================================================================
-    // DMA Engine State Machine
-    // ========================================================================
-    typedef enum logic [3:0] {
-        S_IDLE       = 4'd0,
-        S_FETCH_SG   = 4'd1,   // Issue AR for SG descriptor (4-beat burst)
-        S_FETCH_RDAT = 4'd2,   // Receive 4 SG descriptor words
-        S_BURST_CALC = 4'd3,   // Calculate next AXI burst parameters
-        S_RD_ADDR    = 4'd4,   // Issue AR
-        S_RD_DATA    = 4'd5,   // Receive R beats → FIFO
-        S_WR_ADDR    = 4'd6,   // Issue AW
-        S_WR_DATA    = 4'd7,   // Send W beats ← FIFO
-        S_WR_RESP    = 4'd8,   // Wait for B
-        S_ADVANCE    = 4'd9,   // Update address / counters
-        S_DONE       = 4'd10,
-        S_ERROR      = 4'd11
-    } eng_state_t;
-
-    eng_state_t eng_state;
 
     // Active channel index (scheduled)
     logic [$clog2(NUM_CHANNELS > 1 ? NUM_CHANNELS : 2)-1:0] active_ch;

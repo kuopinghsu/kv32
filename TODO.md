@@ -4,9 +4,12 @@
 
 ### 1. Physical Memory Attributes (PMA)
 **Priority: HIGH** — Architectural prerequisite for correct cache behavior.
-- [ ] Implement PMA check on bit[31] of the physical address:
-  - `0` → non-cacheable
-  - `1` → cacheable
+- [x] Implement PMA check on bit[31] of the physical address for **I-cache** (icache bypass):
+  - `0` → non-cacheable (bit[31]=0: all I/O and NCM addresses → single-beat INCR bypass fetch)
+  - `1` → cacheable (bit[31]=1: RAM at 0x8000_0000+ → normal fill or CMO-controlled bypass)
+  - Implemented as `pma_cacheable = req_addr_r[31]` ; `use_cache = cache_enable & pma_cacheable`
+  - Added `[ICACHE] PMA bypass` DEBUG2 message in `kv32_icache.sv`
+- [ ] Extend PMA check to the **D-cache** (depends on #2 D-Cache Implementation).
 
 ### 2. D-Cache Implementation
 **Priority: HIGH** — Major microarchitecture feature; depends on #1 (PMA) for cacheability policy.
@@ -66,9 +69,9 @@
 #### Phase 8 — Documentation
 - [ ] Update `docs/jtag_cjtag_integration.md`: complete DM register map, abstract command protocol, SBA operation, trigger module usage, and OpenOCD/GDB setup instructions.
 
-### 4. I2C Clock-Stretching Tests
+### ~~4. I2C Clock-Stretching Tests~~
 **Priority: MEDIUM** — Targeted test coverage gap.
-- [ ] Add test cases to `sw/i2c` that exercise the clock-stretching protocol and verify correct RTL behavior.
+- [x] Add test cases to `sw/i2c` that exercise the clock-stretching protocol and verify correct RTL behavior.
 
 ### 5. DDR4 Simulation Memory Model
 **Priority: MEDIUM** — Needed for realistic latency benchmarks (see #6).
@@ -169,4 +172,59 @@ Final AXI slave assignment:
 - Hardware-register polling loops (e.g. `while (kv_i2c_busy())`) intentionally left as-is;
   `timeout` variable retained in `i2c.c` for those remaining polls.
 - All simulator tests pass: uart 8/8, dma 9/9, spi 8/8, i2c 7/7.
+
+### ~~C11. I2C Clock-Stretching Tests~~
+- Extended `testbench/i2c_slave_eeprom.sv` with `STRETCH_CYCLES` parameter and `scl_oe` output;
+  slave holds SCL low after each byte ACK for the configured number of clock cycles.
+- Wired slave `scl_oe` into the open-drain SCL bus in `testbench/tb_kv32_soc.sv`;
+  SCL wire is the wired-AND of master and slave drivers.
+- Added `STRETCH=N` Makefile knob (`+define+I2C_STRETCH_CYCLES=N`) so RTL simulations
+  rebuild automatically when the stretch value changes.
+- Added `test8_scattered_write_read()` (16 individual byte writes/reads to 0x30–0x3F) and
+  `test9_block_transfer()` (burst write + sequential read via `kv_i2c_master_write/read`) to
+  `sw/i2c/i2c.c`; total test count raised from 7/7 to 9/9.
+- Fixed a subtle timing bug: stretch must trigger on `scl_falling` in ACK states (the correct
+  I2C protocol hold point), NOT on `scl_rising` in RECV states (which causes a spurious
+  `scl_falling` one clock later that misroutes the ACK handler).
+- Fixed a pre-existing bug in `sim/device.cpp` `I2CDevice::handle_eeprom_write()`: the old
+  value-pattern check `(data & 0xFE) == 0xA0` misidentified data bytes `0xA0/0xA1` (part of the
+  default EEPROM fill pattern) as device-address bytes, corrupting test 8's writes. Replaced with
+  a proper transaction-state machine (`IDLE → GOT_ADDR → DATA`) mirroring `spike/plugin_i2c.cc`.
+- Added `EepromTxState` enum, `eeprom_write_mode`, and `ACK_STRETCH` master state to
+  `sim/device.h`; added `stretch_ticks_per_ack` / `stretch_remaining` fields for holding
+  `BUSY=1` after each byte ACK (clock-stretch BUSY delay modeling in simulation).
+- Added clock-stretch note to `spike/plugin_i2c.cc`: Spike processes all operations
+  synchronously so STRETCH has no effect there; the state machine is already functionally correct.
+- All tests pass: `make rtl-i2c` 9/9, `make STRETCH=200 rtl-i2c` 9/9,
+  `make STRETCH=2000 rtl-i2c` 9/9, `make sim-i2c` 9/9, `make spike-i2c` 9/9. Lint clean.
+
+### ~~C12. I-Cache PMA Bypass + NCM Test Coverage~~
+- Implemented PMA-based per-request bypass in `rtl/kv32_icache.sv`: added `pma_cacheable`
+  (= `req_addr_r[31]`) and `use_cache` (= `cache_enable & pma_cacheable`) signals. All
+  per-request `cache_enable` uses in the state machine, AXI AR channel, fill tracking,
+  response mux, and the `p_rlast_on_final_beat` assertion were updated to use `use_cache`.
+  The CMO register (`cache_enable`) is unchanged and still controls the global bypass via
+  `CMO_DISABLE`/`CMO_ENABLE`.
+- Added `DEBUG2` message in `kv32_icache.sv` (`DBG_GRP_ICACHE`) for every PMA-bypass fetch
+  (printed when `DEBUG=2 DEBUG_GROUP=0x2000` or `DEBUG_GROUP=0xFFFFFFFF`).
+- Added 512B Non-Cacheable Memory (NCM) inside `rtl/axi_magic.sv` (`ifndef SYNTHESIS`):
+  128 × 32-bit word array at offset `0x1000` from magic base (`0x4000_1000`).
+  Firmware may write machine-code words via MMIO stores and call via function pointer.
+  The xbar already routes `0x4000_xxxx` to the magic slave; the magic device now handles
+  reads (instruction fetch bypass) and writes (code upload) for the NCM window.
+- Added `KV_NCM_BASE` / `KV_NCM_SIZE` / `KV_NCM_OFF` defines to `sw/include/kv_platform.h`.
+- Extended `sim/device.h` and `sim/device.cpp` (`MagicDevice`) with 128-word `ncm[]` array;
+  `read()` and `write()` now handle the `0x1000–0x11FF` offset range for instruction fetches
+  and code uploads.
+- Extended `spike/plugin_magic.cc` with the same `ncm[]` array; `load()` serves instruction
+  fetches and data reads; `store()` accepts code-upload writes.
+- Added Spike ISA flag `_zicbom` to Makefile (`--isa=rv32ima_zicsr_zicntr_zicbom`) so
+  `cbo.inval` is recognised as a no-op instead of raising an illegal-instruction trap.
+- Removed `icache` from `SPIKE_EXCLUDE`; `spike-icache` (and `spike-all`) now include the
+  icache test.
+- Added **Test 4** to `sw/icache/icache.c`: copies `hot_loop` to NCM, calls it through a
+  function pointer twice, checks result correctness and that call-1 ≈ call-2 cycles (no cache
+  warmup). Debug output prints the NCM base address and word-copy progress.
+- All tests pass: `make rtl-icache` 4/4 (2 410 PMA bypass fetches visible in stats),
+  `make sim-icache` 4/4, `make spike-icache` 4/4. Lint clean.
 

@@ -111,6 +111,14 @@ module tb_kv32_soc #(
     logic i2c_sda_o_internal, i2c_sda_oe_internal; // SoC I2C SDA outputs
     logic i2c_scl_wire, i2c_sda_wire;
     logic i2c_slave_sda_out, i2c_slave_sda_oe;
+    logic i2c_slave_scl_oe;   // Slave SCL stretch drive (1 = hold SCL low)
+
+    // Clock-stretch duration passed in via +define+I2C_STRETCH_CYCLES=N
+`ifdef I2C_STRETCH_CYCLES
+    localparam integer I2C_SLAVE_STRETCH = `I2C_STRETCH_CYCLES;
+`else
+    localparam integer I2C_SLAVE_STRETCH = 0;
+`endif
 
     // GPIO and PWM signals
     logic [GPIO_NUM_PINS-1:0] gpio_o_internal;
@@ -399,19 +407,24 @@ module tb_kv32_soc #(
 
     // I2C Slave EEPROM - 256-byte EEPROM at address 0x50
     // I2C bidirectional bus handling (wired-AND)
-    assign i2c_scl_wire = (i2c_scl_oe_internal ? 1'b1 : i2c_scl_o_internal);
+    // Master (SoC): oe=1 → release (high-Z), oe=0 → drive scl_o
+    // Slave: scl_oe=1 → pull SCL low (clock-stretch), scl_oe=0 → release
+    assign i2c_scl_wire = (i2c_scl_oe_internal ? 1'b1 : i2c_scl_o_internal)
+                        & (i2c_slave_scl_oe    ? 1'b0 : 1'b1);
     assign i2c_sda_wire = (i2c_sda_oe_internal ? 1'b1 : i2c_sda_o_internal) &
                           (i2c_slave_sda_oe ? i2c_slave_sda_out : 1'b1);
 
     i2c_slave_eeprom #(
-        .DEVICE_ADDR(7'h50)
+        .DEVICE_ADDR   (7'h50),
+        .STRETCH_CYCLES(I2C_SLAVE_STRETCH)
     ) i2c_target (
-        .clk(clk),
-        .rst_n(rst_n),
-        .scl(i2c_scl_wire),
-        .sda_in(i2c_sda_wire),
+        .clk    (clk),
+        .rst_n  (rst_n),
+        .scl    (i2c_scl_wire),
+        .sda_in (i2c_sda_wire),
         .sda_out(i2c_slave_sda_out),
-        .sda_oe(i2c_slave_sda_oe)
+        .sda_oe (i2c_slave_sda_oe),
+        .scl_oe (i2c_slave_scl_oe)
     );
 
     // Drive testbench output ports from internal signals

@@ -299,6 +299,120 @@ static int test7_fifo_irq_transfer(void)
     return pass ? 0 : -1;
 }
 
+/* ════════════════════════════════════════════════════════════════════
+ * Test 8: Scattered single-byte write + read-back
+ * Exercises clock-stretching on individual eeprom_write() transactions.
+ * 16 independent byte writes each trigger ADDR_W/MEM_ADDR/DATA ACK slots.
+ * ════════════════════════════════════════════════════════════════════ */
+#define SC_ADDR_BASE 0x30u
+#define SC_LEN       16u
+
+static const uint8_t sc_pattern[SC_LEN] = {
+    0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18,
+    0x29, 0x3A, 0x4B, 0x5C, 0x6D, 0x7E, 0x8F, 0x90
+};
+
+static int test8_scattered_write_read(void)
+{
+    printf("[TEST 8] Scattered Byte Write/Read (clock-stretch stress)\n");
+    printf("  EEPROM addresses 0x%02X-0x%02X, %u individual writes\n",
+           (unsigned)SC_ADDR_BASE, (unsigned)(SC_ADDR_BASE + SC_LEN - 1u),
+           (unsigned)SC_LEN);
+
+    /* Individual byte writes; each write has 3 ACK slots (ADDR_W, MEM_ADDR, DATA)
+     * — all three trigger clock-stretch when STRETCH_CYCLES > 0.              */
+    int ok = 1;
+    for (uint32_t i = 0; i < SC_LEN && ok; i++) {
+        if (eeprom_write((uint8_t)(SC_ADDR_BASE + i), sc_pattern[i]) < 0) {
+            printf("  Write error at 0x%02X\n", (unsigned)(SC_ADDR_BASE + i));
+            ok = 0;
+        }
+    }
+
+    if (ok) {
+        uint32_t errors = 0;
+        for (uint32_t i = 0; i < SC_LEN; i++) {
+            uint8_t d;
+            if (eeprom_read((uint8_t)(SC_ADDR_BASE + i), &d) < 0 ||
+                d != sc_pattern[i]) {
+                printf("  Mismatch[%lu]: addr=0x%02X got=0x%02X exp=0x%02X\n",
+                       (unsigned long)i, (unsigned)(SC_ADDR_BASE + i),
+                       d, sc_pattern[i]);
+                errors++;
+            }
+        }
+        if (errors == 0)
+            printf("  All %u bytes verified OK\n", (unsigned)SC_LEN);
+        ok = (errors == 0);
+    }
+
+    printf("  Result: %s\n\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * Test 9: Block write + sequential read using kv_i2c_master helpers
+ * Exercises kv_i2c_master_write and kv_i2c_master_read end-to-end.
+ * ════════════════════════════════════════════════════════════════════ */
+#define BK_ADDR_BASE 0x60u
+#define BK_LEN       8u
+
+static const uint8_t bk_data[BK_LEN] = {
+    0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88
+};
+
+static int test9_block_transfer(void)
+{
+    printf("[TEST 9] Block Write + Sequential Read (kv_i2c_master helpers)\n");
+    printf("  EEPROM address 0x%02X, %u bytes\n",
+           (unsigned)BK_ADDR_BASE, (unsigned)BK_LEN);
+
+    /* Write: [mem_addr, data0..dataN] packed into one kv_i2c_master_write call */
+    uint8_t wbuf[1u + BK_LEN];
+    wbuf[0] = BK_ADDR_BASE;
+    for (uint32_t i = 0; i < BK_LEN; i++) wbuf[1u + i] = bk_data[i];
+
+    if (kv_i2c_master_write(EEPROM_ADDR, wbuf, 1u + BK_LEN) < 0) {
+        printf("  Block write FAILED (NACK)\n");
+        printf("  Result: FAIL\n\n");
+        return 0;
+    }
+
+    /* Brief write-cycle settle */
+    for (volatile int i = 0; i < 2000; i++) asm volatile("nop");
+
+    /* Set EEPROM internal read pointer to BK_ADDR_BASE */
+    uint8_t ptr = BK_ADDR_BASE;
+    if (kv_i2c_master_write(EEPROM_ADDR, &ptr, 1u) < 0) {
+        printf("  Read-pointer set FAILED (NACK)\n");
+        printf("  Result: FAIL\n\n");
+        return 0;
+    }
+
+    /* Sequential read of BK_LEN bytes from BK_ADDR_BASE */
+    uint8_t rbuf[BK_LEN];
+    if (kv_i2c_master_read(EEPROM_ADDR, rbuf, BK_LEN) < 0) {
+        printf("  Block read FAILED (NACK)\n");
+        printf("  Result: FAIL\n\n");
+        return 0;
+    }
+
+    uint32_t errors = 0;
+    for (uint32_t i = 0; i < BK_LEN; i++) {
+        if (rbuf[i] != bk_data[i]) {
+            printf("  Mismatch[%lu]: got=0x%02X exp=0x%02X\n",
+                   (unsigned long)i, rbuf[i], bk_data[i]);
+            errors++;
+        }
+    }
+    if (errors == 0)
+        printf("  All %u bytes verified OK\n", (unsigned)BK_LEN);
+
+    int pass = (errors == 0);
+    printf("  Result: %s\n\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 /* ════════════════════════════════════════════════════════════════════ */
 
 int main(void)
@@ -411,10 +525,16 @@ int main(void)
     /* TEST 7 */
     int t7 = (test7_fifo_irq_transfer() == 0) ? 1 : 0;
 
-    int passed = t1 + t2 + t3 + t4 + t5 + t6 + t7;
+    /* TEST 8 */
+    int t8 = test8_scattered_write_read();
+
+    /* TEST 9 */
+    int t9 = test9_block_transfer();
+
+    int passed = t1 + t2 + t3 + t4 + t5 + t6 + t7 + t8 + t9;
     printf("========================================\n");
-    printf("  Summary: %d/7 tests PASSED\n", passed);
+    printf("  Summary: %d/9 tests PASSED\n", passed);
     printf("========================================\n\n");
     printf("I2C hardware test complete.\n");
-    return (passed == 7) ? 0 : 1;
+    return (passed == 9) ? 0 : 1;
 }

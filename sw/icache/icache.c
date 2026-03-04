@@ -182,6 +182,74 @@ int main(void) {
     }
 
     // =========================================================
+    // TEST 4: Non-Cacheable Memory (NCM) – PMA bypass
+    // =========================================================
+    my_puts("[TEST 4] Non-Cacheable Memory (NCM) uncached execution\n");
+    my_puts("  NCM base : 0x"); print_hex32(KV_NCM_BASE); my_puts("\n");
+    my_puts("  hot_loop @ 0x"); print_hex32((uint32_t)(uintptr_t)&hot_loop); my_puts("\n");
+
+    // Copy hot_loop machine code to NCM (128 bytes = 32 words, safe upper bound).
+    // hot_loop is position-independent (RV32I: only PC-relative branches, no
+    // absolute addresses), so the copy runs correctly at any base address.
+    volatile uint32_t *ncm_ptr = (volatile uint32_t *)(uintptr_t)KV_NCM_BASE;
+    const uint32_t    *src_ptr = (const uint32_t *)(uintptr_t)&hot_loop;
+    for (int w = 0; w < 32; w++)
+        ncm_ptr[w] = src_ptr[w];
+
+    // Fence.I: flush any stale icache lines before jumping to NCM.
+    // (NCM has bit[31]=0 so the PMA check should bypass the cache, but
+    // issuing FENCE.I ensures a clean state for the first NCM fetch.)
+    fence_i();
+
+    my_puts("  Copied 128 B to NCM; issuing FENCE.I before first call\n");
+
+    // Call hot_loop through a function pointer pointing into NCM.
+    // The icache will perform a single-beat INCR bypass fetch for every
+    // instruction in NCM because bit[31] of NCM addresses is 0 (PMA miss).
+    typedef uint32_t (*fn_t)(uint32_t);
+    fn_t ncm_fn = (fn_t)(uintptr_t)KV_NCM_BASE;
+
+    // Reference result (from original RAM-resident hot_loop).
+    uint32_t ref_ncm = hot_loop(ITERS);
+
+    // First NCM call – measures uncached fetch latency.
+    uint32_t t3a = read_csr_mcycle();
+    volatile uint32_t ncm_r1 = ncm_fn(ITERS);
+    uint32_t t3b = read_csr_mcycle();
+    uint32_t ncm_call1 = t3b - t3a;
+
+    // Second NCM call – should take approximately the same time as the first;
+    // if the PMA bypass is working correctly, no cache warmup happens.
+    uint32_t t3c = read_csr_mcycle();
+    volatile uint32_t ncm_r2 = ncm_fn(ITERS);
+    uint32_t t3d = read_csr_mcycle();
+    uint32_t ncm_call2 = t3d - t3c;
+
+    my_puts("  NCM call 1 cycles: "); print_dec(ncm_call1); my_puts("\n");
+    my_puts("  NCM call 2 cycles: "); print_dec(ncm_call2); my_puts("\n");
+
+    // Timing check: if the cache incorrectly cached NCM, call 2 would be
+    // dramatically faster (> 2×) than call 1.  Normal measurement noise
+    // (± a few cycles) should not trip this check.
+    if (ncm_call2 > 0 && ncm_call1 > 0 && ncm_call2 < ncm_call1 / 2) {
+        my_puts("  Timing : WARN  (call2 >> faster than call1 – check PMA bypass)\n");
+    } else {
+        my_puts("  Timing : PASS  (call1 ~= call2: no spurious cache warmup)\n");
+    }
+
+    // Correctness check: both results must match the reference.
+    if ((uint32_t)ncm_r1 == ref_ncm && (uint32_t)ncm_r2 == ref_ncm) {
+        my_puts("  Result : PASS  (NCM execution results match reference)\n\n");
+    } else {
+        my_puts("  Result : FAIL  (NCM result mismatch: r1=0x");
+        print_hex32((uint32_t)ncm_r1);
+        my_puts(" r2=0x"); print_hex32((uint32_t)ncm_r2);
+        my_puts(" ref=0x"); print_hex32(ref_ncm);
+        my_puts(")\n\n");
+        fails++;
+    }
+
+    // =========================================================
     // Summary
     // =========================================================
     my_puts("========================================\n");

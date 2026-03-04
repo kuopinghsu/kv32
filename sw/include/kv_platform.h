@@ -350,6 +350,20 @@
 #define KV_MAGIC_CONSOLE_ADDR   (KV_MAGIC_BASE + KV_MAGIC_CONSOLE_OFF)
 #define KV_MAGIC_EXIT_ADDR      (KV_MAGIC_BASE + KV_MAGIC_EXIT_OFF)
 
+/* Non-Cacheable Memory (NCM) – simulation / testbench only (ifndef SYNTHESIS)
+ *
+ * A 512-byte (128 × 32-bit word) RAM embedded inside axi_magic at offset
+ * 0x1000.  Its absolute address has bit[31]=0, so the I-cache's PMA check
+ * forcibly bypasses the cache for every instruction fetch from this region.
+ * Firmware may copy machine-code bytes here and call them through a function
+ * pointer to exercise and verify truly uncached instruction execution.
+ *
+ * Address range:  0x4000_1000 – 0x4000_11FF  (512 B)
+ */
+#define KV_NCM_OFF          0x1000UL                      /* offset from KV_MAGIC_BASE  */
+#define KV_NCM_BASE         (KV_MAGIC_BASE + KV_NCM_OFF)  /* 0x4000_1000                */
+#define KV_NCM_SIZE         0x00000200UL                   /* 512 bytes (128 words)      */
+
 /* Register accessors (firmware) */
 #define KV_MAGIC_EXIT    KV_REG32(KV_MAGIC_BASE, KV_MAGIC_EXIT_OFF)
 #define KV_MAGIC_CONSOLE KV_REG32(KV_MAGIC_BASE, KV_MAGIC_CONSOLE_OFF)

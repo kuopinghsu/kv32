@@ -16,12 +16,22 @@
 //   >0x1C  —      - Bus error
 //
 // Simulation behaviour:
-//   TX bytes are processed instantly through an EEPROM state machine.
+//   TX bytes are processed instantly through an EEPROM state machine that uses
+//   proper transaction-position tracking (IDLE → GOT_ADDR → DATA) identical to
+//   the kv32sim I2CDevice state machine.  This correctly handles data bytes
+//   whose value happens to coincide with 0xA0/0xA1 (the default EEPROM pattern).
 //   STATUS[3] (ack_recv) is set after each TX byte (slave always ACKs in sim).
 //   CTRL_READ fetches one byte from the EEPROM into the RX FIFO.
 //   CTRL_STOP sets IS[2] (stop_done) which is auto-cleared when IS is read
 //   (models the 1-cycle pulse behaviour of the RTL).
 //   IS[1] (tx_empty) is set whenever the TX queue is drained (instant).
+//
+// Clock-stretching note:
+//   The RTL STRETCH=N knob makes the i2c_slave_eeprom testbench hold SCL
+//   low for N system-clock cycles after each byte ACK.  Spike simulates all
+//   operations synchronously (no clock concept), so clock-stretch has no effect
+//   here — the EEPROM state machine is still functionally correct regardless of
+//   the STRETCH value used in RTL simulation.
 //
 // Interrupt routing:
 //   MEIP is asserted via PLIC set_interrupt_level(KV_PLIC_SRC_I2C) when

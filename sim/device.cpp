@@ -63,6 +63,8 @@ MagicDevice::MagicDevice() : exit_pending(false), exit_code(0) {
 void MagicDevice::reset() {
     exit_pending = false;
     exit_code = 0;
+    // Clear the non-cacheable instruction memory
+    for (int i = 0; i < 128; i++) ncm[i] = 0;
 }
 
 uint32_t MagicDevice::read(uint32_t offset, int size) {
@@ -73,7 +75,14 @@ uint32_t MagicDevice::read(uint32_t offset, int size) {
     if (offset == KV_MAGIC_EXIT_OFF) {
         return 0;
     }
-    last_bus_error = true;  // only EXIT and CONSOLE offsets are valid
+    // NCM: 512-byte non-cacheable instruction RAM at offset 0x1000–0x11FF
+    // Instruction fetch bypass reads land here when the icache issues a
+    // single-beat INCR AXI transaction to any NCM address (PMA bit[31]=0).
+    if (offset >= KV_NCM_OFF && offset < KV_NCM_OFF + KV_NCM_SIZE) {
+        uint32_t word_idx = (offset - KV_NCM_OFF) / 4;
+        return ncm[word_idx];
+    }
+    last_bus_error = true;  // only EXIT, CONSOLE, and NCM offsets are valid
     return 0;
 }
 
@@ -91,7 +100,14 @@ void MagicDevice::write(uint32_t offset, uint32_t value, int size) {
         return;
     }
 
-    last_bus_error = true;  // only EXIT and CONSOLE offsets are valid
+    // NCM: firmware writes machine-code words here before calling via fptr
+    if (offset >= KV_NCM_OFF && offset < KV_NCM_OFF + KV_NCM_SIZE) {
+        uint32_t word_idx = (offset - KV_NCM_OFF) / 4;
+        ncm[word_idx] = value;
+        return;
+    }
+
+    last_bus_error = true;  // only EXIT, CONSOLE, and NCM offsets are valid
 }
 
 bool MagicDevice::consume_exit_request(int* code_out) {
@@ -250,8 +266,12 @@ void I2CDevice::reset() {
     shift_reg = 0;
     bit_counter = 0;
     scl_phase = 0;
+    eeprom_tx_state  = EepromTxState::IDLE;
+    eeprom_write_mode = false;
     eeprom_addr = 0;
     eeprom_addr_set = false;
+    stretch_ticks_per_ack = 0;
+    stretch_remaining = 0;
     ie_reg = 0;
     stop_done = false;
 
@@ -431,11 +451,13 @@ void I2CDevice::process_i2c_transaction() {
             break;
 
         case State::START:
-            // START condition executed
+            // START condition executed; reset EEPROM transaction state so the
+            // first TX byte is treated as a fresh device-address byte.
+            eeprom_tx_state = EepromTxState::IDLE;
             state = State::IDLE;
             busy = false;
             tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
-            // NOTE: do NOT reset eeprom_addr_set here – a repeated START
+            // NOTE: do NOT reset eeprom_addr here — a repeated START
             // (read phase) must keep the address set by the prior write phase.
             break;
 
@@ -444,9 +466,26 @@ void I2CDevice::process_i2c_transaction() {
             handle_eeprom_write(tx_data);
             ack_received = true;  // Simulate ACK from slave
             tx_valid = false;
-            state = State::IDLE;
-            busy = false;
-            tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
+            // Model clock-stretch: hold BUSY for stretch_ticks_per_ack extra
+            // ticks before returning to IDLE (byte ACK phase delay).
+            if (stretch_ticks_per_ack > 0) {
+                state = State::ACK_STRETCH;
+                stretch_remaining = stretch_ticks_per_ack;
+                // busy stays true
+            } else {
+                state = State::IDLE;
+                busy = false;
+                tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
+            }
+            break;
+
+        case State::ACK_STRETCH:
+            // Hold BUSY while simulating the slave's clock-stretch window.
+            if (--stretch_remaining <= 0) {
+                state = State::IDLE;
+                busy = false;
+                tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
+            }
             break;
 
         case State::READ:
@@ -462,9 +501,10 @@ void I2CDevice::process_i2c_transaction() {
             break;
 
         case State::STOP:
-            // STOP condition executed — end of full I2C transaction.
-            // Reset address tracking so the next transaction's write-phase
-            // will correctly re-set the EEPROM memory pointer.
+            // STOP condition: end of transaction.
+            // Reset EEPROM transaction state and address-set flag so the next
+            // transaction's write-phase will set a fresh memory pointer.
+            eeprom_tx_state  = EepromTxState::IDLE;
             eeprom_addr_set = false;
             stop_done = true;   // 1-cycle pulse; auto-cleared at start of next tick()
             state = State::IDLE;
@@ -479,24 +519,34 @@ void I2CDevice::process_i2c_transaction() {
 }
 
 void I2CDevice::handle_eeprom_write(uint8_t data) {
-    if ((data & 0xFE) == 0xA0) {
-        // Device address byte:
-        //   0xA0 (write direction) — a memory address byte follows next.
-        //   0xA1 (read  direction) — address was already set in the write
-        //                            phase; keep eeprom_addr_set as-is.
-        if (!(data & 0x01)) {
-            eeprom_addr_set = false;  // Prepare to receive memory address
+    // State-machine-based EEPROM protocol tracking.
+    // The previous value-pattern approach (checking whether data == 0xA0)
+    // incorrectly treats data bytes 0xA0/0xA1 as device-address bytes.
+    // This mirrors the spike plugin's I2cTxState machine.
+    switch (eeprom_tx_state) {
+    case EepromTxState::IDLE:
+        // First byte after START: 7-bit device address + R/W bit.
+        if ((data >> 1) == 0x50u) {
+            eeprom_write_mode = !(data & 0x01u);
+            eeprom_tx_state   = EepromTxState::GOT_ADDR;
         }
-        return;
-    }
-    if (!eeprom_addr_set) {
-        // Memory address byte
-        eeprom_addr = data;
+        // If address does not match we still ACK (single-device sim).
+        break;
+
+    case EepromTxState::GOT_ADDR:
+        // Second byte: EEPROM memory address.
+        eeprom_addr     = data;
         eeprom_addr_set = true;
-    } else {
-        // Data byte — write to EEPROM
-        eeprom_memory[eeprom_addr] = data;
-        eeprom_addr = (eeprom_addr + 1) & 0xFF;
+        eeprom_tx_state = EepromTxState::DATA;
+        break;
+
+    case EepromTxState::DATA:
+        // Subsequent bytes: data payload (write direction only).
+        if (eeprom_write_mode) {
+            eeprom_memory[eeprom_addr] = data;
+            eeprom_addr = (uint8_t)(eeprom_addr + 1u);
+        }
+        break;
     }
 }
 
