@@ -172,9 +172,9 @@ module axi_i2c #(
             rxf_wr_ptr <= '0;
             rxf_rd_ptr <= '0;
             rxf_count  <= '0;
-            rxf_push_r <= 1'b0;
+            // rxf_push_r reset is handled in the I2C state machine always_ff
         end else begin
-            rxf_push_r <= 1'b0;  // default clear each cycle (set in state machine)
+            // rxf_push_r default clear is handled in the I2C state machine always_ff
             if (rxf_push && !rxf_pop)       rxf_count <= rxf_count + 1;
             else if (!rxf_push && rxf_pop)  rxf_count <= rxf_count - 1;
             if (rxf_push) begin
@@ -358,12 +358,14 @@ module axi_i2c #(
             rx_data      <= 8'h0;
             ack_received <= 1'b0;
             stop_done_r  <= 1'b0;
+            rxf_push_r   <= 1'b0;
             i2c_scl_o    <= 1'b0;
             i2c_scl_oe   <= 1'b1;  // Tristate (high-Z)
             i2c_sda_o    <= 1'b0;
             i2c_sda_oe   <= 1'b1;  // Tristate (high-Z)
         end else begin
             stop_done_r <= 1'b0;  // auto-clear each cycle
+            rxf_push_r  <= 1'b0;  // default clear each cycle (set below when byte captured)
             case (state)
                 IDLE: begin
                     busy        <= 1'b0;

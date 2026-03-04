@@ -2623,9 +2623,12 @@ module kv32_core #(
             store_data_wb <= 32'd0;
             csr_op_wb     <= 3'd0;
             csr_rdata_wb  <= 32'd0;
+`ifndef SYNTHESIS
+            // DPI-C testbench probes only — not used in RTL synthesis path
             csr_wdata_wb  <= 32'd0;
             csr_zimm_wb   <= 5'd0;
             csr_addr_wb   <= 12'd0;
+`endif
             is_amo_wb     <= 1'b0;
             wb_valid      <= 1'b0;
             data_access_fault_wb <= 1'b0;
@@ -2653,9 +2656,12 @@ module kv32_core #(
             store_data_wb <= rs2_data_mem;
             csr_op_wb     <= csr_op_mem;
             csr_rdata_wb  <= csr_rdata;
+`ifndef SYNTHESIS
+            // DPI-C testbench probes only — not used in RTL synthesis path
             csr_wdata_wb  <= rs1_data_mem;
             csr_zimm_wb   <= rs1_addr_mem;
             csr_addr_wb   <= csr_addr_mem;
+`endif
             is_amo_wb     <= is_amo_mem;
             wb_valid      <= mem_valid && !irq_pending && !wb_exception;
             // Combine all sources of data-access faults:

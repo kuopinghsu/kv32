@@ -110,6 +110,25 @@ package ddr4_axi4_pkg;
                 timing.CWL     = 9;
             end
 
+            DDR4_1866: begin
+                timing.tCK     = 1071;
+                timing.tRCD    = 14;
+                timing.tRP     = 14;
+                timing.tRAS    = 34;
+                timing.tRC     = 48;
+                timing.tRFC    = 350;
+                timing.tREFI   = 7800;
+                timing.tWR     = 15;
+                timing.tRTP    = 8;
+                timing.tWTR_S  = 3;
+                timing.tWTR_L  = 8;
+                timing.tFAW    = 27;
+                timing.tCCD_S  = 4;
+                timing.tCCD_L  = 5;
+                timing.CL      = 13;
+                timing.CWL     = 10;
+            end
+
             DDR4_2133: begin
                 timing.tCK     = 937;
                 timing.tRCD    = 14;
@@ -165,6 +184,25 @@ package ddr4_axi4_pkg;
                 timing.tCCD_L  = 6;
                 timing.CL      = 19;
                 timing.CWL     = 14;
+            end
+
+            DDR4_2933: begin
+                timing.tCK     = 682;
+                timing.tRCD    = 14;
+                timing.tRP     = 14;
+                timing.tRAS    = 32;
+                timing.tRC     = 46;
+                timing.tRFC    = 350;
+                timing.tREFI   = 7800;
+                timing.tWR     = 15;
+                timing.tRTP    = 8;
+                timing.tWTR_S  = 3;
+                timing.tWTR_L  = 8;
+                timing.tFAW    = 18;
+                timing.tCCD_S  = 4;
+                timing.tCCD_L  = 6;
+                timing.CL      = 21;
+                timing.CWL     = 16;
             end
 
             DDR4_3200: begin

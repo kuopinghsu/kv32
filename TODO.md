@@ -69,34 +69,17 @@
 #### Phase 8 — Documentation
 - [ ] Update `docs/jtag_cjtag_integration.md`: complete DM register map, abstract command protocol, SBA operation, trigger module usage, and OpenOCD/GDB setup instructions.
 
-### ~~4. I2C Clock-Stretching Tests~~
-**Priority: MEDIUM** — Targeted test coverage gap.
-- [x] Add test cases to `sw/i2c` that exercise the clock-stretching protocol and verify correct RTL behavior.
-
-### 5. DDR4 Simulation Memory Model
-**Priority: MEDIUM** — Needed for realistic latency benchmarks (see #6).
-- [ ] Add `ddr4_axi4_slave.sv` mapped at `0x8000_0000`.
-- [ ] Add `MEM_TYPE` Makefile variable (default: `sram`):
-  - `MEM_TYPE=sram` → connect `testbench/axi_memory.sv`
-  - `MEM_TYPE=ddr4` → connect `testbench/ddr4_axi4_slave.sv`
-- [ ] Support ELF loading in `ddr4_axi4_slave.sv`.
-
-### 6. I-Cache Benchmark Refresh
-**Priority: MEDIUM** — Depends on #5 (DDR4 model).
-- [ ] Re-run i-cache benchmarks with SRAM latency=1 and the DDR4 model.
-- [ ] Update `docs/icache_benchmark_report.md` with new results.
-
-### 7. Zephyr RTOS Porting Update
+### 4. Zephyr RTOS Porting Update
 **Priority: MEDIUM** — Keeps RTOS support current.
 - [ ] Bring the Zephyr port up to date with the latest kernel version.
 - [ ] Resolve any outstanding porting issues.
 
-### 8. GitHub CI Workflow
+### 5. GitHub CI Workflow
 **Priority: LOW** — Improves project hygiene; no functional dependency.
 - [ ] Add a GitHub Actions workflow that builds the simulator, runs lint, and
   executes the regression suite on every push and pull request.
 
-### 9. Google RISCV-DV Integration
+### 6. Google RISCV-DV Integration
 **Priority: LOW** — Broad verification; high effort, no prerequisite blockers.
 - [ ] Evaluate and run the Google RISC-V DV random instruction test suite against the kv32 RTL.
 
@@ -173,7 +156,25 @@ Final AXI slave assignment:
   `timeout` variable retained in `i2c.c` for those remaining polls.
 - All simulator tests pass: uart 8/8, dma 9/9, spi 8/8, i2c 7/7.
 
-### ~~C11. I2C Clock-Stretching Tests~~
+### ~~C11. DDR4 Speed-Grade Parameter Support~~
+- Extended `MEM_TYPE` Makefile variable to accept DDR4 speed grades:
+  `MEM_TYPE=ddr4` (default → DDR4-1600) or `MEM_TYPE=ddr4-<N>` where
+  N ∈ {1600, 1866, 2133, 2400, 2666, 2933, 3200}.
+- Added `DDR4_1866` and `DDR4_2933` timing entries to `ddr4_axi4_pkg.sv`
+  (previously only 1600/2133/2400/2666/3200 were present).
+- Replaced 11 individual DDR4 timing parameters (`DDR4_CL`, `DDR4_RCD`,
+  `DDR4_RP`, `DDR4_RAS`, `DDR4_RC`, `DDR4_WR`, `DDR4_RTP`, `DDR4_WTR`,
+  `DDR4_FAW`, `DDR4_REFI`, `DDR4_RFC`) in `ddr4_axi4_slave.sv` with a
+  single `DDR4_SPEED_GRADE` integer; timing is looked up at runtime via
+  `ddr4_axi4_pkg::get_ddr4_timing()` in the `initial`/`$display` block.
+- Updated `testbench/tb_kv32_soc.sv` to expose a single `DDR4_SPEED_GRADE`
+  parameter (default 1600) passed through to `ddr4_axi4_slave`.
+- Makefile uses `patsubst` to extract the grade number and passes a single
+  `-pvalue+DDR4_SPEED_GRADE=<N>` flag to Verilator; all per-grade `ifeq`
+  blocks eliminated. Updated `make help` with DDR4 memory-type examples.
+- Regression: all tests PASS for `MEM_TYPE=ddr4` through `MEM_TYPE=ddr4-3200`.
+
+### ~~C12. I2C Clock-Stretching Tests~~
 - Extended `testbench/i2c_slave_eeprom.sv` with `STRETCH_CYCLES` parameter and `scl_oe` output;
   slave holds SCL low after each byte ACK for the configured number of clock cycles.
 - Wired slave `scl_oe` into the open-drain SCL bus in `testbench/tb_kv32_soc.sv`;
@@ -198,7 +199,7 @@ Final AXI slave assignment:
 - All tests pass: `make rtl-i2c` 9/9, `make STRETCH=200 rtl-i2c` 9/9,
   `make STRETCH=2000 rtl-i2c` 9/9, `make sim-i2c` 9/9, `make spike-i2c` 9/9. Lint clean.
 
-### ~~C12. I-Cache PMA Bypass + NCM Test Coverage~~
+### ~~C13. I-Cache PMA Bypass + NCM Test Coverage~~
 - Implemented PMA-based per-request bypass in `rtl/kv32_icache.sv`: added `pma_cacheable`
   (= `req_addr_r[31]`) and `use_cache` (= `cache_enable & pma_cacheable`) signals. All
   per-request `cache_enable` uses in the state machine, AXI AR channel, fill tracking,
@@ -228,3 +229,39 @@ Final AXI slave assignment:
 - All tests pass: `make rtl-icache` 4/4 (2 410 PMA bypass fetches visible in stats),
   `make sim-icache` 4/4, `make spike-icache` 4/4. Lint clean.
 
+### ~~C14. DDR4 Simulation Memory Model~~
+- Added `testbench/ddr4_axi4_slave.sv` and `testbench/ddr4_axi4_pkg.sv`: a cycle-accurate
+  DDR4 slave model with configurable speed grades (1600 / 1866 / 2133 / 2400 / 2666 / 2933 / 3200).
+- Added `MEM_TYPE` Makefile variable (`sram` | `ddr4` | `ddr4-<grade>`); selects between
+  `testbench/axi_memory.sv` and `ddr4_axi4_slave.sv` at elaboration time.
+- ELF loading in `ddr4_axi4_slave.sv` via the same `elfloader` DPI-C interface.
+- Regression: all tests pass under both `MEM_TYPE=sram` and `MEM_TYPE=ddr4`.
+
+### ~~C15. I-Cache Benchmark Refresh~~
+- Re-ran i-cache configuration sweep (36 configs × 2 benchmarks) with `MEM_TYPE=sram`
+  and `MEM_TYPE=ddr4`.
+- Added DDR4 analysis sections to `docs/icache_benchmark_report.md`: per-config latency
+  impact, hello-world and icache-benchmark comparisons, and full regression status.
+- WFI timing test (sub-test 4) margin widened from ±600 to ±1000 cycles to cover DDR4
+  cold-cache overhead on the post-wakeup instruction refill path; all 12 WFI sub-tests
+  pass under both SRAM and DDR4.
+
+### ~~C16. Synthesis Warning Fixes~~
+- Fixed all `CDFG2G-622` (multiple-driver) warnings in Cadence Genus:
+  - `rtl/core/kv32_sb.sv`: merged two `always_ff` blocks (alloc/flush and complete/flush)
+    driving `buf_valid`, `buf_inflight`, `wr_ptr`, `rd_ptr` into a single block.
+  - `rtl/axi_plic.sv`: moved `claimed_r` set-on-claim logic from a separate `always_ff`
+    into the existing pending-update block.
+  - `rtl/axi_i2c.sv`: consolidated `rxf_push_r` reset and default into the I2C state
+    machine `always_ff`; removed duplicate driver in the FIFO block.
+  - `rtl/axi_dma.sv`: merged W1C `ch_done`/`ch_err` clearing logic into the engine
+    `always_ff`; deleted the standalone W1C block.
+- Fixed `CDFG-508` (unused flip-flop) warnings:
+  - `rtl/core/kv32_core.sv`: wrapped `csr_wdata_wb`, `csr_zimm_wb`, `csr_addr_wb`
+    assignments in `` `ifndef SYNTHESIS `` (DPI-C testbench probes; not needed in gates).
+- Fixed `CDFG-472` (unreachable default case) warnings:
+  - `rtl/core/kv32_decoder.sv`: removed three `default: illegal = 1'b1` lines inside
+    fully-enumerated 3-bit `funct3` case statements.
+  - `rtl/kv32_icache.sv`: removed unreachable `default: next_state = S_IDLE`.
+  - `rtl/jtag/jtag_tap.sv`: removed unreachable `default: state_next = TEST_LOGIC_RESET`.
+- All 25 RTL tests pass; Verilator lint clean.

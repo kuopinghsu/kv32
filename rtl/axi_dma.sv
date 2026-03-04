@@ -361,33 +361,7 @@ module axi_dma #(
         end
     end
 
-    // W1C for DONE / ERR via config slave STATUS write
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            ch_done <= '0;
-            ch_err  <= '0;
-        end else begin
-            // Engine sets done/err (see engine block); CPU clears via W1C
-            if (cfg_awvalid && cfg_wvalid &&
-                (cfg_awaddr[11:0] < GLBL_OFF) &&
-                (cfg_awaddr[5:2] == 4'h1)) begin          // STAT register
-                if (wr_ch_idx < NUM_CHANNELS) begin
-                    if (cfg_wdata[1]) ch_done[wr_ch_idx] <= 1'b0;  // clear DONE
-                    if (cfg_wdata[2]) ch_err[wr_ch_idx]  <= 1'b0;  // clear ERR
-                end
-            end
-            // Also clear via IRQ_STAT W1C at 0xF00
-            if (cfg_awvalid && cfg_wvalid &&
-                cfg_awaddr[11:0] == GLBL_OFF) begin
-                for (int i = 0; i < NUM_CHANNELS; i++) begin
-                    if (cfg_wdata[i]) begin
-                        ch_done[i] <= 1'b0;
-                        ch_err[i]  <= 1'b0;
-                    end
-                end
-            end
-        end
-    end
+    // (W1C for ch_done/ch_err merged into engine always_ff below to fix multi-driver CDFG2G-622)
 
     // ── ch_armed: sticky arm latch (single driver to avoid multiple-driver lint) ──
     // Set:   when CPU writes CTRL with START bit=1 and EN bit=1
@@ -570,7 +544,8 @@ module axi_dma #(
             active_ch   <= '0;
             rr_ptr      <= '0;
             ch_busy     <= '0;
-            // ch_done / ch_err managed in separate always_ff above
+            ch_done     <= '0;
+            ch_err      <= '0;
             e_mode      <= '0;
             e_src_inc   <= 1'b0;
             e_dst_inc   <= 1'b0;
@@ -861,6 +836,29 @@ module axi_dma #(
 
                 default: eng_state <= S_IDLE;
             endcase
+
+            // W1C: CPU clears ch_done/ch_err via STATUS register write
+            // (merged here from separate always_ff to fix multi-driver CDFG2G-622)
+            /* verilator lint_off WIDTHEXPAND */
+            if (cfg_awvalid && cfg_wvalid &&
+                (cfg_awaddr[11:0] < GLBL_OFF) &&
+                (cfg_awaddr[5:2] == 4'h1)) begin          // STAT register
+                if (wr_ch_idx < NUM_CHANNELS) begin
+                    if (cfg_wdata[1]) ch_done[wr_ch_idx] <= 1'b0;  // clear DONE
+                    if (cfg_wdata[2]) ch_err[wr_ch_idx]  <= 1'b0;  // clear ERR
+                end
+            end
+            /* verilator lint_on WIDTHEXPAND */
+            // Also clear via IRQ_STAT W1C at 0xF00
+            if (cfg_awvalid && cfg_wvalid &&
+                cfg_awaddr[11:0] == GLBL_OFF) begin
+                for (int i = 0; i < NUM_CHANNELS; i++) begin
+                    if (cfg_wdata[i]) begin
+                        ch_done[i] <= 1'b0;
+                        ch_err[i]  <= 1'b0;
+                    end
+                end
+            end
 
             // STOP abort: if CPU sets STOP while channel is active
             if (ch_ctrl[active_ch][2] && ch_busy[active_ch]) begin

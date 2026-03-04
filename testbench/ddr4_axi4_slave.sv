@@ -33,19 +33,10 @@ module ddr4_axi4_slave #(
     parameter DDR4_COLS         = 1024,           // Number of columns per row
 
     //-------------------------------------------------------------------------
-    // DDR4 Timing Parameters (in clock cycles at memory clock)
+    // DDR4 Speed Grade (MT/s).  All timing is derived from ddr4_axi4_pkg.
+    // Supported values: 1600, 1866, 2133, 2400, 2666, 2933, 3200
     //-------------------------------------------------------------------------
-    parameter DDR4_CL           = 16,             // CAS Latency
-    parameter DDR4_RCD          = 16,             // RAS to CAS Delay
-    parameter DDR4_RP           = 16,             // Row Precharge Time
-    parameter DDR4_RAS          = 32,             // Row Active Time
-    parameter DDR4_RC           = 48,             // Row Cycle Time
-    parameter DDR4_WR           = 16,             // Write Recovery Time
-    parameter DDR4_RTP          = 8,              // Read to Precharge
-    parameter DDR4_WTR          = 8,              // Write to Read Delay
-    parameter DDR4_FAW          = 32,             // Four Activate Window
-    parameter DDR4_REFI         = 7800,           // Refresh Interval (ns)
-    parameter DDR4_RFC          = 350,            // Refresh Cycle Time (ns)
+    parameter int DDR4_SPEED_GRADE = 1600,
 
     //-------------------------------------------------------------------------
     // Simulation Parameters
@@ -125,6 +116,8 @@ module ddr4_axi4_slave #(
     //=========================================================================
     // Local Parameters
     //=========================================================================
+    import ddr4_axi4_pkg::*;
+
     localparam BYTES_PER_BEAT = AXI_DATA_WIDTH / 8;
     localparam ADDR_LSB = $clog2(BYTES_PER_BEAT);
 
@@ -344,6 +337,8 @@ module ddr4_axi4_slave #(
         faw_index = 0;
 
         if (VERBOSE_MODE) begin
+            ddr4_axi4_pkg::ddr4_timing_t t_;
+            t_ = ddr4_axi4_pkg::get_ddr4_timing(ddr4_axi4_pkg::ddr4_speed_t'(DDR4_SPEED_GRADE));
             $display("[%0t] DDR4_MODEL: Initialized with following parameters:", $time);
             $display("  - Density: %0d GB", DDR4_DENSITY_GB);
             $display("  - Data Width: %0d bits", DDR4_DQ_WIDTH);
@@ -352,9 +347,10 @@ module ddr4_axi4_slave #(
             $display("  - Columns: %0d", DDR4_COLS);
             $display("  - AXI Data Width: %0d bits", AXI_DATA_WIDTH);
             $display("  - Memory Depth: %0d entries", MEM_DEPTH);
-            $display("  - CAS Latency (CL): %0d", DDR4_CL);
-            $display("  - RAS to CAS Delay (tRCD): %0d", DDR4_RCD);
-            $display("  - Row Precharge (tRP): %0d", DDR4_RP);
+            $display("  - Speed Grade: DDR4-%0d", DDR4_SPEED_GRADE);
+            $display("  - CAS Latency (CL): %0d", t_.CL);
+            $display("  - RAS to CAS Delay (tRCD): %0d ns", t_.tRCD);
+            $display("  - Row Precharge (tRP): %0d ns", t_.tRP);
         end
     end
 
@@ -542,6 +538,10 @@ module ddr4_axi4_slave #(
     //=========================================================================
     // Read State Machine
     //=========================================================================
+    // RLAST is combinatorial: asserted exactly during the last data beat so
+    // it is valid alongside s_axi_rvalid with zero registration lag.
+    assign s_axi_rlast = (rd_state == RD_DATA) && (rd_beat_cnt == rd_len_reg);
+
     always_ff @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             rd_state <= RD_IDLE;
@@ -596,13 +596,11 @@ module ddr4_axi4_slave #(
             s_axi_rid <= '0;
             s_axi_rdata <= '0;
             s_axi_rresp <= RESP_OKAY;
-            s_axi_rlast <= 1'b0;
         end else begin
             case (rd_state)
                 RD_IDLE: begin
                     s_axi_arready <= 1'b1;
                     s_axi_rvalid <= 1'b0;
-                    s_axi_rlast <= 1'b0;
 
                     if (s_axi_arvalid && s_axi_arready) begin
                         rd_id_reg <= s_axi_arid;
@@ -636,18 +634,9 @@ module ddr4_axi4_slave #(
                 end
 
                 RD_ADDR_WAIT: begin
-                    // Prepare for data phase
-                end
-
-                RD_DELAY: begin
-                    if (rd_delay_cnt > 0)
-                        rd_delay_cnt <= rd_delay_cnt - 1;
-                end
-
-                RD_DATA: begin
-                    s_axi_rvalid <= 1'b1;
-                    s_axi_rid <= rd_id_reg;
-
+                    // Pre-load beat-0 rdata/rresp while rvalid is still
+                    // de-asserted.  This ensures rdata is stable when rvalid
+                    // rises in the first RD_DATA cycle (no registration lag).
                     if (is_valid_address(rd_addr_next)) begin
                         s_axi_rdata <= memory[addr_to_mem_index(rd_addr_next)];
                         s_axi_rresp <= RESP_OKAY;
@@ -656,22 +645,31 @@ module ddr4_axi4_slave #(
                         s_axi_rresp <= RESP_SLVERR;
                         stats.address_errors <= stats.address_errors + 1;
                     end
+                end
 
-                    s_axi_rlast <= (rd_beat_cnt == rd_len_reg);
+                RD_DELAY: begin
+                    if (rd_delay_cnt > 0)
+                        rd_delay_cnt <= rd_delay_cnt - 1;
+                end
+
+                RD_DATA: begin
+                    // rdata/rresp were pre-loaded in RD_ADDR_WAIT (or advanced on
+                    // each prior handshake); only drive rvalid/rid here.
+                    s_axi_rvalid <= 1'b1;
+                    s_axi_rid <= rd_id_reg;
 
                     if (s_axi_rready && s_axi_rvalid) begin
-                        // Count bytes read
+                        // Beat N accepted.  Count it, then pre-load beat N+1.
                         stats.total_read_bytes <= stats.total_read_bytes + (1 << rd_size_reg);
 
                         if (VERBOSE_MODE)
                             $display("[%0t] DDR4_MODEL: Read beat %0d - ADDR=0x%h, DATA=0x%h",
-                                    $time, rd_beat_cnt, rd_addr_next, memory[addr_to_mem_index(rd_addr_next)]);
+                                    $time, rd_beat_cnt, rd_addr_next, s_axi_rdata);
 
                         if (rd_beat_cnt == rd_len_reg) begin
-                            // Last beat
+                            // Last beat: de-assert rvalid and record latency.
                             s_axi_rvalid <= 1'b0;
 
-                            // Calculate and update latency statistics
                             stats.read_latency_total <= stats.read_latency_total + ($time - rd_start_time);
                             if (($time - rd_start_time) < stats.min_read_latency)
                                 stats.min_read_latency <= $time - rd_start_time;
@@ -682,8 +680,24 @@ module ddr4_axi4_slave #(
                                 $display("[%0t] DDR4_MODEL: Read transaction completed - ID=%0d, Latency=%0t",
                                         $time, rd_id_reg, $time - rd_start_time);
                         end else begin
-                            rd_beat_cnt <= rd_beat_cnt + 1;
-                            rd_addr_next <= calc_next_addr(rd_addr_next, rd_size_reg, rd_burst_reg, rd_len_reg, rd_addr_reg);
+                            // Not the last beat: advance address and pre-load
+                            // the next beat's data so it is ready next cycle.
+                            begin
+                                automatic logic [AXI_ADDR_WIDTH-1:0] next_rd_addr;
+                                next_rd_addr = calc_next_addr(
+                                    rd_addr_next, rd_size_reg, rd_burst_reg,
+                                    rd_len_reg,   rd_addr_reg);
+                                if (is_valid_address(next_rd_addr)) begin
+                                    s_axi_rdata <= memory[addr_to_mem_index(next_rd_addr)];
+                                    s_axi_rresp <= RESP_OKAY;
+                                end else begin
+                                    s_axi_rdata <= '0;
+                                    s_axi_rresp <= RESP_SLVERR;
+                                    stats.address_errors <= stats.address_errors + 1;
+                                end
+                                rd_beat_cnt  <= rd_beat_cnt + 1;
+                                rd_addr_next <= next_rd_addr;
+                            end
                         end
                     end
                 end

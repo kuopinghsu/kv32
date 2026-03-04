@@ -148,7 +148,6 @@ module kv32_decoder (
                         3'b111: alu_op = ALU_AND;
                         3'b001: alu_op = ALU_SLL;
                         3'b101: alu_op = (instr[30]) ? ALU_SRA : ALU_SRL;
-                        default: illegal = 1'b1;
                     endcase
                 end
 
@@ -164,7 +163,6 @@ module kv32_decoder (
                             3'b101: alu_op = ALU_DIVU;
                             3'b110: alu_op = ALU_REM;
                             3'b111: alu_op = ALU_REMU;
-                            default: illegal = 1'b1;
                         endcase
                     end else begin
                         case (funct3)
@@ -176,7 +174,6 @@ module kv32_decoder (
                             3'b101: alu_op = (funct7[5]) ? ALU_SRA : ALU_SRL;
                             3'b110: alu_op = ALU_OR;
                             3'b111: alu_op = ALU_AND;
-                            default: illegal = 1'b1;
                         endcase
                     end
                 end

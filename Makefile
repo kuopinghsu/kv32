@@ -193,13 +193,25 @@ VERILATOR_FLAGS += -pvalue+MEM_READ_LATENCY=$(MEM_READ_LATENCY)
 VERILATOR_FLAGS += -pvalue+MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY)
 VERILATOR_FLAGS += -pvalue+MEM_DUAL_PORT=$(MEM_DUAL_PORT)
 
-# External memory type: sram (default) or ddr4
-# MEM_TYPE=sram  → axi_memory.sv (32-bit, parametric latency, DPI-C)
-# MEM_TYPE=ddr4  → ddr4_axi4_slave.sv (full AXI4 with ID, DDR4 timing, DPI-C)
+# External memory type: sram (default) or ddr4/<speed-grade>
+# MEM_TYPE=sram        → axi_memory.sv (32-bit, parametric latency, DPI-C)
+# MEM_TYPE=ddr4        → ddr4_axi4_slave.sv, DDR4-1600 (default speed grade)
+# MEM_TYPE=ddr4-<N>   → DDR4-N speed grade; N ∈ {1600,1866,2133,2400,2666,2933,3200}
+# All timing is looked up inside ddr4_axi4_pkg via the DDR4_SPEED_GRADE parameter.
 MEM_TYPE ?= sram
+
+# Normalize bare "ddr4" to "ddr4-1600"
 ifeq ($(MEM_TYPE),ddr4)
+  override MEM_TYPE := ddr4-1600
+endif
+
+# Extract the speed grade number from "ddr4-NNNN"
+DDR4_SPEED_GRADE = $(patsubst ddr4-%,%,$(MEM_TYPE))
+
+ifneq ($(filter ddr4-1600 ddr4-1866 ddr4-2133 ddr4-2400 ddr4-2666 ddr4-2933 ddr4-3200,$(MEM_TYPE)),)
   MEM_TB_SV = $(TB_DIR)/ddr4_axi4_pkg.sv $(TB_DIR)/ddr4_axi4_slave.sv
   VERILATOR_FLAGS += +define+MEM_TYPE_DDR4
+  VERILATOR_FLAGS += -pvalue+DDR4_SPEED_GRADE=$(DDR4_SPEED_GRADE)
 else
   MEM_TB_SV = $(TB_DIR)/axi_memory.sv
 endif
@@ -334,6 +346,8 @@ verify-mem:
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=0 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=0 compare-all rtl-all
+	@make -f Makefile MEM_TYPE=ddr4-1866 compare-all rtl-all
+	@make -f Makefile MEM_TYPE=ddr4-3200 compare-all rtl-all
 
 # Build RTL with Verilator
 build-rtl: $(BUILD_TARGET)
@@ -1069,6 +1083,13 @@ help:
 	@echo "  make coverage-report # Generate coverage report"
 	@echo "  make clean           # Clean all build files"
 	@echo "  make info            # Show configuration"
+	@echo ""
+	@echo "Memory Type:"
+	@echo "  make MEM_TYPE=sram rtl-hello            # SRAM model (default)"
+	@echo "  make MEM_TYPE=ddr4 rtl-hello            # DDR4-1600 (default grade)"
+	@echo "  make MEM_TYPE=ddr4-2133 rtl-all         # DDR4-2133 speed grade"
+	@echo "  make MEM_TYPE=ddr4-3200 rtl-all         # DDR4-3200 speed grade"
+	@echo "  Supported DDR4 grades: ddr4-1600 ddr4-1866 ddr4-2133 ddr4-2400 ddr4-2666 ddr4-2933 ddr4-3200"
 	@echo ""
 	@echo "Debug Options:"
 	@echo "  make DEBUG=1 rtl-simple  # Run with debug messages (rebuilds RTL)"

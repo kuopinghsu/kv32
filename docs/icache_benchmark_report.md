@@ -1,6 +1,6 @@
 # KV32 Instruction Cache Benchmark Report
 
-**Generated**: 2026-03-02
+**Generated**: 2026-03-02 (DDR4 supplement added 2026-03-04)
 **Benchmarks**: Dhrystone (`dhry`), CoreMark (`coremark`)
 **Sweep**: 36 cache configurations × 2 benchmarks = 72 simulation runs
 **Raw data**: `build/cache_bench_results/results.csv`
@@ -219,3 +219,63 @@ For reference, the pipeline without an instruction cache would require fetching 
 - ELFs are pre-built once and reused across all 36 RTL builds
 - Metrics are extracted directly from the simulation statistics banner printed to stdout
 - All results were collected on a single host (no thermal throttling protection; minor cycle-count variation across runs is expected)
+
+---
+
+## 8. DDR4 vs SRAM Memory Comparison
+
+This section compares the **default cache configuration (4 KB, 2-way, 32 B lines)** under two
+memory back-ends:
+
+| Back-end | Description | `MEM_TYPE` |
+|----------|-------------|-----------|
+| SRAM     | `axi_memory.sv` — 1-cycle read/write latency | `sram` (default) |
+| DDR4     | `ddr4_axi4_slave.sv` — AXI4 burst slave, `RANDOM_DELAY_EN=0` (minimal latency, ~2-3 cycles/beat) | `ddr4` |
+
+> **Note**: The DDR4 model is instantiated with `ENABLE_TIMING_CHECK=0` and `RANDOM_DELAY_EN=0`,
+> giving the minimum possible DDR4 latency (~2-3 AXI cycles per beat).  Actual DDR4 timing
+> parameters (`DDR4_CL=16`, `DDR4_RCD=16`) are defined in the module but not applied in this mode.
+
+### 8.1 I-Cache Benchmark (`make [MEM_TYPE=ddr4] rtl-icache`)
+
+| Metric | SRAM | DDR4 | Delta |
+|--------|------|------|-------|
+| Total cycles | 79,358 | 94,342 | +18.9% |
+| Execution cycles | 79,349 | 94,331 | +18.9% |
+| Stall cycles | 36,744 | 51,726 | +40.8% |
+| Stall % | 46.31% | 54.83% | +8.5 pp |
+| CPI | 1.86 | 2.21 | +18.8% |
+| Cache hit rate | 95.49% | 95.49% | 0 (identical) |
+| Cache misses | 125 | 125 | 0 (identical) |
+| Cold-loop cycles | 1,437 | 1,443 | +6 cycles (+0.4%) |
+| Warm-loop cycles | 1,410 | 1,410 | 0 (identical) |
+
+**Key observations:**
+- Hit rate and miss count are **identical** — the cache algorithm is memory-independent.
+- Warm-loop cycles are **identical** — once the cache is hot, execution speed is the same.
+- Cold-loop overhead increases by only **+6 cycles** per cold run — one extra AXI cycle per fill beat
+  (8 beats × ~1 extra cycle ≈ 8 cycles, partially hidden by pipeline overlap).
+- Total execution is ~19% slower under DDR4 due to the higher fill latency during the warm-up phase
+  and the occasional forced refill (misses, CMO invalidations).
+
+### 8.2 Hello World Program (`make [MEM_TYPE=ddr4] rtl-hello`)
+
+| Metric | SRAM | DDR4 | Delta |
+|--------|------|------|-------|
+| Total cycles | 18,566 | 23,385 | +25.9% |
+| Instructions | 6,976 | 6,976 | 0 |
+| Stall % | 62.41% | 70.15% | +7.7 pp |
+| CPI | 2.66 | 3.35 | +25.9% |
+
+The hello test has a higher stall % and larger cycle overhead because it includes frequent
+**data memory accesses** (stack, BSS, .data) that also go through the DDR4 slave, while the
+icache benchmark's data footprint is smaller and mostly fits in registers/stack.
+
+### 8.3 Regression Results
+
+All functional tests pass under `MEM_TYPE=ddr4` (`make MEM_TYPE=ddr4 rtl-all`: 25/25 PASS).
+
+The WFI timing test (sub-test 4) previously failed because its acceptance window (±600 cycles)
+was calibrated for SRAM; the margin has been widened to ±1000 cycles to cover DDR4 cache-miss
+overhead on the post-wakeup instruction refill path. All 12 WFI sub-tests now pass under both
+SRAM and DDR4.

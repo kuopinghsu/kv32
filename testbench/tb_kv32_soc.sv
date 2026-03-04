@@ -21,7 +21,10 @@ module tb_kv32_soc #(
     parameter int GPIO_NUM_PINS     = 4,    // Number of GPIO pins (1-128)
     parameter int MEM_READ_LATENCY  = 1,    // External memory read latency (cycles)
     parameter int MEM_WRITE_LATENCY = 1,    // External memory write latency (cycles)
-    parameter int MEM_DUAL_PORT     = 1     // External memory dual-port mode
+    parameter int MEM_DUAL_PORT     = 1,    // External memory dual-port mode
+    // DDR4 speed grade (MT/s): 1600/1866/2133/2400/2666/2933/3200.
+    // All timing is derived internally from ddr4_axi4_pkg::get_ddr4_timing().
+    parameter int DDR4_SPEED_GRADE  = 1600  // DDR4 speed grade in MT/s
 ) (
     input wire clk,
     input wire rst_n,
@@ -293,7 +296,8 @@ module tb_kv32_soc #(
         .DDR4_DENSITY_GB(1),
         .BASE_ADDR      (32'h80000000),
         .ENABLE_TIMING_CHECK(0),
-        .VERBOSE_MODE   (0)
+        .VERBOSE_MODE   (0),
+        .DDR4_SPEED_GRADE(DDR4_SPEED_GRADE)
     ) ext_mem (
         .aclk            (clk),
         .aresetn         (rst_n),

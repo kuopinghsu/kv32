@@ -214,9 +214,15 @@ module kv32_sb #(
     // Priority: Flush takes precedence over allocation and issue
     // ========================================================================
 
+    // ========================================================================
+    // Single always_ff for all buf_valid / buf_inflight / wr_ptr / rd_ptr
+    // (merged to eliminate multi-driver warnings CDFG2G-622)
+    // Priority (highest to lowest): flush > complete > issue > alloc
+    // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             wr_ptr <= '0;
+            rd_ptr <= '0;
             for (int i = 0; i < DEPTH; i++) begin
                 buf_addr[i]     <= '0;
                 buf_data[i]     <= '0;
@@ -252,7 +258,20 @@ module kv32_sb #(
                 `DEBUG2(`DBG_GRP_SB, ("Issue store rdptr=%0d addr=0x%h", rd_ptr, buf_addr[rd_ptr]));
             end
 
-            // Operation 3: Flush - clear all entries
+            // Operation 3: Complete entry when response arrives
+            // resp_valid indicates memory system has finished the store
+            // Valid check prevents spurious responses from affecting invalid entries
+            if (resp_valid && buf_valid[rd_ptr]) begin
+                buf_valid[rd_ptr]    <= 1'b0;  // Free the entry
+                buf_inflight[rd_ptr] <= 1'b0;  // Clear inflight flag
+                if (PTR_WIDTH > 0) begin
+                    rd_ptr <= rd_ptr + 1'b1;   // Advance head pointer
+                end
+                `DEBUG2(`DBG_GRP_SB, ("Complete store rdptr=%0d %s",
+                       rd_ptr, resp_error ? "ERROR" : "OK"));
+            end
+
+            // Operation 4: Flush - highest priority, overrides all above
             // This happens on exceptions or branch mispredictions
             // All pending stores are discarded (may be from wrong execution path)
             if (flush) begin
@@ -260,44 +279,9 @@ module kv32_sb #(
                     buf_valid[i]    <= 1'b0;
                     buf_inflight[i] <= 1'b0;
                 end
-                `DEBUG2(`DBG_GRP_SB, ("Flush all entries"));
-            end
-        end
-    end
-
-    // ========================================================================
-    // Buffer Entry Completion and Read Pointer Management
-    // ========================================================================
-    //
-    // When memory completes a store (resp_valid), the entry at rd_ptr is:
-    //   1. Marked invalid (freed)
-    //   2. Read pointer advances to next entry
-    //
-    // Flush resets both pointers to synchronize and start fresh.
-    // ========================================================================
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            rd_ptr <= '0;
-        end else begin
-            // Complete entry when response arrives
-            // resp_valid indicates memory system has finished the store
-            // Valid check prevents spurious responses from affecting invalid entries
-            if (resp_valid && buf_valid[rd_ptr]) begin
-                buf_valid[rd_ptr]    <= 1'b0;  // Free the entry
-                buf_inflight[rd_ptr] <= 1'b0;  // Clear inflight flag
-                if (PTR_WIDTH > 0) begin
-                    rd_ptr <= rd_ptr + 1'b1;       // Advance head pointer
-                end
-                `DEBUG2(`DBG_GRP_SB, ("Complete store rdptr=%0d %s",
-                       rd_ptr, resp_error ? "ERROR" : "OK"));
-            end
-
-            // Reset pointers on flush to start fresh
-            // Both pointers reset to 0, making buffer empty
-            if (flush) begin
                 wr_ptr <= '0;
                 rd_ptr <= '0;
+                `DEBUG2(`DBG_GRP_SB, ("Flush all entries"));
             end
         end
     end

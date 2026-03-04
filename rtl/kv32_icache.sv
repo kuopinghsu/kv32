@@ -442,7 +442,6 @@ module kv32_icache #(
 
             S_CMO:   next_state = S_IDLE;   // single-cycle operation
 
-            default: next_state = S_IDLE;
         endcase
     end
 

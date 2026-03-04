@@ -160,6 +160,10 @@ module axi_plic #(
                         (ar_addr_latch[25:15] == '0 && rd_src_idx <= NUM_IRQ); // Priority
     end
 
+    // Claim side-effect: asserted when the claim register is being read
+    logic ar_claim_read;
+    assign ar_claim_read = ar_recv && (ar_addr_latch[25:0] == 26'h200004);
+
     // Pending update
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -186,6 +190,14 @@ module axi_plic #(
                     claimed_r[i] <= 1'b0;
                     if (!irq_src[i])
                         pending_r[i] <= 1'b0;
+                end
+            end
+            // Claim side-effect: set claimed_r when claim register is read
+            // (merged here from a separate block to fix multi-driver CDFG2G-622)
+            if (ar_claim_read && !axi_rvalid) begin
+                for (int i = 1; i <= NUM_IRQ; i++) begin
+                    if (claim_id == 5'(i))
+                        claimed_r[i] <= 1'b1;
                 end
             end
         end
@@ -305,29 +317,8 @@ module axi_plic #(
         end
     end
 
-    // Claim side-effect: set claimed_r when claim register is read
-    logic ar_claim_read;
-    assign ar_claim_read = ar_recv && (ar_addr_latch[25:0] == 26'h200004);
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int i = 1; i <= NUM_IRQ; i++) begin
-                // claimed_r reset handled in pending block
-            end
-        end else begin
-            // Set claimed on claim read (fires once per read beat)
-            if (ar_claim_read && axi_rvalid && !axi_rready) begin
-                // will be captured on the cycle the read is accepted
-            end
-            if (ar_claim_read && (!axi_rvalid)) begin
-                // Claim: mark source as claimed
-                for (int i = 1; i <= NUM_IRQ; i++) begin
-                    if (claim_id == 5'(i))
-                        claimed_r[i] <= 1'b1;
-                end
-            end
-        end
-    end
+    // (ar_claim_read declared above, before the pending update block)
+    // (Claim side-effect always_ff removed; logic merged into pending update block above)
 
     // Latched AR address (declared earlier as forward declaration)
 
