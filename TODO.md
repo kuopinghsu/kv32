@@ -121,6 +121,3 @@ Final AXI slave assignment:
   - Removed dead `axi_arcache` / `axi_arprot` ports from `kv32_icache` (the arbiter has no such
     inputs) and the corresponding open connections from `kv32_soc`.
 
-
-
-

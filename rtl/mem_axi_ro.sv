@@ -143,9 +143,8 @@ module mem_axi_ro #(
     // The ar_buf counts as 1 pending request that hasn't hit AXI yet.
     logic [$clog2(OUTSTANDING_DEPTH+2):0] total_requests;
     logic read_fifo_full;
-    /* verilator lint_off WIDTHEXPAND */
-    assign total_requests = read_outstanding_count + (ar_buf_valid ? 1'b1 : 1'b0);
-    /* verilator lint_on WIDTHEXPAND */
+    assign total_requests = ($bits(total_requests))'(read_outstanding_count) +
+                            ($bits(total_requests))'(ar_buf_valid);
     assign read_fifo_full = (total_requests >= ($bits(total_requests))'(OUTSTANDING_DEPTH));
 
     // ========================================================================

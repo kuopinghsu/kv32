@@ -87,8 +87,6 @@ module kv32_icache #(
     output logic [7:0]  axi_arlen,    // beats-1
     output logic [2:0]  axi_arsize,   // 3'b010 = 4 bytes/beat
     output logic [1:0]  axi_arburst,  // WRAP=2'b10, INCR=2'b01
-    output logic [3:0]  axi_arcache,
-    output logic [2:0]  axi_arprot,
     input  logic        axi_arready,
 
     input  logic        axi_rvalid,
@@ -886,8 +884,7 @@ module kv32_icache #(
     assign axi_arlen   = cache_enable ? 8'(WORDS_PER_LINE - 1) : 8'h00;
     assign axi_arsize  = 3'b010;   // 4 bytes per beat
     assign axi_arburst = cache_enable ? AXI_BURST_WRAP : AXI_BURST_INCR;
-    assign axi_arcache = 4'b0010;  // Normal non-cacheable bufferable
-    assign axi_arprot  = 3'b100;   // Instruction access
+    // axi_arcache/arprot: constant AXI4 hints; not forwarded by the arbiter.
 
     // Accept beats in S_MISS_R (before early restart) and S_FILL_REST /
     // S_RESP-with-fill-active (draining remaining beats after early restart).

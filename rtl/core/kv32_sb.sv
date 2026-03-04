@@ -72,7 +72,6 @@ module kv32_sb #(
     // Response interface
     input  logic                  resp_valid,
     input  logic                  resp_error,
-    output logic                  resp_ready,
 
     // Flush control
     input  logic                  flush,
@@ -203,8 +202,6 @@ module kv32_sb #(
         mem_data = buf_data[rd_ptr];
         mem_strb = buf_strb[rd_ptr];
     end
-    assign resp_ready = 1'b1;  // Always ready to accept responses
-
     // ========================================================================
     // Buffer Entry Allocation and State Management
     // ========================================================================
@@ -506,13 +503,6 @@ module kv32_sb #(
     endproperty
     assert property (p_cpu_ready_zero_when_full)
         else $error("[SB] cpu_ready=1 when buffer full");
-
-    property p_resp_ready_always_high;
-        @(posedge clk) disable iff (!rst_n)
-        resp_ready == 1'b1;
-    endproperty
-    assert property (p_resp_ready_always_high)
-        else $error("[SB] resp_ready should always be 1");
 
     // mem_valid Behavior
     property p_mem_valid_needs_valid_entry;

@@ -2046,9 +2046,6 @@ module kv32_core #(
         .mem_ready(sb_mem_ready),
         .resp_valid(dmem_resp_valid && dmem_resp_is_write),
         .resp_error(dmem_resp_error),
-        /* verilator lint_off PINCONNECTEMPTY */
-        .resp_ready(),  // Not used
-        /* verilator lint_on PINCONNECTEMPTY */
         // Never flush committed stores: all SB entries are from retired
         // instructions (past EX stage). EX-stage exceptions and interrupts
         // must not cancel pre-committed writes (RISC-V precise-exception model).

@@ -701,10 +701,6 @@ module kv32_soc #(
                 .axi_arlen   (imem_axi_arlen),
                 .axi_arsize  (imem_axi_arsize),
                 .axi_arburst (imem_axi_arburst),
-                /* verilator lint_off PINCONNECTEMPTY */
-                .axi_arcache (/* unused */),
-                .axi_arprot  (/* unused */),
-                /* verilator lint_on PINCONNECTEMPTY */
                 .axi_rdata   (imem_axi_rdata),
                 .axi_rresp   (imem_axi_rresp),
                 .axi_rvalid  (imem_axi_rvalid),
