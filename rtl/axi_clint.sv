@@ -56,8 +56,11 @@ module axi_clint (
     // retirement (retire_instr=1) instead of every clock cycle.  This makes
     // mtime read-values identical to the software simulator, which also
     // increments mtime once per retired instruction.
+    // When core_sleep_i is asserted (WFI clock-gated), no instructions
+    // retire, so mtime must advance on the wall clock to allow timer wakeup.
    ,input  logic        trace_mode,
     input  logic        retire_instr,
+    input  logic        core_sleep_i,
     // Bypass: directly update CLINT registers from a retiring store so that
     // register side-effects (e.g. MSIP) take effect on the very cycle the
     // store retires, matching the software-simulator's single-cycle latency.
@@ -81,12 +84,15 @@ module axi_clint (
     // Timer counter
     // In trace mode mtime advances once per retired instruction so that its
     // value is independent of CPI and matches the software simulator exactly.
+    // Exception: when the core is sleeping (WFI clock-gated, core_sleep_i=1)
+    // no instructions retire, so we fall back to wall-clock ticking to allow
+    // the timer interrupt to fire and wake the core.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             mtime <= 64'd0;
         end else begin
 `ifndef SYNTHESIS
-            if (!trace_mode || retire_instr)
+            if (!trace_mode || retire_instr || core_sleep_i)
 `endif
                 mtime <= mtime + 64'd1;
         end
@@ -135,8 +141,18 @@ module axi_clint (
     assign mtime_trace_rd = mtime + {63'd0, retire_instr} + 64'd1;
 `endif
 
-    // Debug: Track software_irq changes
+    // Debug: Track software_irq changes, mtime/mtimecmp during sleep
     `ifdef DEBUG
+`ifndef SYNTHESIS
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) ;
+        else if (core_sleep_i) begin
+            `DEBUG2(`DBG_GRP_CLINT, ("[CLINT] sleeping: mtime=%0d mtimecmp=%0d timer_irq=%b trace=%b",
+                   mtime, mtimecmp, timer_irq, trace_mode));
+        end
+    end
+`endif
+
     logic prev_software_irq;
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

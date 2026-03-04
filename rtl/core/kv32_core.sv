@@ -98,6 +98,7 @@ module kv32_core #(
 
     // WFI / Power Management
     output logic        core_sleep_o,       // WFI stalling with all outstanding requests drained
+    input  logic        wakeup_i,           // Wakeup from kv32_pm: IRQ detected while gated
 
     // Debug Interface
     input  logic        dbg_halt_req_i,      // Debug halt request
@@ -256,8 +257,10 @@ module kv32_core #(
     logic        is_fence_i_ex;  // FENCE.I in EX stage
     logic        is_cbo_ex;      // CBO in EX stage
     logic        is_wfi_ex;      // WFI instruction in EX stage
-    logic        wfi_active;     // WFI is stalling in EX (waiting for interrupt)
-    logic        wfi_stall;      // WFI stall: hold pipeline until interrupt fires
+    logic        wfi_active;       // WFI instruction is in EX stage this cycle
+    logic        wfi_branch;       // One-shot: flush IF/ID and redirect PC back to WFI (like a branch)
+    logic        wfi_sleeping;     // Core is in WFI sleep state (pipeline flushed, awaiting wake)
+    logic        irq_was_pending;  // Sticky: an interrupt fired and cleared before WFI could observe it
     logic [31:0] alu_result_ex;
     logic        alu_ready;
     logic        branch_taken;
@@ -519,7 +522,7 @@ module kv32_core #(
     // execute until after the interrupt fires.  Consuming it (as a discard via
     // if_flush=1 while wfi_stall=1) drains ib_outstanding to zero, letting
     // core_sleep_o assert and the clock gate engage.
-    assign imem_resp_ready = !if_id_stall || ib_resp_discard || wfi_stall;
+    assign imem_resp_ready = !if_id_stall || ib_resp_discard || wfi_sleeping;
 
     // Early-branch-target fetch:
     //   On the same cycle branch_taken=1, override imem_req_addr with
@@ -599,7 +602,7 @@ module kv32_core #(
     // completes in the same cycle regardless.
     assign imem_req_valid_comb = ib_can_accept && !non_branch_flush &&
                                  !fetch_issued_for_effective_pc &&
-                                 !wfi_active &&          // stop new fetches during WFI
+                                 !wfi_sleeping &&        // suppress fetches during WFI sleep
                                  imem_req_ready;
 
     assign imem_req_valid = imem_req_valid_comb;
@@ -745,6 +748,13 @@ module kv32_core #(
                 // Return from trap: jump to saved exception PC
                 pc_if <= mepc;
                 `DEBUG2(`DBG_GRP_FETCH, ("[PC] MRET: pc=0x%h -> mepc=0x%h, outstanding=%0d", pc_if, mepc, ib_outstanding));
+            end else if (wfi_branch) begin
+                // WFI sleep entry: redirect fetch back to the WFI instruction.
+                // Fetches are suppressed by wfi_sleeping; pc_if is parked here
+                // so that on wakeup the first fetch re-executes WFI (which will
+                // then complete as a NOP because irq_pending=1).
+                pc_if <= pc_ex;
+                `DEBUG1(("[WFI] Sleep branch: parking pc_if=0x%h at WFI addr=0x%h", pc_if, pc_ex));
             end else if (branch_taken && !branch_flushed) begin
                 // Branch/jump taken: update to target address.
                 // Guard with !branch_flushed to avoid re-redirecting on stall cycles
@@ -1480,18 +1490,73 @@ module kv32_core #(
     // ============================================================================
     // WFI Stall Logic
     // ============================================================================
-    // When WFI reaches EX stage, stall the pipeline until an interrupt becomes
-    // pending.  When irq_pending fires, ex_flush clears WFI from EX and PC jumps
-    // to the interrupt handler.  mepc = pc_ex + 4 so that MRET resumes at WFI+4.
+    // WFI Sleep Entry — Branch-like Pipeline Flush
+    // ============================================================================
+    // WFI behaves like a branch back to its own PC:
+    //   1. When WFI reaches EX with no pending interrupt:
+    //      - wfi_branch fires (one-shot): flushes IF/ID and redirects pc_if
+    //        back to the WFI instruction address.
+    //      - WFI exits EX normally (flows through MEM/WB as NOP).
+    //      - wfi_sleeping register asserts.
+    //   2. While wfi_sleeping:
+    //      - All new instruction fetches are suppressed.
+    //      - The store buffer drains naturally (no explicit stall needed).
+    //      - core_sleep_o asserts once IB and SB are empty.
+    //   3. On wakeup (irq_pending / wakeup_i / exception):
+    //      - wfi_sleeping clears; fetch resumes from the saved WFI PC.
+    //      - WFI re-enters the pipeline, but irq_pending=1 so it completes
+    //        as a NOP and the interrupt is taken normally.
+    //
+    // mepc is set to the WFI PC so MRET returns to WFI, which then
+    // completes as a NOP (irq_pending clears once the handler runs mret).
     assign wfi_active = is_wfi_ex && ex_valid;
-    assign wfi_stall  = wfi_active && !irq_pending && !exception;
     logic        sb_store_pending;       // Stores are pending in buffer (primary decl: Store Buffer section)
+    // irq_was_pending: sticky flag, set on any rising edge of irq_pending.
+    // Cleared when WFI consumes it (WFI in EX sees the flag and completes as NOP).
+    // Prevents WFI from sleeping when an interrupt fired and was fully handled
+    // (mtimecmp disarmed) before WFI reached the EX stage — a race that occurs
+    // with short timer periods (e.g. 50-cycle) where the interrupt fires during
+    // the pre-WFI code rather than during the WFI stall/sleep window.
+    logic irq_pending_prev;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            irq_pending_prev <= 1'b0;
+            irq_was_pending  <= 1'b0;
+        end else begin
+            irq_pending_prev <= irq_pending;
+            if (irq_pending && !irq_pending_prev && !wfi_sleeping) // rising edge while running (not sleeping)
+                irq_was_pending <= 1'b1;  // interrupt fired before WFI reached EX: record the race
+            else if (wfi_sleeping && (irq_pending || wakeup_i))   // normal WFI wakeup path
+                irq_was_pending <= 1'b0;  // clear: this interrupt legitimately woke the core
+            else if (wfi_active && irq_was_pending)               // WFI in EX consumes the race flag
+                irq_was_pending <= 1'b0;
+        end
+    end
+
+    // wfi_branch: fires the cycle WFI first arrives in EX with no interrupt.
+    // Guards:
+    //   !sb_store_pending  — wait for preceding stores (e.g. mtimecmp write) to
+    //                        commit before evaluating irq_pending (implicit FENCE).
+    //   !irq_was_pending   — if an interrupt fired and cleared before WFI reached
+    //                        EX, treat WFI as NOP (RISC-V spec permits this).
+    //   !wfi_sleeping      — one-shot guard.
+    assign wfi_branch = wfi_active && !wfi_sleeping && !sb_store_pending &&
+                        !irq_pending && !irq_was_pending && !exception && !ex_flush;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            wfi_sleeping <= 1'b0;
+        else if (irq_pending || wakeup_i || exception || wb_exception)
+            wfi_sleeping <= 1'b0;   // wakeup: let fetch restart from WFI PC
+        else if (wfi_branch)
+            wfi_sleeping <= 1'b1;   // enter sleep: pipeline will drain
+    end
 
 `ifdef DEBUG_LEVEL_2
     always_ff @(posedge clk) begin
-        if (wfi_active) begin
-            `DEBUG2(`DBG_GRP_WFI, ("wfi_stall=%b irq_pending=%b exception=%b",
-                     wfi_stall, irq_pending, exception));
+        if (wfi_active || wfi_sleeping) begin
+            `DEBUG2(`DBG_GRP_WFI, ("wfi_active=%b wfi_branch=%b wfi_sleeping=%b irq_pending=%b exception=%b wakeup_i=%b",
+                     wfi_active, wfi_branch, wfi_sleeping, irq_pending, exception, wakeup_i));
             `DEBUG2(`DBG_GRP_WFI, ("  ib_outstanding=%0d imem_resp_valid=%b sb_store_pending=%b icache_idle_i=%b",
                      ib_outstanding, imem_resp_valid, sb_store_pending, icache_idle_i));
             `DEBUG2(`DBG_GRP_WFI, ("  => core_sleep_o=%b", core_sleep_o));
@@ -1517,8 +1582,8 @@ module kv32_core #(
     // MEM flush: Only on interrupts and WB-stage exceptions (see note below).
     //   Synchronous EX exceptions must NOT flush MEM because the MEM instruction
     //   is older in program order and must be allowed to retire.
-    assign if_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush || wfi_stall;
-    assign id_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex;
+    assign if_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush || wfi_branch;
+    assign id_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex || wfi_branch;
     assign ex_flush = irq_pending || wb_exception;
     // MEM flush: Only on interrupts (must drain for re-execution after MRET) and
     //   WB-stage exceptions (load/store access faults — WB is the oldest stage, so
@@ -1587,7 +1652,14 @@ module kv32_core #(
         // save pc_ex as the new mepc, causing the IRQ handler's own MRET to re-execute
         // the MRET instruction and loop forever.  Use mepc (unchanged since the last
         // IRQ entry) so the nested handler correctly returns to the original target.
-        if ((is_mret_ex || is_mret_mem) && irq_pending) begin
+        if (wfi_sleeping) begin
+            // WFI sleep state: pipeline was flushed and pc_if is parked at the WFI
+            // instruction address.  Any valid-looking EX/MEM entries are zombie
+            // instructions that slipped past the flush on the wfi_branch cycle
+            // (one-cycle race between IB response and the flush).  They must not
+            // influence interrupt_pc.  mepc must be WFI+4 so MRET resumes past WFI.
+            interrupt_pc = pc_if + 32'd4;
+        end else if ((is_mret_ex || is_mret_mem) && irq_pending) begin
             // interrupt_pc = mepc covers two scenarios:
             //   is_mret_ex:  IRQ fires while MRET is still stalled in EX (MIE was
             //                restored by the CSR on the first EX cycle).
@@ -1604,7 +1676,8 @@ module kv32_core #(
             // For WFI: mepc = WFI+4 so that MRET returns to the instruction after WFI.
             interrupt_pc = is_wfi_ex ? (pc_ex + 32'd4) : pc_ex;
         end else if (id_valid) begin
-            interrupt_pc = pc_id;    // ID stage
+            // For WFI in ID: treat same as EX — mepc = WFI+4 so MRET resumes past WFI.
+            interrupt_pc = is_wfi_id ? (pc_id + 32'd4) : pc_id;
         end else if (ib_outstanding > 0 || imem_resp_valid) begin
             // A fetch is in-flight inside the IB / icache but has not entered any
             // pipeline stage yet (e.g. during a cache miss when the pipeline drained).
@@ -1614,7 +1687,8 @@ module kv32_core #(
             // the correct next-instruction-to-execute address.
             interrupt_pc = ib_resp_pc;
         end else begin
-            interrupt_pc = pc_if;    // Pipeline truly empty, no in-flight fetches
+            // Pipeline truly empty — pc_if is the next PC to fetch.
+            interrupt_pc = pc_if;
         end
         exception_tval = 32'd0;
 
@@ -2328,7 +2402,8 @@ module kv32_core #(
     assign amo_in_progress = (amo_state != AMO_IDLE) ||  // Currently processing
                               (is_amo_mem && mem_valid && !amo_started);  // Just entering, not started yet
 
-    assign ex_mem_stall = mem_wb_stall || wfi_stall || (load_req_valid && !dmem_req_ready) || (amo_mem_req && !dmem_req_ready);
+    assign ex_mem_stall = mem_wb_stall || (load_req_valid && !dmem_req_ready) || (amo_mem_req && !dmem_req_ready) ||
+                         (wfi_active && sb_store_pending);  // WFI: wait for SB drain before sleeping
     // Combine all MEM->WB stall conditions (load_stall and store_stall defined above for forwarding)
     // fence_stall: stall until store buffer drains (fence ordering guarantee)
     assign fence_stall  = is_fence_mem && mem_valid && sb_store_pending;
@@ -2885,7 +2960,8 @@ module kv32_core #(
     property p_pc_sequential_increment;
         @(posedge clk) disable iff (!rst_n)
         (imem_req_valid && imem_req_ready && !if_id_stall && !branch_taken &&
-         !exception && !wb_exception && !irq_pending && !is_mret_ex) |=>
+         !exception && !wb_exception && !irq_pending && !is_mret_ex &&
+         !wfi_branch) |=>
         (pc_if == ($past(imem_req_addr) + 32'd4));
     endproperty
     assert property (p_pc_sequential_increment)
@@ -3352,7 +3428,11 @@ module kv32_core #(
     // core_sleep_o: asserted when WFI is stalling in EX and all outstanding
     // memory requests have drained (IB empty, store buffer empty).
     // Used by kv32_pm to gate the core clock for low-power WFI idle.
-    assign core_sleep_o = wfi_stall &&
+    // core_sleep_o: asserted when the core is in WFI sleep state and the
+    // pipeline has fully drained (IB empty, store buffer empty, icache idle).
+    // wfi_sleeping is used instead of the old wfi_stall so that core_sleep_o
+    // reflects the post-branch quiescent state, not a mid-EX stall.
+    assign core_sleep_o = wfi_sleeping &&
                           (ib_outstanding == '0) && !imem_resp_valid &&
                           !sb_store_pending &&
                           icache_idle_i;
@@ -3407,9 +3487,9 @@ module kv32_core #(
             cycles_since_retire <= 32'd0;
             timeout_error_reg <= 1'b0;
         end else begin
-            if (retire_instr || (wb_valid && !mem_wb_stall) || wfi_stall) begin
+            if (retire_instr || (wb_valid && !mem_wb_stall) || wfi_sleeping) begin
                 // Reset counter when instruction retires OR WB advances to new instruction
-                // or when waiting in WFI (normal low-power state, not a deadlock)
+                // or when in WFI sleep (normal low-power state, not a deadlock)
                 cycles_since_retire <= 32'd0;
             end else if (started_retiring && !timeout_error_reg) begin
                 // Only count after first instruction and before timeout

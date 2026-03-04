@@ -293,7 +293,7 @@ BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
 # Default target - run all tests
 all: rtl-all sim-all compare-all spike-all freertos-compare-simple
-	@echo "== FAST_DIV=0 FAST_MUL=0 compare-all rtl-all"
+	@make -f Makefile SIM=spike compare-all rtl-all
 	@make -f Makefile FAST_DIV=0 FAST_MUL=0 compare-all rtl-all
 	@make -f Makefile ICACHE_EN=0 compare-all rtl-all
 	@make -f Makefile TRACE=1 arch-test-all

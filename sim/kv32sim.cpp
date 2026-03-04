@@ -531,6 +531,23 @@ void KV32Simulator::take_trap(uint32_t cause, uint32_t tval) {
 
     // Jump to trap handler
     pc = csr_mtvec & ~3; // Vectored mode not yet supported
+    trap_count++;         // track how many traps have fired (useful for debugging)
+
+    if (wfi_spin_active) {
+        // Interrupt fired from inside the WFI spin loop — this is the normal
+        // wakeup path.  Mark that WFI recently completed so that cascaded
+        // interrupts which fire after MRET (e.g. MSIP triggered by a timer ISR)
+        // are not mistaken for a "pre-WFI" interrupt.
+        wfi_recently_completed = true;
+    } else if (!wfi_recently_completed) {
+        // Interrupt fired outside the WFI spin AND we are not inside a cascade
+        // from a recent WFI wakeup.  This means the interrupt was fully serviced
+        // before WFI was dispatched, mirroring the RTL irq_was_pending sticky
+        // flag.  Set irq_before_wfi so the next WFI exits immediately (NOP).
+        irq_before_wfi = true;
+    }
+    // If wfi_recently_completed is true we are in a cascade from the previous
+    // WFI wakeup — do nothing: neither set irq_before_wfi nor change the flag.
 }
 
 // Check for pending interrupts
@@ -810,8 +827,18 @@ void KV32Simulator::step() {
     // Clear exception flag from previous instruction
     exception_occurred = false;
 
-    // Check for interrupts before fetching instruction
+    // Check for interrupts before fetching instruction.
+    // We snapshot MIE and trap_count first so we can detect whether this step
+    // runs cleanly in user mode (MIE=1, no new trap).  When that happens and
+    // wfi_recently_completed is still set from a previous WFI wakeup, it means
+    // all cascaded interrupts have settled and the flag must be cleared so it
+    // does not suppress a future genuine pre-WFI interrupt detection.
+    uint32_t mie_before_check = (csr_mstatus >> 3) & 1;
+    uint64_t tc_before_check  = trap_count;
     check_interrupts();
+    // Clear the cascade-window flag on the first clean user-mode step.
+    if (mie_before_check && trap_count == tc_before_check)
+        wfi_recently_completed = false;
 
     // Tick all registered slave devices (once per traced/retired instruction).
     // Placed here so that interrupt detection in check_interrupts() above sees
@@ -1250,8 +1277,23 @@ void KV32Simulator::step() {
                 // Pre-advance pc so take_trap() saves mepc = WFI+4.
                 pc = exec_pc + 4;
 
+                // Mark that we are inside the WFI spin so take_trap() knows NOT
+                // to set irq_before_wfi for interrupts that fire inside the spin
+                // (those are the normal wakeup path).
+                wfi_spin_active = true;
+
                 // Spin until a machine-mode interrupt becomes pending and enabled.
                 while (running) {
+                    // Honour Ctrl-C even while the core is sleeping.
+                    if (sigint_received) { running = false; break; }
+
+                    // irq_before_wfi is set by take_trap() when an interrupt is
+                    // taken OUTSIDE the WFI spin (i.e. the ISR already ran and the
+                    // source was cleared before WFI was dispatched).  This mirrors
+                    // the RTL irq_was_pending sticky flag: RISC-V allows WFI to be
+                    // a NOP in that case, and we must not spin forever.
+                    if (irq_before_wfi) { irq_before_wfi = false; break; }
+
                     tick_slaves();
                     csr_mcycle++;   // count idle cycles
 
@@ -1288,6 +1330,7 @@ void KV32Simulator::step() {
                     else if (pending & (1u <<  3)) take_trap(CAUSE_MACHINE_SOFTWARE_INT, 0);
                     break;
                 }
+                wfi_spin_active = false; // we are no longer inside the WFI spin
                 // WFI itself is not traced (matches RTL: instruction gets flushed, not retired).
                 return;
             } // else if (csr_addr == 0x105) — WFI

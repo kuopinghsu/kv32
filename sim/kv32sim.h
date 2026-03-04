@@ -139,6 +139,21 @@ public:
     bool running;
     int exit_code;
     uint64_t inst_count;
+    uint64_t trap_count = 0;       // total traps taken; useful for debugging
+
+    // WFI / irq_was_pending simulation
+    // Mirrors the RTL sticky flag: set when an interrupt fires outside the WFI
+    // spin loop (i.e. the ISR ran to completion before WFI was dispatched);
+    // cleared when WFI consumes it (NOP-exit).  wfi_spin_active prevents normal
+    // ISR-wakeup paths from setting the flag.
+    bool wfi_spin_active       = false;  // true while inside the WFI spin loop
+    bool irq_before_wfi        = false;  // interrupt handled before WFI reached spin
+    // wfi_recently_completed: set when WFI wakes via its spin loop (normal path).
+    // While this is true, cascaded interrupts that fire after MRET (e.g. MSIP
+    // cascaded from a timer ISR) are recognised as part of the same WFI wakeup
+    // event and must NOT set irq_before_wfi.  Cleared on the first clean
+    // user-mode step (MIE=1, no interrupt taken) after all cascades settle.
+    bool wfi_recently_completed = false;
 
     // Device drivers
     std::vector<SlaveRegion> slaves;  // Universal slave interface table

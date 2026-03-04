@@ -535,6 +535,7 @@ module kv32_soc #(
     // ========================================================================
     logic        core_sleep;          // kv32_core is idle in WFI (all requests drained)
     logic        core_clk;            // Gated clock supplied to kv32_core by kv32_pm
+    logic        core_wakeup;         // Wakeup pulse from kv32_pm to kv32_core
     logic        icache_idle;         // ICache has no AXI transaction in-flight
 
     // Tie off debug memory interface (not yet implemented - would need AXI master)
@@ -566,7 +567,8 @@ module kv32_soc #(
         .timer_irq_i   (timer_irq),
         .external_irq_i(external_irq),
         .software_irq_i(software_irq),
-        .gated_clk_o   (core_clk)
+        .gated_clk_o   (core_clk),
+        .wakeup_o      (core_wakeup)
     );
 
     // ========================================================================
@@ -622,6 +624,7 @@ module kv32_soc #(
 
         // WFI / Power Management
         .core_sleep_o(core_sleep),
+        .wakeup_i    (core_wakeup),
 
         // Debug interface
         .dbg_halt_req_i(dbg_halt_req),
@@ -1253,6 +1256,7 @@ module kv32_soc #(
 `ifndef SYNTHESIS
        ,.trace_mode(trace_mode)
         ,.retire_instr(core_retire_instr)
+        ,.core_sleep_i(core_sleep)
         // Retire-store bypass: forward retiring store addresses/data directly
         // to the CLINT so that MSIP (and other CLINT regs) are updated on the
         // very cycle the store retires, matching SW-sim timing.

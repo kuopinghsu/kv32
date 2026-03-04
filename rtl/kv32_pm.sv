@@ -21,17 +21,24 @@
 //     simulations and RTL-vs-software trace comparisons are unaffected by
 //     the clock-gating logic.
 //
-// Clock Enable Logic:
-//   clk_en = !sleep_req_i                   (core not in WFI)
-//          | timer_irq_i                     (CLINT timer IRQ pending)
-//          | external_irq_i                  (PLIC external IRQ pending)
-//          | software_irq_i                  (CLINT software IRQ pending)
+// Clock Enable Logic (registered on always-on clk_i):
+//   clk_en is a flip-flop driven on the ungated system clock:
+//     - Goes LOW on the rising edge of sleep_req_i  (core entering WFI)
+//     - Goes HIGH as soon as any IRQ source is asserted  (wake-up condition)
+//     - IRQ takes priority: if an IRQ arrives simultaneously with the sleep
+//       request rising edge, the clock stays enabled.
 //
-//   When sleep_req_i is asserted AND no interrupt is pending, clk_en=0 and
-//   the gated clock is held low.  The interrupt signals are driven by the
-//   SoC peripherals (CLINT, PLIC) which continue to run on the ungated
-//   system clock, so wake-up latency is one clock period.
+// Wakeup Signal (handshake):
+//   wakeup_o is a set-clear FF on the always-on clock:
+//     - SET  when any IRQ is asserted while the core is sleeping
+//     - CLEAR when sleep_req_i deasserts, confirming the pipeline has unstalled
+//   This guarantees wakeup_o remains asserted across the 1-2 cycle latency
+//   of the clock gate re-enabling, even if the IRQ is a single-cycle pulse.
 // ============================================================================
+
+`ifdef SYNTHESIS
+    import kv32_pkg::*;
+`endif
 
 module kv32_pm (
     input  logic clk_i,           // System clock (ungated)
@@ -46,52 +53,82 @@ module kv32_pm (
     input  logic software_irq_i,  // CLINT software interrupt
 
     // Gated clock output to kv32_core
-    output logic gated_clk_o      // Clock-gated version of clk_i
+    output logic gated_clk_o,     // Clock-gated version of clk_i
+
+    // Wakeup signal to kv32_core (unstall from WFI)
+    output logic wakeup_o         // High while sleeping and any IRQ is pending
 );
+`ifndef SYNTHESIS
+    import kv32_pkg::*;
+`endif
 
     // =========================================================================
-    // Wake-interrupt Latch (ungated clock domain)
+    // Clock Enable & Wakeup Logic (always-on clock domain)
     // =========================================================================
-    // Problem: interrupt sources may produce a single-cycle pulse on the
-    // ungated system clock.  If the pulse arrives while the gated clock is
-    // held low, the core never sees a rising edge, MIP is never updated, and
-    // the core stays asleep forever.
+    // clk_en is a registered FF clocked by the ungated system clock:
+    //   - Set   (1) when any IRQ is asserted  OR wakeup_o is still held high
+    //     (wakeup_o keeps the clock alive until the core fully exits WFI)
+    //   - Cleared (0) on the rising edge of sleep_req_i, only when wakeup_o=0
+    //     (prevents re-gating while a wakeup is still in flight)
     //
-    // Solution: a flip-flop clocked on the UNGATED system clock captures any
-    // interrupt pulse and holds clk_en=1 until the core has fully woken up
-    // (sleep_req_i deasserts).  The latch clears itself one cycle after the
-    // core de-asserts sleep_req_i, which guarantees the gated clock delivers
-    // at least one edge to the core's interrupt-sampling logic.
-    logic irq_wake_pending;
+    // wakeup_o is a set-clear handshake FF:
+    //   - SET  when irq_any fires while the core is sleeping (sleep_req_i=1)
+    //   - CLEAR on the first cycle sleep_req_i deasserts (core exited WFI)
+
+    logic irq_any;
+    assign irq_any = timer_irq_i | external_irq_i | software_irq_i;
+
+    logic sleep_req_d;   // previous-cycle value for rising-edge detection
+    logic clk_en;
 
     always_ff @(posedge clk_i or negedge rst_n) begin
         if (!rst_n) begin
-            irq_wake_pending <= 1'b0;
+            sleep_req_d <= 1'b0;
+            clk_en      <= 1'b1;   // clock running after reset
         end else begin
-            if (!sleep_req_i)
-                irq_wake_pending <= 1'b0;          // Core is awake — clear the latch
-            else if (timer_irq_i | external_irq_i | software_irq_i)
-                irq_wake_pending <= 1'b1;          // Capture edge/level while sleeping
+            sleep_req_d <= sleep_req_i;
+            if (irq_any || wakeup_o)
+                clk_en <= 1'b1;                       // IRQ pending or wakeup in flight: keep clock alive
+            else if (sleep_req_i && !sleep_req_d)
+                clk_en <= 1'b0;                       // rising edge of sleep_req (no wakeup pending) → gate clock
         end
     end
 
-    // =========================================================================
-    // Clock Enable Logic
-    // =========================================================================
-    // Clock is enabled when:
-    //   1. Core is not requesting sleep (normal run / WFI not yet entered)
-    //   2. Any interrupt source is currently asserted (level wake)
-    //   3. A previous interrupt pulse was captured (irq_wake_pending)
-    //
-    // The enable signal is sampled on the falling edge of clk_i by the ICG
-    // latch so that no glitches propagate to the gated clock output.
-    logic clk_en;
+`ifdef DEBUG
+    always_ff @(posedge clk_i or negedge rst_n) begin
+        if (rst_n) begin
+            // Report on rising edge of sleep_req_i
+            if (sleep_req_i && !sleep_req_d)
+                `DEBUG2(`DBG_GRP_WFI, ("[PM] sleep_req RISE → gating clock. irq_any=%b timer=%b ext=%b sw=%b",
+                         irq_any, timer_irq_i, external_irq_i, software_irq_i));
+            // Report when IRQ fires while sleeping
+            if (sleep_req_i && irq_any && !wakeup_o)
+                `DEBUG1(("[PM] IRQ while sleeping @ %0t: timer=%b ext=%b sw=%b clk_en=%b wakeup_o=%b",
+                         $time, timer_irq_i, external_irq_i, software_irq_i, clk_en, wakeup_o));
+            // Report when wakeup_o goes high
+            if (sleep_req_i && irq_any && !wakeup_o)
+                `DEBUG1(("[PM] wakeup_o SET @ %0t", $time));
+            // Report when sleep_req_i falls (pipeline unstalled)
+            if (!sleep_req_i && sleep_req_d)
+                `DEBUG1(("[PM] sleep_req FALL → wakeup_o cleared, core resumed @ %0t", $time));
+            // Periodic report while sleeping (every cycle)
+            if (sleep_req_i)
+                `DEBUG2(`DBG_GRP_WFI, ("[PM] sleeping: irq_any=%b timer=%b ext=%b sw=%b clk_en=%b wakeup_o=%b",
+                         irq_any, timer_irq_i, external_irq_i, software_irq_i, clk_en, wakeup_o));
+        end
+    end
+`endif
 
-    assign clk_en = !sleep_req_i
-                  | timer_irq_i
-                  | external_irq_i
-                  | software_irq_i
-                  | irq_wake_pending;
+    always_ff @(posedge clk_i or negedge rst_n) begin
+        if (!rst_n)
+            wakeup_o <= 1'b0;
+        else begin
+            if (!sleep_req_i)
+                wakeup_o <= 1'b0;           // pipeline left WFI — clear handshake
+            else if (irq_any)
+                wakeup_o <= 1'b1;           // IRQ fired while sleeping — assert and hold
+        end
+    end
 
 `ifdef FPGA_SYNTHESIS
     // =========================================================================

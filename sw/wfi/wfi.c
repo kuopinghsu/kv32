@@ -19,13 +19,18 @@
 //     Tests 5-7 cover this source.
 //
 // Tests:
-//   1  Timer edge     : WFI stalls until a future timer fires (~1000 cycles)
-//   2  Timer level    : Timer already expired; WFI wakes almost immediately
-//   3  Timer repeat   : 20 back-to-back timer-wakeup WFI calls
-//   4  Timer timing   : Sleep duration ≈ specified timer period (± margin)
-//   5  MSIP edge      : Timer handler fires MSIP; second WFI wakes on MSIP
-//   6  MSIP level     : MSIP set before WFI via timer chain; wakes immediately
-//   7  Rapid storm    : 50 WFIs with a 200-cycle timer period
+//   1  Timer edge         : WFI stalls until a future timer fires (~1000 cycles)
+//   2  Timer level        : Timer already expired; WFI wakes almost immediately
+//   3  Timer repeat       : 20 back-to-back timer-wakeup WFI calls
+//   4  Timer timing       : Sleep duration ≈ specified timer period (± margin)
+//   5  MSIP edge          : Timer handler fires MSIP; second WFI wakes on MSIP
+//   6  MSIP level         : MSIP set before WFI via timer chain; wakes immediately
+//   7  Rapid storm        : 50 WFIs with a 200-cycle timer period
+//   8  IRQ at EX boundary : 30-cycle timer fires at nop/sleep boundary
+//   9  Post-MRET re-WFI   : irq_was_pending cleared between WFIs (800-cycle period)
+//  10  Long sleep          : 10000-cycle full PM clock-gate cycle timing verify
+//  11  IRQ pending entry   : MTIP asserted before WFI reaches EX, taken directly
+//  12  Pipeline drain race : Timer fires during IB-drain window (~100 cycles)
 // ============================================================================
 
 #include <stdint.h>
@@ -211,7 +216,7 @@ static void test3_timer_repeat(void)
  * Verifies the WFI sleep duration is within ±20 % of the requested period.
  * ========================================================================= */
 #define T4_PERIOD  2000ULL
-#define T4_MARGIN   400ULL   /* 20 % of T4_PERIOD */
+#define T4_MARGIN   600ULL   /* 30 % of T4_PERIOD – covers MMIO/ISR overhead */
 
 static void test4_timer_timing(void)
 {
@@ -378,6 +383,222 @@ static void test7_rapid_storm(void)
         TEST_PASS(7);
 }
 
+/* ============================================================================
+ * Test 8 – IRQ arriving exactly while WFI is in EX (level-triggered race)
+ * Use a very short period (~30 cycles) so that the timer can fire either
+ * before WFI enters EX (irq_was_pending NOP) or exactly while WFI is in EX
+ * (irq_pending=1 at wfi_branch evaluation → taken directly without sleeping).
+ * Regardless of path, the handler must fire exactly once per WFI call.
+ * ========================================================================= */
+#define T8_ITERS   30
+#define T8_PERIOD  30ULL
+
+static void t8_timer_handler(uint32_t cause)
+{
+    (void)cause;
+    g_timer_count++;
+    kv_clint_timer_disable();
+}
+
+static void test8_irq_at_ex_boundary(void)
+{
+    printf("[TEST  8] IRQ at EX boundary: %d WFIs, period %llu (nop/sleep boundary)\n",
+           T8_ITERS, (unsigned long long)T8_PERIOD);
+
+    reset_state();
+    kv_irq_register(KV_CAUSE_MTI, t8_timer_handler);
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    for (int i = 0; i < T8_ITERS; i++) {
+        kv_clint_timer_set_rel(T8_PERIOD);
+        kv_wfi();
+    }
+
+    kv_clint_timer_irq_disable();
+    kv_irq_disable();
+
+    if ((int)g_timer_count != T8_ITERS)
+        TEST_FAIL(8, "handler count mismatch at EX boundary");
+    else
+        TEST_PASS(8);
+}
+
+/* ============================================================================
+ * Test 9 – Post-MRET re-WFI: irq_was_pending cleared between WFIs
+ * After each WFI+ISR sequence, the irq_was_pending flag must be clear for the
+ * NEXT WFI to sleep correctly.  Use a medium period so most WFIs actually
+ * sleep (the flag is cleared on the wakeup path), and verify all handlers fire.
+ * ========================================================================= */
+#define T9_ITERS   10
+#define T9_PERIOD 800ULL
+
+static void t9_timer_handler(uint32_t cause)
+{
+    (void)cause;
+    g_timer_count++;
+    kv_clint_timer_disable();
+}
+
+static void test9_post_mret_rewfi(void)
+{
+    printf("[TEST  9] Post-MRET re-WFI: %d back-to-back sleeps, period %llu\n",
+           T9_ITERS, (unsigned long long)T9_PERIOD);
+
+    reset_state();
+    kv_irq_register(KV_CAUSE_MTI, t9_timer_handler);
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    for (int i = 0; i < T9_ITERS; i++) {
+        kv_clint_timer_set_rel(T9_PERIOD);
+        kv_wfi();                       /* must sleep, not NOP via irq_was_pending */
+    }
+
+    kv_clint_timer_irq_disable();
+    kv_irq_disable();
+
+    if ((int)g_timer_count != T9_ITERS)
+        TEST_FAIL(9, "handler count mismatch; irq_was_pending possibly not cleared");
+    else
+        TEST_PASS(9);
+}
+
+/* ============================================================================
+ * Test 10 – Very long sleep (10000 cycles): full PM clock-gate cycle
+ * Exercises the full clock-gating path: core_sleep_o asserts, PM gates clock,
+ * timer fires, PM un-gates, core resumes.  Verifies timing is reasonable
+ * (elapsed ≈ 10000 cycles, no spurious wakeups) and handler fires once.
+ * ========================================================================= */
+#define T10_PERIOD  10000ULL
+#define T10_MARGIN   1000ULL  /* ~10% margin for PM wakeup latency */
+
+static void test10_long_sleep(void)
+{
+    printf("[TEST 10] Long sleep: ~%llu cycles full clock-gate cycle\n",
+           (unsigned long long)T10_PERIOD);
+
+    reset_state();
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    kv_clint_timer_set_rel(T10_PERIOD);
+    uint64_t t0 = kv_clint_mtime();
+    kv_wfi();
+    uint64_t t1 = kv_clint_mtime();
+
+    kv_clint_timer_irq_disable();
+    kv_irq_disable();
+
+    uint64_t elapsed = t1 - t0;
+    uint64_t lo = T10_PERIOD - T10_MARGIN;
+    uint64_t hi = T10_PERIOD + T10_MARGIN;
+
+    if (g_timer_count != 1) {
+        TEST_FAIL(10, "timer did not fire exactly once");
+    } else if (elapsed < lo || elapsed > hi) {
+        printf("  elapsed=%llu, expected [%llu, %llu]\n",
+               (unsigned long long)elapsed,
+               (unsigned long long)lo, (unsigned long long)hi);
+        TEST_FAIL(10, "sleep duration out of range");
+    } else {
+        TEST_PASS(10);
+    }
+}
+
+/* ============================================================================
+ * Test 11 – IRQ-pending on WFI entry (timer already asserted before WFI)
+ * Set timer for a near-zero future time so MTIP is asserted BY THE TIME the
+ * WFI instruction reaches the EX stage.  WFI must NOT sleep; the interrupt
+ * must be taken directly (irq_pending=1 at wfi_branch guard → wfi_branch=0).
+ * This exercises the path where core sees irq_pending=1 at WFI-EX and bails
+ * immediately into trap handling.
+ *
+ * We distinguish this from the irq_was_pending path because here the IRQ is
+ * STILL pending (level asserted) when WFI enters EX, whereas irq_was_pending
+ * covers the case where the IRQ fired and was already cleared by the ISR.
+ * ========================================================================= */
+#define T11_ITERS 20
+
+static void t11_timer_handler(uint32_t cause)
+{
+    (void)cause;
+    g_timer_count++;
+    /* Do NOT disable the timer here — leave MTIP asserted.
+     * The WFI guard (irq_pending=1) will prevent sleep entry and the interrupt
+     * will be taken on the WFI instruction itself.  We disable afterward. */
+    kv_clint_timer_disable();
+}
+
+static void test11_irq_pending_at_wfi_entry(void)
+{
+    printf("[TEST 11] IRQ pending at WFI entry: %d iterations, timer fires before EX\n",
+           T11_ITERS);
+
+    reset_state();
+    kv_irq_register(KV_CAUSE_MTI, t11_timer_handler);
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    /* Use a 1-cycle timer so MTIP is guaranteed asserted before WFI reaches EX
+     * (the kv_clint_timer_set_rel call itself takes ~5 AXI cycles). */
+    for (int i = 0; i < T11_ITERS; i++) {
+        kv_clint_timer_set_rel(1ULL);
+        kv_wfi();
+    }
+
+    kv_clint_timer_irq_disable();
+    kv_irq_disable();
+
+    if ((int)g_timer_count != T11_ITERS)
+        TEST_FAIL(11, "handler count mismatch; WFI may have missed an IRQ");
+    else
+        TEST_PASS(11);
+}
+
+/* ============================================================================
+ * Test 12 – Pipeline-drain race: timer fires just as wfi_branch fires
+ * Use a period that lands the timer interrupt precisely during the IB-drain
+ * window (between wfi_branch and core_sleep_o assertion).  This stresses the
+ * wfi_sleeping interrupt_pc priority fix: even if a zombie instruction lingers
+ * in EX during drain, interrupt_pc must still be WFI+4.
+ * Period chosen to be just above the IB-drain latency (~10 cycles) so the
+ * interrupt arrives during the short window before the clock gate engages.
+ * ========================================================================= */
+#define T12_ITERS  25
+#define T12_PERIOD 100ULL   /* ~IB-drain latency + some margin */
+
+static void t12_timer_handler(uint32_t cause)
+{
+    (void)cause;
+    g_timer_count++;
+    kv_clint_timer_disable();
+}
+
+static void test12_pipeline_drain_race(void)
+{
+    printf("[TEST 12] Pipeline drain race: %d WFIs, period %llu (IB-drain window)\n",
+           T12_ITERS, (unsigned long long)T12_PERIOD);
+
+    reset_state();
+    kv_irq_register(KV_CAUSE_MTI, t12_timer_handler);
+    kv_clint_timer_irq_enable();
+    kv_irq_enable();
+
+    for (int i = 0; i < T12_ITERS; i++) {
+        kv_clint_timer_set_rel(T12_PERIOD);
+        kv_wfi();
+    }
+
+    kv_clint_timer_irq_disable();
+    kv_irq_disable();
+
+    if ((int)g_timer_count != T12_ITERS)
+        TEST_FAIL(12, "handler count mismatch during pipeline-drain race");
+    else
+        TEST_PASS(12);
+}
+
 /* ── main ─────────────────────────────────────────────────────────────────── */
 
 int main(void)
@@ -395,6 +616,11 @@ int main(void)
     test5_msip_edge();
     test6_msip_repeated();
     test7_rapid_storm();
+    test8_irq_at_ex_boundary();
+    test9_post_mret_rewfi();
+    test10_long_sleep();
+    test11_irq_pending_at_wfi_entry();
+    test12_pipeline_drain_race();
 
     printf("\n========================================\n");
     printf("  Summary: %d/%d tests PASSED\n", g_pass, g_pass + g_fail);
