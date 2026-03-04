@@ -32,7 +32,7 @@ Debugging RTL:
        Bit  6  (0x00040)  WFI     — WFI / power management
        Bit  7  (0x00080)  AXI     — AXI bus transactions (core side)
        Bit  8  (0x00100)  REG     — Register file write-back and forwarding
-       Bit  9  (0x00200)  JTAG    — JTAG / DTM / debug module
+       Bit  9  (0x00200)  JTAG    — JTAG / TAP / cJTAG bridge
        Bit 10  (0x00400)  CLINT   — CLINT timer/software interrupt
        Bit 11  (0x00800)  GPIO    — GPIO peripheral
        Bit 12  (0x01000)  I2C     — I2C peripheral
@@ -40,6 +40,7 @@ Debugging RTL:
        Bit 14  (0x04000)  ALU     — ALU operations
        Bit 15  (0x08000)  SB      — Store buffer
        Bit 16  (0x10000)  AXIMEM  — AXI memory slave (testbench)
+       Bit 17  (0x20000)  DTM     — DTM debug module (DM registers, commands, SBA)
 
      Examples:
        make DEBUG=2 DEBUG_GROUP=0x40    rtl-wfi    # WFI only
@@ -47,6 +48,8 @@ Debugging RTL:
        make DEBUG=2 DEBUG_GROUP=0x10000 rtl-hello  # AXI memory slave only
        make DEBUG=2 DEBUG_GROUP=0x10060 rtl-wfi    # WFI + IRQ + AXI memory slave
        make DEBUG=2 DEBUG_GROUP=0x400   rtl-timer  # CLINT only
+       make DEBUG=2 DEBUG_GROUP=0x20000 rtl-hello  # DTM only
+       make DEBUG=2 DEBUG_GROUP=0x20200 rtl-hello  # DTM + JTAG
   3. Add custom debug messages in RTL when needed:
      - `ifdef DEBUG_LEVEL_1 for critical debug messages (exceptions, branches, etc.), use `DEBUG1 macro for these messages
      - `ifdef DEBUG_LEVEL_2 for verbose debug messages (pipeline details, state machines), use `DEBUG2(grp, msg) macro for these messages

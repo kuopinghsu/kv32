@@ -53,14 +53,9 @@ module kv32_csr (
     output logic [31:0] irq_cause,
 
     // Cycle counter
-    input  logic        retire_instr,
-
-    // Trace-compare mode: substitute minstret for mcycle on cycle/time CSR reads
-    // so that RTL cycle-counter reads are independent of pipeline stalls and produce
-    // identical results to the software simulator (which increments mcycle and
-    // minstret together, one-per-instruction).  Only asserted when +TRACE is active.
+    input  logic        retire_instr
 `ifndef SYNTHESIS
-    input  logic        trace_mode
+   ,input  logic        trace_mode
 `endif
 );
 `ifndef SYNTHESIS

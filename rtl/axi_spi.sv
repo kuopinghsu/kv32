@@ -186,7 +186,6 @@ module axi_spi #(
     // TX state machine signals fed from FIFO
     logic [7:0]  tx_data;
     logic        tx_valid;
-    logic [7:0]  rx_data;
 
     // SPI transfer state machine
     typedef enum logic [2:0] {
@@ -202,7 +201,6 @@ module axi_spi #(
     // shift_reg_rx: declared earlier as forward declaration
     logic        sclk_int;
     logic        busy;
-    logic        tx_ready;
 
     // When loopback_en is set, MOSI is fed back to MISO internally,
     // bypassing the external spi_miso pin.
@@ -311,16 +309,13 @@ module axi_spi #(
         if (!rst_n) begin
             state        <= IDLE;
             busy         <= 1'b0;
-            tx_ready     <= 1'b1;
             bit_counter  <= 4'h0;
             shift_reg_tx <= 8'h0;
             shift_reg_rx <= 8'h0;
             sclk_int     <= 1'b0;
-            rx_data      <= 8'h0;
         end else begin
             case (state)
                 IDLE: begin
-                    tx_ready     <= 1'b1;
                     busy         <= 1'b0;
                     sclk_int     <= cpol;
                     bit_counter  <= 4'h0;
@@ -330,7 +325,6 @@ module axi_spi #(
                         shift_reg_tx <= tx_data;
                         state        <= START;
                         busy         <= 1'b1;
-                        tx_ready     <= 1'b0;
                     end
                 end
 
@@ -362,7 +356,6 @@ module axi_spi #(
                 end
 
                 FINISH: begin
-                    rx_data  <= shift_reg_rx;  // captured; rxf_push is combinational
                     sclk_int <= cpol;
                     state    <= IDLE;
                 end
@@ -371,12 +364,6 @@ module axi_spi #(
             endcase
         end
     end
-
-    // ========================================================================
-    // Combinatorial TX-write detection (kept for symmetry, unused in FIFO mode)
-    // ========================================================================
-    logic tx_being_written;  // unused but kept to avoid breaking any ifdef code
-    assign tx_being_written = 1'b0;
 
     // ========================================================================
     // SPI Clock Generation
@@ -407,11 +394,10 @@ module axi_spi #(
     // axi_wstrb[1:0] used: [0] for byte-0 registers and TX push, [1] for clk_div[15:8].
     // axi_wstrb[3:2] unused: no register maps to wdata bytes 2 or 3.
 `ifndef SYNTHESIS
-    // Lint sink (debug only): wstrb[3:2] unused; upper address/data bits decoded
-    // by crossbar; rx_data/tx_ready/tx_being_written are legacy status signals.
+    // Lint sink (debug only): wstrb[3:2] unused; upper address/data bits decoded by crossbar.
     logic _unused_ok;
     assign _unused_ok = &{1'b0, axi_wstrb[3:2], axi_awaddr[31:16], axi_wdata[31:16],
-                                axi_araddr[31:16], rx_data, tx_ready, tx_being_written};
+                                axi_araddr[31:16]};
 `endif // SYNTHESIS
 
 endmodule

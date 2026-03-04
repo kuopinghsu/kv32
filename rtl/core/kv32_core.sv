@@ -111,10 +111,9 @@ module kv32_core #(
     output logic [31:0] dbg_reg_rdata_o,     // GPR read data to debugger
     output logic [31:0] dbg_pc_o,            // Current PC to debugger
     input  logic [31:0] dbg_pc_i,            // PC write data from debugger
-    input  logic        dbg_pc_we_i,         // PC write enable from debugger
-
+    input  logic        dbg_pc_we_i          // PC write enable from debugger
 `ifndef SYNTHESIS
-    // Timeout detection (simulation only)
+   ,// Timeout detection (simulation only)
     output logic        timeout_error,
     // Expose retire pulse so axi_clint can advance mtime per instruction
     // in trace mode, keeping mtime identical to the software simulator.
@@ -344,7 +343,9 @@ module kv32_core #(
     logic        reg_we_wb;
     logic        mem_read_wb;
     logic        mem_write_wb;
+`ifndef SYNTHESIS
     logic [31:0] store_data_wb;
+`endif
     logic [2:0]  csr_op_wb;
     logic [31:0] csr_rdata_wb;
     /* verilator lint_off UNUSEDSIGNAL */
@@ -2620,7 +2621,9 @@ module kv32_core #(
             reg_we_wb     <= 1'b0;
             mem_read_wb   <= 1'b0;
             mem_write_wb  <= 1'b0;
+`ifndef SYNTHESIS
             store_data_wb <= 32'd0;
+`endif
             csr_op_wb     <= 3'd0;
             csr_rdata_wb  <= 32'd0;
 `ifndef SYNTHESIS
@@ -2653,7 +2656,9 @@ module kv32_core #(
             end
             mem_read_wb   <= mem_read_mem;
             mem_write_wb  <= mem_write_mem;
+`ifndef SYNTHESIS
             store_data_wb <= rs2_data_mem;
+`endif
             csr_op_wb     <= csr_op_mem;
             csr_rdata_wb  <= csr_rdata;
 `ifndef SYNTHESIS
