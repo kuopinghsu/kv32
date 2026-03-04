@@ -187,6 +187,18 @@ module axi_timer (
     end
 
     // ========================================================================
+    // AXI handshake signals and write-strobe mask
+    // (declared early because they are used in the timer counter block below)
+    // ========================================================================
+    logic aw_hs, w_hs, ar_hs;
+    assign aw_hs = axi_awvalid && axi_awready;
+    assign w_hs  = axi_wvalid && axi_wready;
+    assign ar_hs = axi_arvalid && axi_arready;
+
+    // wstrb_mask: expand each strobe bit to a full byte mask
+    wire [31:0] wstrb_mask = {{8{axi_wstrb[3]}}, {8{axi_wstrb[2]}}, {8{axi_wstrb[1]}}, {8{axi_wstrb[0]}}};
+
+    // ========================================================================
     // Timer Counters and Compare Logic
     // ========================================================================
     logic [3:0] compare1_match;        // COMPARE1 match (interrupt/PWM set)
@@ -200,7 +212,10 @@ module axi_timer (
             end
         end else begin
             for (int i = 0; i < 4; i++) begin
-                if (counter_reload[i]) begin
+                // AXI write to COUNT register takes priority
+                if (aw_hs && w_hs && (axi_awaddr[7:2] == 6'(i * 8))) begin
+                    count_r[i] <= (count_r[i] & ~wstrb_mask) | (axi_wdata & wstrb_mask);
+                end else if (counter_reload[i]) begin
                     count_r[i] <= '0;
                 end else if (timer_tick[i]) begin
                     count_r[i] <= count_r[i] + 1;
@@ -285,11 +300,6 @@ module axi_timer (
     // ========================================================================
     // AXI4-Lite Interface
     // ========================================================================
-    logic aw_hs, w_hs, ar_hs;
-    assign aw_hs = axi_awvalid && axi_awready;
-    assign w_hs  = axi_wvalid && axi_wready;
-    assign ar_hs = axi_arvalid && axi_arready;
-
     // Write address and data arrive together
     assign axi_awready = axi_awvalid && axi_wvalid && !axi_bvalid;
     assign axi_wready  = axi_awvalid && axi_wvalid && !axi_bvalid;
@@ -367,8 +377,6 @@ module axi_timer (
     // ========================================================================
     // Register Write Logic
     // ========================================================================
-    // wstrb_mask: expand each strobe bit to a full byte mask for byte-enable writes on 32-bit registers
-    wire [31:0] wstrb_mask = {{8{axi_wstrb[3]}}, {8{axi_wstrb[2]}}, {8{axi_wstrb[1]}}, {8{axi_wstrb[0]}}};
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 0; i < 4; i++) begin
@@ -381,22 +389,18 @@ module axi_timer (
             if (aw_hs && w_hs) begin
                 case (axi_awaddr[7:2])
                     // Timer 0 (0x00-0x0F)
-                    6'h00: count_r[0]     <= (count_r[0]    & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COUNT
                     6'h01: compare1_r[0]  <= (compare1_r[0] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE1
                     6'h02: compare2_r[0]  <= (compare2_r[0] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE2
                     6'h03: ctrl_r[0]      <= (ctrl_r[0]     & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // CTRL
                     // Timer 1 (0x20-0x2F)
-                    6'h08: count_r[1]     <= (count_r[1]    & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COUNT
                     6'h09: compare1_r[1]  <= (compare1_r[1] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE1
                     6'h0A: compare2_r[1]  <= (compare2_r[1] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE2
                     6'h0B: ctrl_r[1]      <= (ctrl_r[1]     & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // CTRL
                     // Timer 2 (0x40-0x4F)
-                    6'h10: count_r[2]     <= (count_r[2]    & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COUNT
                     6'h11: compare1_r[2]  <= (compare1_r[2] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE1
                     6'h12: compare2_r[2]  <= (compare2_r[2] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE2
                     6'h13: ctrl_r[2]      <= (ctrl_r[2]     & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // CTRL
                     // Timer 3 (0x60-0x6F)
-                    6'h18: count_r[3]     <= (count_r[3]    & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COUNT
                     6'h19: compare1_r[3]  <= (compare1_r[3] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE1
                     6'h1A: compare2_r[3]  <= (compare2_r[3] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE2
                     6'h1B: ctrl_r[3]      <= (ctrl_r[3]     & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // CTRL

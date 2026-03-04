@@ -117,6 +117,7 @@ module axi_plic #(
 
     logic [31:0] aw_addr_latch;            // forward declaration
     logic [31:0] ar_addr_latch;            // forward declaration
+    logic          ar_recv;                 // forward declaration
     always_comb aw_off     = aw_addr_latch[25:0];
     always_comb wr_src_idx = 32'(aw_off[14:2]);
     always_comb rd_src_idx = 32'(ar_addr_latch[14:2]);
@@ -277,7 +278,6 @@ module axi_plic #(
     // -----------------------------------------------------------------------
     // AXI read channel
     // -----------------------------------------------------------------------
-    logic        ar_recv;
     logic [31:0] rd_data;
 
     // Build pending word
