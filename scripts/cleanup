@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# cleanup — source code whitespace cleanup
+#
+# Usage:
+#   cleanup                  Clean files that are modified/untracked in git
+#   cleanup -all             Clean all files from current dir (with filter rules)
+#   cleanup <file1> ...      Clean the specified files only
+#
+# Filter rules (applied in -all mode and when checking explicit files):
+#   - Skip files named Makefile or Makefile.*
+#   - Skip files that are ignored by git (git check-ignore)
+#   - Skip git submodule directories (read from .gitmodules)
+#   - Skip .git directory
+#
+# Cleanup actions per file:
+#   1. Remove trailing whitespace
+#   2. Convert tabs to 4 spaces
+#   3. Collapse consecutive blank lines into a single blank line
+
+set -euo pipefail
+
+# ── SIGINT handling ───────────────────────────────────────────────────────────
+# Ctrl-C BETWEEN files   → exit immediately (_sigint_outer)
+# Ctrl-C INSIDE trim_file → set flag, finish the write, exit after (_sigint_defer)
+_interrupted=0
+_sigint_outer() { echo ""; echo "cleanup: interrupted."; exit 130; }
+_sigint_defer() { _interrupted=1; }
+trap '_sigint_outer' INT
+
+# ── trim a single file ────────────────────────────────────────────────────────
+trim_file() {
+    local f="$1"
+    [[ -f "$f" ]] || return
+
+    # 1. Remove trailing whitespace
+    LC_ALL=C sed -i '' -e 's/[[:space:]]*$//' "$f"
+
+    # 2. Convert tabs to 4 spaces
+    local tmp
+    tmp="$(mktemp /tmp/cleanup.XXXXXX)"
+    expand -t 4 "$f" > "$tmp" && mv "$tmp" "$f"
+
+    # 3. Collapse consecutive blank lines (cat -s)
+    cp "$f" "$tmp"
+    cat -s "$tmp" > "$f"
+    rm -f "$tmp"
+}
+
+# ── collect submodule paths from .gitmodules ─────────────────────────────────
+# Walk up from cwd to find the repo root
+find_gitmodules() {
+    local dir
+    dir="$(pwd)"
+    while [[ "$dir" != "/" ]]; do
+        [[ -f "$dir/.gitmodules" ]] && { echo "$dir/.gitmodules"; return; }
+        dir="$(dirname "$dir")"
+    done
+}
+
+submodule_paths=()
+gitmodules_file="$(find_gitmodules)"
+if [[ -n "$gitmodules_file" ]]; then
+    repo_root="$(dirname "$gitmodules_file")"
+    while IFS= read -r line; do
+        line="${line#"${line%%[![:space:]]*}"}"   # ltrim
+        if [[ "$line" == path* ]]; then
+            sp="${line#*= }"
+            submodule_paths+=("$repo_root/$sp")
+        fi
+    done < "$gitmodules_file"
+fi
+
+# ── check if a file should be excluded by the filter rules ───────────────────
+is_excluded() {
+    local f
+    f="$(realpath "$1" 2>/dev/null || echo "$1")"
+    local base
+    base="$(basename "$f")"
+
+    # Makefile names
+    [[ "$base" == "Makefile"   ]] && return 0
+    [[ "$base" == Makefile.*   ]] && return 0
+
+    # .git directory (itself or any file inside it)
+    [[ "$f" == *"/.git" || "$f" == *"/.git/"* ]] && return 0
+
+    # files ignored by git
+    git check-ignore -q "$1" 2>/dev/null && return 0
+
+    # submodule directories
+    for sp in "${submodule_paths[@]}"; do
+        local sp_real
+        sp_real="$(realpath "$sp" 2>/dev/null || echo "$sp")"
+        if [[ "$f" == "$sp_real" || "$f" == "$sp_real/"* ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# ── build prune arguments for find (submodules + .git) ───────────────────────
+build_prune_args() {
+    # Returns a series of:  -path <dir> -prune -o
+    # Must be eval'd or passed via an array.
+    prune_args=(-path "*/.git" -prune)
+    for sp in "${submodule_paths[@]}"; do
+        prune_args+=(-o -path "$sp" -prune -o -path "$sp/*" -prune)
+    done
+}
+
+# ── parse arguments ───────────────────────────────────────────────────────────
+mode="git"
+explicit_files=()
+
+for arg in "$@"; do
+    case "$arg" in
+        -all) mode="all" ;;
+        *)    explicit_files+=("$arg") ;;
+    esac
+done
+
+[[ ${#explicit_files[@]} -gt 0 ]] && mode="files"
+
+# ── execute ───────────────────────────────────────────────────────────────────
+process_file() {
+    local f="$1"
+    if is_excluded "$f"; then
+        echo "skip:  $f"
+    elif [[ -f "$f" ]]; then
+        echo "clean: $f"
+        trap '_sigint_defer' INT   # defer Ctrl-C: finish the write first
+        trim_file "$f"
+        trap '_sigint_outer' INT   # restore immediate Ctrl-C between files
+        if [[ $_interrupted -eq 1 ]]; then
+            echo ""
+            echo "cleanup: interrupted after completing $f."
+            exit 130
+        fi
+    fi
+}
+
+case "$mode" in
+
+    files)
+        for f in "${explicit_files[@]}"; do
+            process_file "$f"
+        done
+        ;;
+
+    all)
+        build_prune_args
+        while IFS= read -r f; do
+            process_file "$f"
+        done < <(find . "${prune_args[@]}" \
+                   -o -type f \
+                      ! -name "Makefile" \
+                      ! -name "Makefile.*" \
+                      -print)
+        ;;
+
+    git)
+        # modified tracked files + untracked (not-ignored) files
+        git_files=()
+        while IFS= read -r f; do
+            git_files+=("$f")
+        done < <({ git diff --name-only HEAD 2>/dev/null
+                    git ls-files --others --exclude-standard 2>/dev/null
+                  } | sort -u)
+
+        if [[ ${#git_files[@]} -eq 0 ]]; then
+            echo "No modified or untracked files."
+            exit 0
+        fi
+
+        for f in "${git_files[@]}"; do
+            process_file "$f"
+        done
+        ;;
+
+esac
