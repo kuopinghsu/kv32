@@ -289,7 +289,7 @@ TB_SOURCES = $(TB_DIR)/tb_kv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-
 # Output executable
 BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
-.PHONY: all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl build-spike-plugins clean clean-tests clean-spike-plugins run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
+.PHONY: all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl build-spike-plugins clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
 # Default target - run all tests
 all: rtl-all sim-all compare-all spike-all freertos-compare-simple
@@ -942,6 +942,17 @@ clean-tests:
 	@rm -f $(BUILD_DIR)/kv32soc.vcd
 	@echo "Test clean complete!"
 
+# Whitespace cleanup: trim trailing spaces, expand tabs, collapse blank lines
+# Usage:
+#   make cleanup          - clean files modified/untracked in git
+#   make cleanup-all      - clean all source files in the repo
+#   make cleanup FILES=.. - clean specific files
+cleanup:
+	@bash scripts/cleanup $(if $(FILES),$(FILES))
+
+cleanup-all:
+	@bash scripts/cleanup -all
+
 # Show environment info
 info:
 	@echo "=========================================="
@@ -984,6 +995,8 @@ help:
 	@echo "  build-sim  - Build software simulator (kv32sim)"
 	@echo "  clean      - Remove all build artifacts"
 	@echo "  clean-tests- Remove only test program builds"
+	@echo "  cleanup    - Trim whitespace in git-modified/untracked files"
+	@echo "  cleanup-all- Trim whitespace in all source files"
 	@echo "  info       - Show environment configuration"
 	@echo "  help       - Show this help message"
 	@echo ""

@@ -38,7 +38,8 @@ trim_file() {
     # 2. Convert tabs to 4 spaces
     local tmp
     tmp="$(mktemp /tmp/cleanup.XXXXXX)"
-    expand -t 4 "$f" > "$tmp" && mv "$tmp" "$f"
+    expand -t 4 "$f" > "$tmp" && cat "$tmp" > "$f"
+    rm -f "$tmp"
 
     # 3. Collapse consecutive blank lines (cat -s)
     cp "$f" "$tmp"
@@ -99,13 +100,15 @@ is_excluded() {
     return 1
 }
 
-# ── build prune arguments for find (submodules + .git) ───────────────────────
-build_prune_args() {
-    # Returns a series of:  -path <dir> -prune -o
-    # Must be eval'd or passed via an array.
-    prune_args=(-path "*/.git" -prune)
+# ── build excluded-dir list for reporting in -all mode ───────────────────────
+# Just collects skip_dirs[] for informational printing; no find prune needed.
+build_skip_dirs() {
+    skip_dirs=()
+    skip_dirs+=("./.git")
     for sp in "${submodule_paths[@]}"; do
-        prune_args+=(-o -path "$sp" -prune -o -path "$sp/*" -prune)
+        local rel
+        rel="$(realpath --relative-to=. "$sp" 2>/dev/null || echo "${sp#./}")"
+        skip_dirs+=("./$rel")
     done
 }
 
@@ -149,14 +152,36 @@ case "$mode" in
         ;;
 
     all)
-        build_prune_args
+        build_skip_dirs
+
+        # Print each skipped directory once for visibility
+        for d in "${skip_dirs[@]}"; do
+            [[ -d "$d" ]] && echo "skip:  $d/"
+        done
+
+        # Use git ls-files instead of find: this naturally enumerates only
+        # tracked + untracked-non-ignored files, skipping .git, submodules,
+        # build artifacts, .venv, and anything else git doesn't track.
+        # Files from git ls-files are already not git-ignored, so skip the
+        # per-file git check-ignore call and only check Makefile names.
         while IFS= read -r f; do
-            process_file "$f"
-        done < <(find . "${prune_args[@]}" \
-                   -o -type f \
-                      ! -name "Makefile" \
-                      ! -name "Makefile.*" \
-                      -print)
+            _base="$(basename "$f")"
+            if [[ "$_base" == "Makefile" || "$_base" == Makefile.* ]]; then
+                echo "skip:  $f"
+            elif [[ -f "$f" ]]; then
+                echo "clean: $f"
+                trap '_sigint_defer' INT
+                trim_file "$f"
+                trap '_sigint_outer' INT
+                if [[ $_interrupted -eq 1 ]]; then
+                    echo ""
+                    echo "cleanup: interrupted after completing $f."
+                    exit 130
+                fi
+            fi
+        done < <({ git ls-files 2>/dev/null
+                   git ls-files --others --exclude-standard 2>/dev/null
+                 } | sort -u)
         ;;
 
     git)
