@@ -30,7 +30,6 @@ module kv32_csr (
     input  logic [31:0] csr_wdata,
     input  logic [4:0]  csr_zimm,
     output logic [31:0] csr_rdata,
-    output logic        csr_illegal,
 
     // Exception/Interrupt
     input  logic        exception,
@@ -134,18 +133,11 @@ module kv32_csr (
 
     // MSTATUS fields
     logic mie_en;   // Machine Interrupt Enable
-    logic mpie;     // Previous MIE
 
     assign mie_en = mstatus[3];
-    assign mpie   = mstatus[7];
 
     // MIE/MIP fields
-    logic mtie, msie, meie;  // Timer, Software, External interrupt enable
     logic mtip, msip, meip;  // Timer, Software, External interrupt pending
-
-    assign mtie = mie[7];
-    assign msie = mie[3];
-    assign meie = mie[11];
 
     assign mtip = timer_irq;
     assign msip = software_irq;
@@ -193,6 +185,7 @@ module kv32_csr (
     end
 
     // CSR read
+    logic csr_illegal;  // module-local: unknown CSR address guard
     always_comb begin
         csr_illegal = 1'b0;
         case (csr_addr)
@@ -313,14 +306,6 @@ module kv32_csr (
             end
         end
     end
-
-    // mpie/mtie/msie/meie: named aliases for mstatus/mie bits; hardware acts on
-    // those registers directly via mie&mip; aliases exposed for readability only.
-`ifndef SYNTHESIS
-    // Lint sink (debug only): named CSR bit aliases not consumed downstream.
-    logic _unused_ok_csr;
-    assign _unused_ok_csr = &{1'b0, mpie, mtie, msie, meie};
-`endif // SYNTHESIS
 
 endmodule
 

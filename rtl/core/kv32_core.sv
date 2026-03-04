@@ -148,7 +148,6 @@ module kv32_core #(
     logic        started_retiring;         // Set when first instruction retires
     logic [31:0] last_retired_pc;          // Track last retired PC to avoid duplicates
     logic [31:0] last_retired_instr;       // Track last retired instruction
-    logic        last_wb_valid;            // Track if WB was valid last cycle
 
     assign cycle_count = cycle_counter;
     assign instret_count = instret_counter;
@@ -196,7 +195,7 @@ module kv32_core #(
     branch_op_e  branch_op_id;
 `endif
     logic        lui_id, auipc_id;
-    logic        system_id, illegal_id;
+    logic        illegal_id;
     logic [2:0]  csr_op_id;
     logic [11:0] csr_addr_id;
     logic        is_mret_id, is_ecall_id, is_ebreak_id;
@@ -243,7 +242,7 @@ module kv32_core #(
     branch_op_e  branch_op_ex;
 `endif
     logic        lui_ex, auipc_ex;
-    logic        system_ex, illegal_ex;
+    logic        illegal_ex;
     logic [2:0]  csr_op_ex;
     logic [11:0] csr_addr_ex;
     logic        is_mret_ex, is_ecall_ex, is_ebreak_ex;
@@ -287,7 +286,6 @@ module kv32_core #(
 `else
     mem_op_e     mem_op_mem;
 `endif
-    logic        system_mem;
     logic [2:0]  csr_op_mem;
     logic [11:0] csr_addr_mem;
     logic        is_amo_mem;
@@ -356,11 +354,6 @@ module kv32_core #(
     logic [11:0] csr_addr_wb;
     /* verilator lint_on UNUSEDSIGNAL */
     logic        is_amo_wb;
-`ifdef SYNTHESIS
-    logic [4:0]  amo_op_wb;
-`else
-    amo_op_e     amo_op_wb;
-`endif
     logic        wb_valid;
     logic        data_access_fault_wb;  // Load/store access error in WB
     logic [31:0] wb_write_data;         // Final WB data (mem/alu/csr)
@@ -368,7 +361,6 @@ module kv32_core #(
     // ====== Control and Status Registers (CSRs) ======
     // Machine-mode CSRs for exception handling and system control
     logic [31:0] csr_rdata;              // CSR read data
-    logic        csr_illegal;            // Illegal CSR access detected
     logic [31:0] mtvec, mepc;            // Machine trap vector and exception PC
     logic        exception;
     logic [4:0]  exception_cause;
@@ -876,7 +868,6 @@ module kv32_core #(
         .jalr(jalr_id),
         .lui(lui_id),
         .auipc(auipc_id),
-        .system(system_id),
         .illegal(illegal_id),
         .csr_op(csr_op_id),
         .csr_addr(csr_addr_id),
@@ -1135,7 +1126,6 @@ module kv32_core #(
             jalr_ex       <= 1'b0;
             lui_ex        <= 1'b0;
             auipc_ex      <= 1'b0;
-            system_ex     <= 1'b0;
             illegal_ex    <= 1'b0;
             csr_op_ex     <= 3'd0;
             csr_addr_ex   <= 12'd0;
@@ -1160,7 +1150,6 @@ module kv32_core #(
             branch_ex    <= 1'b0;  // Disable control flow
             jal_ex       <= 1'b0;
             jalr_ex      <= 1'b0;
-            system_ex    <= 1'b0;
             ex_valid     <= 1'b0;  // Mark as invalid
             // Clear system-instruction flags so a flushed MRET/ECALL/EBREAK does
             // not re-fire in the next cycle after ex_flush (e.g. IRQ preempting MRET).
@@ -1178,7 +1167,6 @@ module kv32_core #(
             branch_ex    <= 1'b0;
             jal_ex       <= 1'b0;
             jalr_ex      <= 1'b0;
-            system_ex    <= 1'b0;
             is_wfi_ex    <= 1'b0;
             ex_valid     <= 1'b0;
         end else if (downstream_stall) begin
@@ -1206,7 +1194,6 @@ module kv32_core #(
             jalr_ex       <= 1'b0;
             lui_ex        <= 1'b0;
             auipc_ex      <= 1'b0;
-            system_ex     <= 1'b0;
             illegal_ex    <= 1'b0;
             csr_op_ex     <= 3'd0;
             csr_addr_ex   <= 12'd0;
@@ -1242,7 +1229,6 @@ module kv32_core #(
             jalr_ex       <= jalr_id;
             lui_ex        <= lui_id;
             auipc_ex      <= auipc_id;
-            system_ex     <= system_id;
             illegal_ex    <= illegal_id;
             csr_op_ex     <= csr_op_id;
             csr_addr_ex   <= csr_addr_id;
@@ -1704,7 +1690,7 @@ module kv32_core #(
                 exception_cause = EXC_ILLEGAL_INSTR;
                 exception_tval = instr_ex;  // Illegal instruction word (for mtval)
                 `DEBUG1(("EXCEPTION: Illegal instruction @ PC=0x%h instr=0x%h%s", pc_ex, instr_ex,
-                        csr_illegal ? " (illegal CSR)" : ""));
+                        (instr_ex[6:0] == 7'h73 && instr_ex[14:12] != 3'b0) ? " (illegal CSR)" : ""));
             end else if (is_ecall_ex) begin
                 exception = 1'b1;
                 exception_cause = EXC_ECALL_MMODE;
@@ -1760,7 +1746,6 @@ module kv32_core #(
             mem_read_mem  <= 1'b0;
             mem_write_mem <= 1'b0;
             mem_op_mem    <= MEM_WORD;
-            system_mem    <= 1'b0;
             csr_op_mem    <= 3'd0;
             csr_addr_mem  <= 12'd0;
             is_amo_mem    <= 1'b0;
@@ -1776,7 +1761,6 @@ module kv32_core #(
             reg_we_mem    <= 1'b0;
             mem_read_mem  <= 1'b0;
             mem_write_mem <= 1'b0;
-            system_mem    <= 1'b0;
             mem_valid     <= 1'b0;
             is_fence_mem  <= 1'b0;
             is_fence_i_mem <= 1'b0;
@@ -1806,7 +1790,6 @@ module kv32_core #(
                 mem_read_mem  <= mem_read_ex  && !exception && !irq_pending && !wb_exception;
                 mem_write_mem <= mem_write_ex && !exception && !irq_pending && !wb_exception;
                 mem_op_mem    <= mem_op_ex;
-                system_mem    <= system_ex;
                 csr_op_mem    <= csr_op_ex;
                 csr_addr_mem  <= csr_addr_ex;
                 is_amo_mem    <= is_amo_ex;
@@ -1839,7 +1822,6 @@ module kv32_core #(
                 reg_we_mem    <= 1'b0;
                 mem_read_mem  <= 1'b0;
                 mem_write_mem <= 1'b0;
-                system_mem    <= 1'b0;
                 is_fence_mem  <= 1'b0;
                 is_fence_i_mem <= 1'b0;
                 is_cbo_mem    <= 1'b0;
@@ -1873,29 +1855,6 @@ module kv32_core #(
     // Store Response Tracking
     // Track whether a pending memory response belongs to the store buffer or a load.
     // This is needed because memory responses don't carry transaction IDs.
-    logic        sb_mem_inflight;        // Store buffer has transaction in flight
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            sb_mem_inflight <= 1'b0;
-        end else begin
-            // Set when store buffer initiates memory transaction
-            if (sb_mem_valid && dmem_req_ready) begin
-                sb_mem_inflight <= 1'b1;
-            // Clear when B-response arrives (store buffer transaction complete)
-            end else if (dmem_resp_valid && dmem_resp_is_write) begin
-                sb_mem_inflight <= 1'b0;
-            end
-        end
-    end
-
-    // sb_mem_inflight: assigned but routing logic uses dmem_resp_is_write directly.
-`ifndef SYNTHESIS
-    // Lint sink (debug only): sb_mem_inflight not consumed in synthesisable logic.
-    logic _unused_ok_sb_inflight;
-    assign _unused_ok_sb_inflight = &{1'b0, sb_mem_inflight};
-`endif // SYNTHESIS
-
     // ============================================================================
     // Memory Request Routing
     // ============================================================================
@@ -2671,7 +2630,6 @@ module kv32_core #(
             csr_zimm_wb   <= 5'd0;
             csr_addr_wb   <= 12'd0;
             is_amo_wb     <= 1'b0;
-            amo_op_wb     <= AMO_ADD;
             wb_valid      <= 1'b0;
             data_access_fault_wb <= 1'b0;
         end else if (!mem_wb_stall) begin
@@ -2702,7 +2660,6 @@ module kv32_core #(
             csr_zimm_wb   <= rs1_addr_mem;
             csr_addr_wb   <= csr_addr_mem;
             is_amo_wb     <= is_amo_mem;
-            amo_op_wb     <= amo_op_mem;
             wb_valid      <= mem_valid && !irq_pending && !wb_exception;
             // Combine all sources of data-access faults:
             //   data_access_fault_mem : set by legacy path (currently always 0 after fix)
@@ -2837,7 +2794,6 @@ module kv32_core #(
     //   - csr_wdata: Write data from ALU result (rs1 data)
     //   - csr_zimm: Immediate value (zero-extended from rs1_addr field)
     //   - csr_rdata: Read data returned to pipeline (forwarded to EX stage)
-    //   - csr_illegal: Indicates illegal CSR access
     //
     // Exception handling:
     //   - Combines exceptions from all pipeline stages (WB has priority)
@@ -2871,7 +2827,6 @@ module kv32_core #(
         .csr_wdata(rs1_data_mem),
         .csr_zimm(rs1_addr_mem),
         .csr_rdata(csr_rdata),
-        .csr_illegal(csr_illegal),
 
         // Exception handling (prioritize WB stage exceptions)
         .exception(wb_exception || exception),
@@ -3416,8 +3371,7 @@ module kv32_core #(
 `ifndef SYNTHESIS
     // Lint sink (debug only): various signals not consumed in synthesisable logic.
     logic _unused_ok_misc;
-    assign _unused_ok_misc = &{1'b0, system_mem, csr_illegal, irq_cause,
-                               last_wb_valid, amo_op_wb};
+    assign _unused_ok_misc = &{1'b0, irq_cause};
 `endif // SYNTHESIS
 
     // ====== Performance Counter Update (moved here so pipeline signal declarations appear first) ======
@@ -3431,7 +3385,6 @@ module kv32_core #(
             started_retiring <= 1'b0;
             last_retired_pc <= 32'd0;
             last_retired_instr <= 32'd0;
-            last_wb_valid <= 1'b0;
         end else begin
             cycle_counter <= cycle_counter + 64'd1;
             // Increment instruction counter on retirement
@@ -3446,7 +3399,6 @@ module kv32_core #(
                 last_retired_pc <= pc_wb;
                 last_retired_instr <= instr_wb;
             end
-            last_wb_valid <= wb_valid;
             if (id_ex_stall) begin
                 stall_counter <= stall_counter + 64'd1;
             end

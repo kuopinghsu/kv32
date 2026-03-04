@@ -53,7 +53,6 @@ module kv32_decoder (
     output logic        jalr,
     output logic        lui,
     output logic        auipc,
-    output logic        system,
     output logic        illegal,
     output logic [2:0]  csr_op,
     output logic [11:0] csr_addr,
@@ -123,7 +122,6 @@ module kv32_decoder (
         jalr       = 1'b0;
         lui        = 1'b0;
         auipc      = 1'b0;
-        system     = 1'b0;
         illegal    = 1'b0;
         csr_op     = 3'b0;
         is_mret    = 1'b0;
@@ -244,7 +242,6 @@ module kv32_decoder (
                 end
 
                 OPCODE_SYSTEM: begin
-                    system = 1'b1;
                     if (funct3 == 3'b000) begin
                         if (instr[31:20] == 12'h000) begin
                             is_ecall = 1'b1;
