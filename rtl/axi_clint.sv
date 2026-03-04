@@ -321,12 +321,14 @@ module axi_clint (
         end
     end
 
-    // Suppress unused-signal lint warnings: upper address bits and trace strobe
-    // are not needed for this implementation.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): upper address bits and trace strobe are not used
+    // in this implementation; excluded from synthesis to avoid dead-logic warnings.
     logic _unused_ok;
     assign _unused_ok = &{1'b0, trace_store_strb,
                                 axi_awaddr[31:16], axi_araddr[31:16],
                                 trace_store_addr[31:16]};
+`endif // SYNTHESIS
 
 endmodule
 

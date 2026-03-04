@@ -1259,7 +1259,9 @@ module kv32_dtm #(
         endcase
     end
 
-    // Signals set but not consumed (unimplemented DM features, placeholder sync regs)
+`ifndef SYNTHESIS
+    // Lint sink (debug only): unimplemented DM features, reserved fields, and
+    // placeholder sync registers not consumed in current implementation.
     logic _unused_ok_dtm;
     assign _unused_ok_dtm = &{1'b0,
         dmcontrol_ackhavereset,
@@ -1270,6 +1272,7 @@ module kv32_dtm #(
         command_reg_sys[23], command_reg_sys[19],  // reserved bits in AC_ACCESS_REGISTER
         halt_req_sync, resume_req_sync,
         halted_sync, halted_sync_r};  // TCK-domain synced versions; system domain uses halted_sync_clk
+`endif // SYNTHESIS
 
 endmodule
 

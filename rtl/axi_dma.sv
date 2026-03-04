@@ -526,7 +526,6 @@ module axi_dma #(
     logic [$clog2(NUM_CHANNELS > 1 ? NUM_CHANNELS : 2)-1:0] rr_ptr;    // round-robin hint
 
     // Snapshot of active channel's configuration (loaded at IDLE→schedule)
-    logic [7:0]  e_ctrl;
     logic        e_src_inc, e_dst_inc;
 
     // Running counters (updated in ADVANCE)
@@ -573,7 +572,6 @@ module axi_dma #(
             rr_ptr      <= '0;
             ch_busy     <= '0;
             // ch_done / ch_err managed in separate always_ff above
-            e_ctrl      <= '0;
             e_mode      <= '0;
             e_src_inc   <= 1'b0;
             e_dst_inc   <= 1'b0;
@@ -623,7 +621,6 @@ module axi_dma #(
                         // ch_armed[sched_ch] is cleared in its own always_ff
 
                         // Load channel snapshot
-                        e_ctrl     <= ch_ctrl[sched_ch];
                         e_mode     <= ch_ctrl[sched_ch][4:3];
                         e_src_inc  <= ch_ctrl[sched_ch][5];
                         e_dst_inc  <= ch_ctrl[sched_ch][6];
@@ -954,12 +951,14 @@ module axi_dma #(
     endproperty
     assert property (p_dma_wvalid_stable)
         else $error("[AXI_DMA] WVALID/WDATA must be stable until WREADY");
-    // Suppress unused-signal warnings: upper address bits decoded by crossbar,
-    // cfg_wstrb not checked (DMA config registers are word-wide), and internal
-    // status signals reserved for future use.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): upper address bits decoded by crossbar, cfg_wstrb
+    // not checked (DMA config registers are word-wide), fifo_count reserved for
+    // future status reads.
     logic _unused_ok;
     assign _unused_ok = &{1'b0, cfg_awaddr[31:12], cfg_wstrb, cfg_araddr[31:12],
-                                fifo_count, e_ctrl};
+                                fifo_count};
+`endif // SYNTHESIS
 
 `endif // ASSERTION
 

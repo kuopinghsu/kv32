@@ -272,6 +272,18 @@ module kv32_decoder (
                                 illegal = 1'b1;
                             end
                         end
+                        // Unknown CSR address: any access (read or write) to a
+                        // non-existent CSR is illegal (RISC-V priv. spec §2.1).
+                        if (!(instr[31:20] inside {
+                            CSR_MSTATUS, CSR_MISA, CSR_MIE, CSR_MTVEC,
+                            CSR_MSCRATCH, CSR_MEPC, CSR_MCAUSE, CSR_MTVAL, CSR_MIP,
+                            CSR_MCYCLE, CSR_MCYCLEH, CSR_MINSTRET, CSR_MINSTRETH,
+                            CSR_CYCLE, CSR_TIME, CSR_INSTRET,
+                            CSR_CYCLEH, CSR_TIMEH, CSR_INSTRETH,
+                            CSR_MVENDORID, CSR_MARCHID, CSR_MIMPID, CSR_MHARTID
+                        })) begin
+                            illegal = 1'b1;
+                        end
                     end
                 end
 

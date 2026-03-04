@@ -581,13 +581,14 @@ module kv32_sb #(
 
 `endif // ASSERTION
 
-    // resp_error: port input used only in DEBUG2 trace; issue: sim-only helper
-    logic _unused_ok_sb;
-    assign _unused_ok_sb = &{1'b0, resp_error
+    // resp_error: only consumed by DEBUG2 trace in this module (store-error
+    // propagation happens at kv32_core level via dmem_resp_error).
+    // issue: sim-only helper signal.
 `ifndef SYNTHESIS
-                              , issue
-`endif
-                             };
+    // Lint sink (debug only): resp_error and issue not consumed in synthesisable logic.
+    logic _unused_ok_sb;
+    assign _unused_ok_sb = &{1'b0, resp_error, issue};
+`endif // SYNTHESIS
 
 endmodule
 

@@ -532,10 +532,12 @@ module mem_axi #(
     assert property (p_mem_resp_stable)
         else $error("[%s] mem_resp signals must remain stable until mem_resp_ready", BRIDGE_NAME);
 
-    // Suppress unused-signal lint warnings: AXI BID/RID inputs are required by
-    // protocol but not used by this memory bridge.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): AXI BID/RID required by protocol but not used
+    // by this point-to-point memory bridge.
     logic _unused_ok;
     assign _unused_ok = &{1'b0, axi_bid, axi_rid};
+`endif // SYNTHESIS
 
 `endif // ASSERTION
 

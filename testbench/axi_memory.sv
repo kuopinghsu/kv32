@@ -28,6 +28,7 @@ module axi_memory #(
     // Write Address Channel
     input  logic [ADDR_WIDTH-1:0]   axi_awaddr,
     input  logic [7:0]              axi_awlen,
+    input  logic [2:0]              axi_awsize,
     input  logic [1:0]              axi_awburst,
     input  logic                    axi_awvalid,
     output logic                    axi_awready,
@@ -822,7 +823,7 @@ module axi_memory #(
 
     // Suppress unused signals that exist for backward compat, single-port mode, or future use
     logic _unused_ok_mem;
-    assign _unused_ok_mem = &{1'b0, axi_arsize, state,
+    assign _unused_ok_mem = &{1'b0, axi_awsize, axi_arsize, state,
                               arb_last_grant_was_write, read_can_accept,
                               write_addr_accepted, write_data_accepted,
                               burst_total_len};

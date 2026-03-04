@@ -357,10 +357,12 @@ module axi_plic #(
         end
     end
 
-    // Suppress unused-signal lint warnings: upper bits of latched addresses are
-    // always the PLIC base-address bits (decoded by the crossbar, not this module).
+`ifndef SYNTHESIS
+    // Lint sink (debug only): upper address bits are the PLIC base decoded by
+    // the crossbar; this module only uses bits [25:0].
     logic _unused_ok;
     assign _unused_ok = &{1'b0, aw_addr_latch[31:26], ar_addr_latch[31:26]};
+`endif // SYNTHESIS
 
 endmodule
 

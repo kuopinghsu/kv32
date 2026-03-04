@@ -279,6 +279,87 @@ int main(void) {
     check_trapped("csrrc  rd, mhartid,  t0  (rs1≠x0, must trap)");
 
     // -----------------------------------------------------------------------
+    // Group 3: CSRRW / CSRRWI to read-only CSRs
+    //
+    // CSRRW/CSRRWI always constitute a write regardless of rs1/uimm value.
+    // Any such access to a read-only CSR (addr[11:10]=2'b11) must trap.
+    // -----------------------------------------------------------------------
+    puts_raw("\n--- Group 3: CSRRW/CSRRWI to read-only CSRs ---\n");
+
+    // csrrw rd, cycle, t0  → always writes → MUST trap
+    before_test();
+    {
+        register uint32_t _rs1 asm("t0") = 0x1234;
+        asm volatile("csrrw %0, 0xC00, %1" : "=r"(rd) : "r"(_rs1));
+    }
+    check_trapped("csrrw  rd, cycle, t0   (always-write to RO, must trap)");
+
+    // csrrwi rd, cycle, 0  → always writes even with uimm=0 → MUST trap
+    before_test();
+    asm volatile("csrrwi %0, 0xC00, 0" : "=r"(rd));
+    check_trapped("csrrwi rd, cycle, 0    (CSRRWI always-write even uimm=0, must trap)");
+
+    // csrrwi rd, cycle, 1  → always writes → MUST trap
+    before_test();
+    asm volatile("csrrwi %0, 0xC00, 1" : "=r"(rd));
+    check_trapped("csrrwi rd, cycle, 1    (CSRRWI always-write, must trap)");
+
+    // csrrw rd, instret, t0  → MUST trap
+    before_test();
+    {
+        register uint32_t _rs1 asm("t0") = 0x1;
+        asm volatile("csrrw %0, 0xC02, %1" : "=r"(rd) : "r"(_rs1));
+    }
+    check_trapped("csrrw  rd, instret, t0 (always-write to RO, must trap)");
+
+    // csrrwi rd, mvendorid, 0  → MUST trap
+    before_test();
+    asm volatile("csrrwi %0, 0xF11, 0" : "=r"(rd));
+    check_trapped("csrrwi rd, mvendorid, 0 (CSRRWI always-write to RO, must trap)");
+
+    // csrrw rd, mhartid, t0  → MUST trap
+    before_test();
+    {
+        register uint32_t _rs1 asm("t0") = 0x0;
+        asm volatile("csrrw %0, 0xF14, %1" : "=r"(rd) : "r"(_rs1));
+    }
+    check_trapped("csrrw  rd, mhartid, t0 (rs1=t0,val=0, always-write, must trap)");
+
+    // -----------------------------------------------------------------------
+    // Group 4: Non-existent CSR addresses
+    //
+    // Accessing any CSR address not implemented raises Illegal Instruction
+    // (RISC-V privileged spec section 2.1).
+    // -----------------------------------------------------------------------
+    puts_raw("\n--- Group 4: Non-existent CSR addresses ---\n");
+
+    // Write to 0xABC  (addr[11:10]=2'b10 — not a read-only address, just unknown)
+    before_test();
+    {
+        register uint32_t _rs1 asm("t0") = 0xDEAD;
+        asm volatile("csrrw %0, 0xABC, %1" : "=r"(rd) : "r"(_rs1));
+    }
+    check_trapped("csrrw  rd, 0xABC, t0   (unknown CSR write, must trap)");
+
+    // Write to 0x800 (addr[11:10]=2'b10, unknown machine-mode CSR)
+    before_test();
+    {
+        register uint32_t _rs1 asm("t0") = 0x1;
+        asm volatile("csrrw %0, 0x800, %1" : "=r"(rd) : "r"(_rs1));
+    }
+    check_trapped("csrrw  rd, 0x800, t0   (unknown CSR write, must trap)");
+
+    // Read from 0xABC via csrrs rd, 0xABC, x0 (pure read of unknown CSR)
+    before_test();
+    asm volatile("csrrs %0, 0xABC, x0" : "=r"(rd));
+    check_trapped("csrrs  rd, 0xABC, x0   (unknown CSR read, must trap)");
+
+    // csrrsi rd, 0xABC, 0  (uimm=0 → pure read of unknown CSR)
+    before_test();
+    asm volatile("csrrsi %0, 0xABC, 0" : "=r"(rd));
+    check_trapped("csrrsi rd, 0xABC, 0    (unknown CSR read uimm=0, must trap)");
+
+    // -----------------------------------------------------------------------
     // Summary
     // -----------------------------------------------------------------------
     puts_raw("\n============================\n");

@@ -225,8 +225,8 @@ module axi_spi #(
     assign axi_awready = 1'b1;
     assign axi_wready  = 1'b1;
 
-    // TX FIFO push on AXI write to TX_OFFSET
-    assign txf_push = axi_awvalid && axi_wvalid && (axi_awaddr[15:0] == TX_OFFSET) && !txf_full;
+    // TX FIFO push on AXI write to TX_OFFSET (byte 0 only)
+    assign txf_push = axi_awvalid && axi_wvalid && (axi_awaddr[15:0] == TX_OFFSET) && !txf_full && axi_wstrb[0];
 
     // Write transaction (control/divider/IE registers)
     always_ff @(posedge clk or negedge rst_n) begin
@@ -247,14 +247,19 @@ module axi_spi #(
             if (axi_awvalid && axi_wvalid) begin
                 case (axi_awaddr[15:0])
                     CTRL_OFFSET: begin
-                        spi_enable  <= axi_wdata[0];
-                        cpol        <= axi_wdata[1];
-                        cpha        <= axi_wdata[2];
-                        loopback_en <= axi_wdata[3];
-                        cs_select   <= axi_wdata[7:4];
+                        if (axi_wstrb[0]) begin
+                            spi_enable  <= axi_wdata[0];
+                            cpol        <= axi_wdata[1];
+                            cpha        <= axi_wdata[2];
+                            loopback_en <= axi_wdata[3];
+                            cs_select   <= axi_wdata[7:4];
+                        end
                     end
-                    DIV_OFFSET: clk_div <= axi_wdata[15:0];
-                    IE_OFFSET:  ie_r    <= axi_wdata[1:0];
+                    DIV_OFFSET: begin
+                        if (axi_wstrb[0]) clk_div[7:0]  <= axi_wdata[7:0];
+                        if (axi_wstrb[1]) clk_div[15:8] <= axi_wdata[15:8];
+                    end
+                    IE_OFFSET: if (axi_wstrb[0]) ie_r <= axi_wdata[1:0];
                     default: ; // TX_OFFSET push handled by txf_push assign
                 endcase
                 axi_bvalid <= 1'b1;
@@ -399,10 +404,15 @@ module axi_spi #(
     assign spi_cs_n = spi_enable ? cs_select : 4'b1111;
 
     // Suppress unused-signal lint warnings: upper address/data bits, byte-enable,
-    // and legacy status signals that are no longer read.
+    // axi_wstrb[1:0] used: [0] for byte-0 registers and TX push, [1] for clk_div[15:8].
+    // axi_wstrb[3:2] unused: no register maps to wdata bytes 2 or 3.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): wstrb[3:2] unused; upper address/data bits decoded
+    // by crossbar; rx_data/tx_ready/tx_being_written are legacy status signals.
     logic _unused_ok;
-    assign _unused_ok = &{1'b0, axi_wstrb, axi_awaddr[31:16], axi_wdata[31:16],
+    assign _unused_ok = &{1'b0, axi_wstrb[3:2], axi_awaddr[31:16], axi_wdata[31:16],
                                 axi_araddr[31:16], rx_data, tx_ready, tx_being_written};
+`endif // SYNTHESIS
 
 endmodule
 

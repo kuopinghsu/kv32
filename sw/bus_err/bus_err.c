@@ -167,9 +167,10 @@ int main(void)
     test_peripheral(7, "PLIC",
                     (volatile uint32_t *)(KV_PLIC_BASE  + 0x100000UL));
 
-    /* Magic: only EXIT (offset 0xFFF0) and CONSOLE (offset 0xFFF4) valid */
+    /* Magic: only CONSOLE (offset 0x0000) and EXIT (offset 0x0004) valid;
+     * probe offset 0x0008 which is unmapped → should return SLVERR */
     test_peripheral(8, "Magic",
-                    (volatile uint32_t *)(KV_MAGIC_BASE + 0x0000UL));
+                    (volatile uint32_t *)(KV_MAGIC_BASE + 0x0008UL));
 
     /* ── Null-address tests ── */
     /* Tests 17 & 18: data load/store to address 0x0.

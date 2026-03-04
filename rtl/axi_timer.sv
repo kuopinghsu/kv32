@@ -367,6 +367,8 @@ module axi_timer (
     // ========================================================================
     // Register Write Logic
     // ========================================================================
+    // wstrb_mask: expand each strobe bit to a full byte mask for byte-enable writes on 32-bit registers
+    wire [31:0] wstrb_mask = {{8{axi_wstrb[3]}}, {8{axi_wstrb[2]}}, {8{axi_wstrb[1]}}, {8{axi_wstrb[0]}}};
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 0; i < 4; i++) begin
@@ -379,38 +381,40 @@ module axi_timer (
             if (aw_hs && w_hs) begin
                 case (axi_awaddr[7:2])
                     // Timer 0 (0x00-0x0F)
-                    6'h00: count_r[0]     <= axi_wdata;    // COUNT
-                    6'h01: compare1_r[0]  <= axi_wdata;    // COMPARE1
-                    6'h02: compare2_r[0]  <= axi_wdata;    // COMPARE2
-                    6'h03: ctrl_r[0]      <= axi_wdata;    // CTRL
+                    6'h00: count_r[0]     <= (count_r[0]    & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COUNT
+                    6'h01: compare1_r[0]  <= (compare1_r[0] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE1
+                    6'h02: compare2_r[0]  <= (compare2_r[0] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE2
+                    6'h03: ctrl_r[0]      <= (ctrl_r[0]     & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // CTRL
                     // Timer 1 (0x20-0x2F)
-                    6'h08: count_r[1]     <= axi_wdata;    // COUNT
-                    6'h09: compare1_r[1]  <= axi_wdata;    // COMPARE1
-                    6'h0A: compare2_r[1]  <= axi_wdata;    // COMPARE2
-                    6'h0B: ctrl_r[1]      <= axi_wdata;    // CTRL
+                    6'h08: count_r[1]     <= (count_r[1]    & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COUNT
+                    6'h09: compare1_r[1]  <= (compare1_r[1] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE1
+                    6'h0A: compare2_r[1]  <= (compare2_r[1] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE2
+                    6'h0B: ctrl_r[1]      <= (ctrl_r[1]     & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // CTRL
                     // Timer 2 (0x40-0x4F)
-                    6'h10: count_r[2]     <= axi_wdata;    // COUNT
-                    6'h11: compare1_r[2]  <= axi_wdata;    // COMPARE1
-                    6'h12: compare2_r[2]  <= axi_wdata;    // COMPARE2
-                    6'h13: ctrl_r[2]      <= axi_wdata;    // CTRL
+                    6'h10: count_r[2]     <= (count_r[2]    & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COUNT
+                    6'h11: compare1_r[2]  <= (compare1_r[2] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE1
+                    6'h12: compare2_r[2]  <= (compare2_r[2] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE2
+                    6'h13: ctrl_r[2]      <= (ctrl_r[2]     & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // CTRL
                     // Timer 3 (0x60-0x6F)
-                    6'h18: count_r[3]     <= axi_wdata;    // COUNT
-                    6'h19: compare1_r[3]  <= axi_wdata;    // COMPARE1
-                    6'h1A: compare2_r[3]  <= axi_wdata;    // COMPARE2
-                    6'h1B: ctrl_r[3]      <= axi_wdata;    // CTRL
+                    6'h18: count_r[3]     <= (count_r[3]    & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COUNT
+                    6'h19: compare1_r[3]  <= (compare1_r[3] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE1
+                    6'h1A: compare2_r[3]  <= (compare2_r[3] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // COMPARE2
+                    6'h1B: ctrl_r[3]      <= (ctrl_r[3]     & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // CTRL
                     // Global interrupt (0x80-0x8F) - INT_STATUS is handled above for W1C
-                    6'h21: int_enable_r   <= axi_wdata[3:0];   // INT_ENABLE
+                    6'h21: if (axi_wstrb[0]) int_enable_r <= axi_wdata[3:0];  // INT_ENABLE
                     default: ;
                 endcase
             end
         end
     end
 
-    // Suppress unused-signal lint warnings: upper address bits and byte-enable
-    // are not needed for this word-wide register file.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): upper and sub-word address bits decoded by
+    // crossbar; not used within this word-wide register file.
     logic _unused_ok;
-    assign _unused_ok = &{1'b0, axi_wstrb, axi_awaddr[31:8], axi_awaddr[1:0],
-                                           axi_araddr[31:8], axi_araddr[1:0]};
+    assign _unused_ok = &{1'b0, axi_awaddr[31:8], axi_awaddr[1:0],
+                                axi_araddr[31:8], axi_araddr[1:0]};
+`endif // SYNTHESIS
 
 endmodule
 

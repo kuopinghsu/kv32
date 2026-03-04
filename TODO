@@ -7,7 +7,7 @@ Ensure memory access to address 0 from instruction and data path will trigger bu
 
 Update Makefile, for C++, C and Verilator compiler, take warning as error and exit
 
-2.
+2. [DONE]
 
 Add WFI instruction, add a output signal to indicate that no outstanding request and store buffer is empty when WFI is executed. Stall the pipeline and waiting for intrrupt occurs.
 Add kv32_pm.sv to control the clock gating to kv32_core module. Add Xilinx cell for clock latch.
@@ -18,9 +18,14 @@ Update software simulator.
 
 Add sw/wfi to test WFI
 
-Update uart.c to use WFI, transfer small data from FIFO to test WFI
+2.1
 
-2.1. [DONE]
+Update uart.c to use WFI, transfer data to triger clock gating several times.
+Update idma.c to use WFI
+Update spi.c to use WFI
+Update i2c.c to use WFI
+
+2.2. [DONE]
 
 Update the description of power manager (rv32_pm.sv) for clock gating to following docs
 
@@ -89,4 +94,16 @@ Add github CI workflow
 10.
 
 Update Zephyr porting
+
+11.
+
+Add I2C clock stretching tests
+
+12.
+
+check left unused_ok, give a summary, check if this is reasonable, check if this can be remove safely
+
+13.
+
+check lint_off, check if this can be resovle by code rewriting, instead of ignore it
 

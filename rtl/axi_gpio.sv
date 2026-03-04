@@ -333,6 +333,8 @@ module axi_gpio #(
     // ========================================================================
     // Register Write Logic (using generate)
     // ========================================================================
+    // wstrb_mask: expand each strobe bit to a full byte mask for byte-enable writes
+    wire [31:0] wstrb_mask = {{8{axi_wstrb[3]}}, {8{axi_wstrb[2]}}, {8{axi_wstrb[1]}}, {8{axi_wstrb[0]}}};
     wire [1:0] wr_bank_sel = axi_awaddr[3:2];  // Which bank (0-3)
     wire [3:0] wr_reg_sel  = axi_awaddr[7:4];  // Which register type (0-9)
 
@@ -363,15 +365,15 @@ module axi_gpio #(
                             `DEBUG2(`DBG_GRP_GPIO, ("Bank%0d Write reg%0d: wdata=0x%h", bank, wr_reg_sel, axi_wdata));
                         end
                         case (wr_reg_sel)
-                            4'h0: data_out_r[bank] <= axi_wdata;                          // DATA_OUT
-                            4'h1: data_out_r[bank] <= data_out_r[bank] | axi_wdata;      // SET (W1S)
-                            4'h2: data_out_r[bank] <= data_out_r[bank] & ~axi_wdata;     // CLEAR (W1C)
-                            4'h4: dir_r[bank]      <= axi_wdata;                          // DIR
-                            4'h5: ie_r[bank]       <= axi_wdata;                          // IE
-                            4'h6: trigger_r[bank]  <= axi_wdata;                          // TRIGGER
-                            4'h7: polarity_r[bank] <= axi_wdata;                          // POLARITY
-                            4'h8: is_r[bank]       <= is_r[bank] & ~axi_wdata;           // IS (W1C)
-                            4'h9: loopback_r[bank] <= axi_wdata;                          // LOOPBACK
+                            4'h0: data_out_r[bank] <= (data_out_r[bank] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // DATA_OUT
+                            4'h1: data_out_r[bank] <= data_out_r[bank] | (axi_wdata & wstrb_mask);                   // SET (W1S)
+                            4'h2: data_out_r[bank] <= data_out_r[bank] & ~(axi_wdata & wstrb_mask);                  // CLEAR (W1C)
+                            4'h4: dir_r[bank]      <= (dir_r[bank]      & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // DIR
+                            4'h5: ie_r[bank]       <= (ie_r[bank]       & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // IE
+                            4'h6: trigger_r[bank]  <= (trigger_r[bank]  & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // TRIGGER
+                            4'h7: polarity_r[bank] <= (polarity_r[bank] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // POLARITY
+                            4'h8: is_r[bank]       <= is_r[bank] & ~(axi_wdata & wstrb_mask);                        // IS (W1C)
+                            4'h9: loopback_r[bank] <= (loopback_r[bank] & ~wstrb_mask) | (axi_wdata & wstrb_mask);  // LOOPBACK
                             default: ;
                         endcase
                     end
@@ -394,11 +396,13 @@ module axi_gpio #(
         end
     endgenerate
 
-    // Suppress unused-signal lint warnings: upper address bits and byte-enable
-    // are not needed for this word-wide register file.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): upper and sub-word address bits are decoded by
+    // the crossbar; not needed within this word-wide register file.
     logic _unused_ok;
-    assign _unused_ok = &{1'b0, axi_wstrb, axi_awaddr[31:8], axi_awaddr[1:0],
-                                           axi_araddr[31:8], axi_araddr[1:0]};
+    assign _unused_ok = &{1'b0, axi_awaddr[31:8], axi_awaddr[1:0],
+                                axi_araddr[31:8], axi_araddr[1:0]};
+`endif // SYNTHESIS
 
 endmodule
 

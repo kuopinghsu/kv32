@@ -1627,13 +1627,13 @@ module kv32_core #(
     // ============================================================================
     // Detects synchronous exceptions in execute stage:
     //   - Instruction access faults (from IF stage)
-    //   - Illegal instructions (from decoder)
+    //   - Illegal instructions (from decoder; includes read-only/unknown CSR writes)
     //   - ECALL (environment call)
     //   - EBREAK (breakpoint)
     //
     // Priority (highest to lowest):
     //   1. Instruction access fault
-    //   2. Illegal instruction
+    //   2. Illegal instruction (incl. illegal/read-only/unknown CSR per RISC-V spec §2.1)
     //   3. ECALL
     //   4. EBREAK
     always_comb begin
@@ -1703,7 +1703,8 @@ module kv32_core #(
                 exception = 1'b1;
                 exception_cause = EXC_ILLEGAL_INSTR;
                 exception_tval = instr_ex;  // Illegal instruction word (for mtval)
-                `DEBUG1(("EXCEPTION: Illegal instruction @ PC=0x%h instr=0x%h", pc_ex, instr_ex));
+                `DEBUG1(("EXCEPTION: Illegal instruction @ PC=0x%h instr=0x%h%s", pc_ex, instr_ex,
+                        csr_illegal ? " (illegal CSR)" : ""));
             end else if (is_ecall_ex) begin
                 exception = 1'b1;
                 exception_cause = EXC_ECALL_MMODE;
@@ -1888,9 +1889,12 @@ module kv32_core #(
         end
     end
 
-    // sb_mem_inflight: assigned but routing logic uses dmem_resp_is_write directly
+    // sb_mem_inflight: assigned but routing logic uses dmem_resp_is_write directly.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): sb_mem_inflight not consumed in synthesisable logic.
     logic _unused_ok_sb_inflight;
     assign _unused_ok_sb_inflight = &{1'b0, sb_mem_inflight};
+`endif // SYNTHESIS
 
     // ============================================================================
     // Memory Request Routing
@@ -2499,12 +2503,7 @@ module kv32_core #(
     //
     // Response buffering signals:
     logic [31:0] mem_data_aligned;       // Load data after extraction/alignment
-    logic [4:0]  rd_addr_mem_reg;        // Saved destination register address
-    logic        reg_we_mem_reg;         // Saved register write enable
-    logic        mem_read_mem_reg;       // Saved memory read indicator
-    logic        mem_valid_reg;          // Saved valid flag for MEM stage
     logic [31:0] dmem_resp_data_buf;     // Buffered memory response data
-    logic        dmem_resp_error_buf;    // Error flag for buffered response
 
     // Memory Response Buffer Register
     // Captures dmem_resp_data when dmem_resp_valid asserts, holds it until
@@ -2514,22 +2513,18 @@ module kv32_core #(
         if (!rst_n) begin
             dmem_resp_data_buf <= 32'd0;
             dmem_resp_valid_buf <= 1'b0;
-            dmem_resp_error_buf <= 1'b0;
         end else if (load_req_valid && !sb_mem_valid && !amo_mem_req && dmem_req_ready) begin
             // Clear buffer when the load itself wins the bus
             dmem_resp_data_buf <= 32'd0;
             dmem_resp_valid_buf <= 1'b0;
-            dmem_resp_error_buf <= 1'b0;
         end else if (dmem_resp_valid && !dmem_resp_is_write) begin
             // Capture load R-response only; ignore store B-responses
             dmem_resp_data_buf <= dmem_resp_data;
             dmem_resp_valid_buf <= 1'b1;
-            dmem_resp_error_buf <= dmem_resp_error;
         end else if (!mem_wb_stall) begin
             // Clear buffer when pipeline advances (data consumed)
             dmem_resp_data_buf <= 32'd0;  // Clear data to prevent stale value reuse
             dmem_resp_valid_buf <= 1'b0;
-            dmem_resp_error_buf <= 1'b0;
         end
     end
 
@@ -2567,30 +2562,6 @@ module kv32_core #(
             store_retired_addr <= alu_result_wb;
         end
     end
-
-    // Store MEM stage metadata for alignment logic
-    // Since memory response may arrive after multiple cycles, save the
-    // load operation type and register info from EX stage so we can
-    // correctly extract/align the data when response arrives.
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            rd_addr_mem_reg  <= 5'd0;
-            reg_we_mem_reg   <= 1'b0;
-            mem_read_mem_reg <= 1'b0;
-            mem_valid_reg    <= 1'b0;
-        end else if (!ex_mem_stall) begin
-            rd_addr_mem_reg  <= rd_addr_ex;
-            reg_we_mem_reg   <= reg_we_ex;
-            mem_read_mem_reg <= mem_read_ex;
-            mem_valid_reg    <= ex_valid && !exception && !irq_pending;
-        end
-    end
-
-    // Pipeline buffer signals: assigned from EX stage but not consumed downstream
-    // (dead code retained for potential future use)
-    logic _unused_ok_pipebuf;
-    assign _unused_ok_pipebuf = &{1'b0, rd_addr_mem_reg, reg_we_mem_reg,
-                                  mem_read_mem_reg, mem_valid_reg, dmem_resp_error_buf};
 
     // ----------------------------------------------------------------------------
     // Load Data Extraction and Alignment
@@ -2810,9 +2781,11 @@ module kv32_core #(
         end
     end
 
-    // Suppress unused simulation-only debug signal (only read via DEBUG1 macro)
+`ifndef SYNTHESIS
+    // Lint sink (debug only): last_cycle_counter only read in DEBUG1 trace macro.
     logic _unused_ok_last_cyc;
     assign _unused_ok_last_cyc = &{1'b0, last_cycle_counter};
+`endif // SYNTHESIS
     `endif
 
     // Detects data access faults that were flagged by the memory system.
@@ -3419,9 +3392,11 @@ module kv32_core #(
         else $error("[CORE] Instruction retired multiple times: PC=0x%h instr=0x%h (last: PC=0x%h instr=0x%h)",
                     pc_wb, instr_wb, last_retired_pc, last_retired_instr);
 
-    // Suppress 'is_while1_loop' unused signal warning - used in property above
+`ifndef SYNTHESIS
+    // Lint sink (debug only): is_while1_loop consumed only in SVA property above.
     logic _unused_ok_while1;
     assign _unused_ok_while1 = &{1'b0, is_while1_loop};
+`endif // SYNTHESIS
 
 `endif // ASSERTION
 
@@ -3437,10 +3412,13 @@ module kv32_core #(
                           !sb_store_pending &&
                           icache_idle_i;
 
-    // Signals assigned by CSR/pipeline but not subsequently consumed in this module
+    // Signals assigned by CSR/pipeline but not subsequently consumed in this module.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): various signals not consumed in synthesisable logic.
     logic _unused_ok_misc;
     assign _unused_ok_misc = &{1'b0, system_mem, csr_illegal, irq_cause,
                                last_wb_valid, amo_op_wb};
+`endif // SYNTHESIS
 
     // ====== Performance Counter Update (moved here so pipeline signal declarations appear first) ======
     always_ff @(posedge clk or negedge rst_n) begin

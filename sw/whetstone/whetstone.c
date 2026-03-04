@@ -10,10 +10,10 @@
 
 #include <stdint.h>
 #include <csr.h>
+#include <kv_platform.h>
 
 /* Magic console output */
-#define CONSOLE_ADDR 0xFFFFFFF4
-#define console_putc(c) (*(volatile uint32_t*)CONSOLE_ADDR = (c))
+#define console_putc(c) kv_magic_putc(c)
 
 /* Fixed-point scaling */
 #define SCALE 1000

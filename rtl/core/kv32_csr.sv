@@ -314,10 +314,13 @@ module kv32_csr (
         end
     end
 
-    // mpie/mtie/msie/meie: extracted from CSR registers but not used downstream
-    // (interrupt enable/status bits exposed for readability; hardware acts on mie/mstatus directly)
+    // mpie/mtie/msie/meie: named aliases for mstatus/mie bits; hardware acts on
+    // those registers directly via mie&mip; aliases exposed for readability only.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): named CSR bit aliases not consumed downstream.
     logic _unused_ok_csr;
     assign _unused_ok_csr = &{1'b0, mpie, mtie, msie, meie};
+`endif // SYNTHESIS
 
 endmodule
 

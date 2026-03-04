@@ -138,6 +138,7 @@ module fpga_top (
 
     // kv32_soc AXI master signals (cpu_clk domain, 32-bit data)
     wire [31:0] soc_axi_awaddr;
+    wire [2:0]  soc_axi_awsize;
     wire        soc_axi_awvalid;
     wire        soc_axi_awready;
     wire [31:0] soc_axi_wdata;
@@ -533,6 +534,7 @@ module fpga_top (
 
         // External AXI master (to DDR4 via CDC + dwidth converter)
         .m_axi_awaddr       (soc_axi_awaddr),
+        .m_axi_awsize       (soc_axi_awsize),
         .m_axi_awvalid      (soc_axi_awvalid),
         .m_axi_awready      (soc_axi_awready),
         .m_axi_wdata        (soc_axi_wdata),
@@ -575,7 +577,7 @@ module fpga_top (
         .s_axi_awid     (4'b0),
         .s_axi_awaddr   (soc_axi_awaddr),
         .s_axi_awlen    (8'h0),                 // Single-beat writes
-        .s_axi_awsize   (3'b010),               // 4 bytes
+        .s_axi_awsize   (soc_axi_awsize),           // from SoC
         .s_axi_awburst  (2'b01),                // INCR
         .s_axi_awlock   (1'b0),
         .s_axi_awcache  (4'b0011),              // Normal non-cacheable bufferable

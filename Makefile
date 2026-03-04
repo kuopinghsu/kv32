@@ -73,6 +73,20 @@ COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 SPIKE_EXCLUDE = icache
 SPIKE_TESTS  ?= $(filter-out $(SPIKE_EXCLUDE), $(TEST_NAMES))
 
+# Tests to run with sim-all: exclude Spike-incompatible tests when SIM=spike
+ifeq ($(SIM),spike)
+SIM_ALL_TESTS ?= $(SPIKE_TESTS)
+else
+SIM_ALL_TESTS ?= $(TEST_NAMES)
+endif
+
+# Tests to run with compare-all: also exclude Spike-incompatible tests when SIM=spike
+ifeq ($(SIM),spike)
+COMPARE_ALL_TESTS ?= $(filter-out $(SPIKE_EXCLUDE), $(COMPARE_TESTS))
+else
+COMPARE_ALL_TESTS ?= $(COMPARE_TESTS)
+endif
+
 # Software simulator selection (kv32sim or spike)
 SIM ?= kv32sim
 
@@ -293,7 +307,7 @@ BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
 # Default target - run all tests
 all: rtl-all sim-all compare-all spike-all freertos-compare-simple
-	@make -f Makefile SIM=spike compare-all rtl-all
+	@make -f Makefile SIM=spike sim-all
 	@make -f Makefile FAST_DIV=0 FAST_MUL=0 compare-all rtl-all
 	@make -f Makefile ICACHE_EN=0 compare-all rtl-all
 	@make -f Makefile TRACE=1 arch-test-all
@@ -693,10 +707,11 @@ sim-all: build-sim $(_SIM_PREREQ)
 	@echo "=========================================="
 	@echo "Running all software simulator tests ($(SIM))"
 	@echo "=========================================="
-	@echo "Tests to run: $(TEST_NAMES)"
+	@echo "Tests to run: $(SIM_ALL_TESTS)"
+	$(if $(filter spike,$(SIM)),@echo "Excluded (spike): $(SPIKE_EXCLUDE)",)
 	@echo ""
 	@passed=0; failed=0; \
-	for test in $(TEST_NAMES); do \
+	for test in $(SIM_ALL_TESTS); do \
 		if $(MAKE) -s _SIM_PREREQ= sim-$$test; then \
 			echo "✓ $$test PASSED"; \
 			passed=$$((passed + 1)); \
@@ -747,15 +762,16 @@ compare-all:
 	@echo "=========================================="
 	@echo "Comparing all tests: RTL vs Software Simulator"
 	@echo "=========================================="
-	@echo "Tests to compare: $(COMPARE_TESTS)"
+	@echo "Tests to compare: $(COMPARE_ALL_TESTS)"
 	@echo "Excluded (I/O): $(COMPARE_EXCLUDE)"
+	$(if $(filter spike,$(SIM)),@echo "Excluded (spike): $(SPIKE_EXCLUDE)",)
 	@echo ""
 	@if [ ! -f scripts/trace_compare.py ]; then \
 		echo "Error: scripts/trace_compare.py not found"; \
 		exit 1; \
 	fi
 	@passed=0; failed=0; \
-	for test in $(COMPARE_TESTS); do \
+	for test in $(COMPARE_ALL_TESTS); do \
 		echo "==========================================";\
 		echo "Comparing test: $$test";\
 		echo "==========================================";\

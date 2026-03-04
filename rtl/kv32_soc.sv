@@ -108,6 +108,7 @@ module kv32_soc #(
     // External AXI4-Lite RAM interface (2MB)
     output logic [31:0] m_axi_awaddr,
     output logic [7:0]  m_axi_awlen,
+    output logic [2:0]  m_axi_awsize,
     output logic [1:0]  m_axi_awburst,
     output logic        m_axi_awvalid,
     input  logic        m_axi_awready,
@@ -526,9 +527,9 @@ module kv32_soc #(
     logic [31:0] dbg_mem_wdata;       // Debug memory write data (tied off for now)
     logic        dbg_mem_ready;       // Debug memory ready (tied off for now)
     logic [31:0] dbg_mem_rdata;       // Debug memory read data (tied off for now)
-    // ndmreset/hartreset from DM — to be wired into SoC/CPU reset logic
-    logic        dbg_ndmreset;        // Non-debug module reset (should reset CPU + peripherals)
-    logic        dbg_hartreset;       // Hart reset (should reset CPU only)
+    // ndmreset/hartreset from DM — wired into cpu_rst_n / soc_rst_n below.
+    logic        dbg_ndmreset;        // Non-debug module reset (resets CPU + peripherals)
+    logic        dbg_hartreset;       // Hart reset (resets CPU only)
 
     // ========================================================================
     // WFI / Power Management Signals
@@ -541,6 +542,16 @@ module kv32_soc #(
     // Tie off debug memory interface (not yet implemented - would need AXI master)
     assign dbg_mem_ready = 1'b0;
     assign dbg_mem_rdata = 32'h0;
+
+    // Debug reset domains:
+    //   cpu_rst_n: reset by external rst_n, ndmreset, or hartreset (core + instruction path)
+    //   soc_rst_n: reset by external rst_n or ndmreset (peripherals + interconnect)
+    /* verilator lint_off SYNCASYNCNET */
+    logic cpu_rst_n;
+    logic soc_rst_n;
+    /* verilator lint_on SYNCASYNCNET */
+    assign cpu_rst_n = rst_n && !dbg_ndmreset && !dbg_hartreset;
+    assign soc_rst_n = rst_n && !dbg_ndmreset;
 
 `ifndef SYNTHESIS
     logic        core_retire_instr;   // Instruction retirement pulse for trace-mode mtime
@@ -584,7 +595,7 @@ module kv32_soc #(
         .FAST_DIV(FAST_DIV)
     ) core (
         .clk(core_clk),
-        .rst_n(rst_n),
+        .rst_n(cpu_rst_n),
 
         .imem_req_valid(imem_req_valid),
         .imem_req_addr(imem_req_addr),
@@ -671,7 +682,7 @@ module kv32_soc #(
                 .CACHE_WAYS     (ICACHE_WAYS)
             ) icache (
                 .clk    (core_clk),
-                .rst_n  (rst_n),
+                .rst_n  (cpu_rst_n),
 
                 // CPU side
                 .imem_req_valid (imem_req_valid),
@@ -732,7 +743,7 @@ module kv32_soc #(
                 .OUTSTANDING_DEPTH(IB_DEPTH)
             ) imem_bridge (
                 .clk(clk),
-                .rst_n(rst_n),
+                .rst_n(cpu_rst_n),
 
                 .mem_req_valid(imem_req_valid),
                 .mem_req_addr (imem_req_addr),
@@ -791,7 +802,7 @@ module kv32_soc #(
         .OUTSTANDING_DEPTH(4)  // Conservative limit matching original system capability
     ) dmem_bridge (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(soc_rst_n),
 
         .mem_req_valid(dmem_req_valid),
         .mem_req_addr(dmem_req_addr),
@@ -843,7 +854,7 @@ module kv32_soc #(
         .OUTSTANDING_DEPTH(8)  // Arbiter tracking capacity
     ) arbiter (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(soc_rst_n),
 
         // Master 0: Instruction memory (Read-Only) with ID
         .m0_axi_araddr  (imem_axi_araddr),
@@ -963,7 +974,7 @@ module kv32_soc #(
     // Returns DECERR response for unmapped addresses
     axi_xbar axi_intercon (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(soc_rst_n),
 
         // Master (from arbiter) with ID support
         .m_axi_awaddr  (arb_axi_awaddr),
@@ -1003,6 +1014,7 @@ module kv32_soc #(
         // Slave 0: External RAM
         .s0_axi_awaddr (m_axi_awaddr),
         .s0_axi_awlen  (m_axi_awlen),
+        .s0_axi_awsize (m_axi_awsize),
         .s0_axi_awburst(m_axi_awburst),
         .s0_axi_awvalid(m_axi_awvalid),
         .s0_axi_awready(m_axi_awready),
@@ -1226,7 +1238,7 @@ module kv32_soc #(
     // Memory map: 0x0200_0000 - 0x020B_FFFF (standard RISC-V CLINT base address)
     axi_clint clint (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(soc_rst_n),
 
         .axi_awaddr(clint_axi_awaddr),
         .axi_awvalid(clint_axi_awvalid),
@@ -1298,7 +1310,7 @@ module kv32_soc #(
         .NUM_IRQ(PLIC_NUM_IRQ)
     ) u_plic (
         .clk         (clk),
-        .rst_n       (rst_n),
+        .rst_n       (soc_rst_n),
         .axi_awaddr  (plic_axi_awaddr),
         .axi_awvalid (plic_axi_awvalid),
         .axi_awready (plic_axi_awready),
@@ -1332,7 +1344,7 @@ module kv32_soc #(
         .BAUD_RATE(BAUD_RATE)
     ) uart (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(soc_rst_n),
 
         .axi_awaddr(uart_axi_awaddr),
         .axi_awvalid(uart_axi_awvalid),
@@ -1372,7 +1384,7 @@ module kv32_soc #(
         .CLK_FREQ(CLK_FREQ)
     ) spi (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(soc_rst_n),
 
         .axi_awaddr(spi_axi_awaddr),
         .axi_awvalid(spi_axi_awvalid),
@@ -1414,7 +1426,7 @@ module kv32_soc #(
         .CLK_FREQ(CLK_FREQ)
     ) i2c (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(soc_rst_n),
 
         .axi_awaddr(i2c_axi_awaddr),
         .axi_awvalid(i2c_axi_awvalid),
@@ -1460,7 +1472,7 @@ module kv32_soc #(
         .MAX_BURST_LEN (16)
     ) u_dma (
         .clk     (clk),
-        .rst_n   (rst_n),
+        .rst_n   (soc_rst_n),
 
         // Config slave (AXI4-Lite from xbar s6)
         .cfg_awaddr  (dma_cfg_axi_awaddr),
@@ -1521,7 +1533,7 @@ module kv32_soc #(
         .NUM_PINS(GPIO_NUM_PINS)
     ) gpio (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(soc_rst_n),
 
         .axi_awaddr(gpio_axi_awaddr),
         .axi_awvalid(gpio_axi_awvalid),
@@ -1560,7 +1572,7 @@ module kv32_soc #(
     // Features: Configurable prescaler, auto-reload, compare interrupts, PWM duty cycle control
     axi_timer timer (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(soc_rst_n),
 
         .axi_awaddr(timer_axi_awaddr),
         .axi_awvalid(timer_axi_awvalid),
@@ -1599,7 +1611,7 @@ module kv32_soc #(
     // Memory map: 0xFFFF_0000
     axi_magic magic (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(soc_rst_n),
 
         .axi_awaddr(magic_axi_awaddr),
         .axi_awvalid(magic_axi_awvalid),
@@ -2084,13 +2096,13 @@ module kv32_soc #(
             else $error("[SOC] BAUD_RATE must be between 9600 and CLK_FREQ/4, got %0d", BAUD_RATE);
     end
 
-    // Suppress unused-signal warnings: AXI ID response fields that are received
-    // but not used (ID tagging not needed at SoC level), and debug memory interface
-    // ports that are wired but not yet connected to external debug logic.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): AXI RID/BID not needed at SoC level (point-to-point
+    // ordering); debug memory interface ports wired but not yet connected.
     logic _unused_ok;
     assign _unused_ok = &{1'b0, imem_axi_rid, dma_m_axi_bid, dma_m_axi_rid,
-                                dbg_mem_req, dbg_mem_addr, dbg_mem_we, dbg_mem_wdata,
-                                dbg_ndmreset, dbg_hartreset};  // TODO: wire to SoC/CPU reset tree
+                                dbg_mem_req, dbg_mem_addr, dbg_mem_we, dbg_mem_wdata};
+`endif // SYNTHESIS
 
 `endif // ASSERTION
 

@@ -4,7 +4,7 @@
 // Description: Newlib syscall stubs: _write() routes console output to Magic device
 //
 // Provides the minimal newlib semihosting surface required by printf.
-// _write() sends each byte to KV_MAGIC_CONSOLE (0xFFFFFFF4).
+// _write() sends each byte to KV_MAGIC_CONSOLE_ADDR (0x40000000, via kv_platform.h).
 // ============================================================================
 
 #include <sys/stat.h>
@@ -27,10 +27,8 @@ extern volatile unsigned long long fromhost;
 extern "C" {
 #endif
 
-// Magic console address - write character to output (for RTL/kv32sim)
-// Use KV_MAGIC_CONSOLE_ADDR from kv_platform.h (= KV_MAGIC_BASE + KV_MAGIC_CONSOLE_OFF)
-
-// Memory-mapped console magic address
+// Memory-mapped magic console: KV_MAGIC_CONSOLE_ADDR = KV_MAGIC_BASE + KV_MAGIC_CONSOLE_OFF = 0x40000000
+// Works for both spike (plugin_magic) and RTL/kv32sim.
 volatile unsigned int* const console_putc = (unsigned int*)KV_MAGIC_CONSOLE_ADDR;
 
 // HTIF device numbers

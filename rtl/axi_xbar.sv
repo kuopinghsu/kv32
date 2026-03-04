@@ -62,6 +62,7 @@ module axi_xbar (
     // Slave 0: RAM (0x8000_0000 - 0x801F_FFFF)
     output logic [31:0] s0_axi_awaddr,
     output logic [7:0]  s0_axi_awlen,
+    output logic [2:0]  s0_axi_awsize,
     output logic [1:0]  s0_axi_awburst,
     output logic        s0_axi_awvalid,
     input  logic        s0_axi_awready,
@@ -565,6 +566,7 @@ module axi_xbar (
     always_comb begin
         s0_axi_awaddr  = m_axi_awaddr;
         s0_axi_awlen   = m_axi_awlen;
+        s0_axi_awsize  = m_axi_awsize;
         s0_axi_awburst = m_axi_awburst;
         s0_axi_awvalid = m_axi_awvalid && sel_s0_aw;
 
@@ -1193,11 +1195,6 @@ module axi_xbar (
     endproperty
     assert property (p_read_decode_onehot)
         else $error("[AXI_XBAR] Read address decode must be one-hot or zero (decode error)");
-
-    // Suppress unused-signal lint warnings: AWSIZE is required by AXI4 protocol
-    // but this crossbar routes on address only (all transfers are 32-bit words).
-    logic _unused_ok;
-    assign _unused_ok = &{1'b0, m_axi_awsize};
 
 `endif // ASSERTION
 

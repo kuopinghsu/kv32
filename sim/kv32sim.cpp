@@ -15,6 +15,7 @@
 #include <map>
 #include <stdint.h>
 #include <string>
+#include <unordered_set>
 #include <vector>
 #include <unistd.h>
 #include <csignal>
@@ -1350,6 +1351,23 @@ void KV32Simulator::step() {
             // Per RISC-V spec: CSR addr bits[11:10] == 2'b11 means read-only.
             // Any write attempt to such a CSR raises an Illegal Instruction exception.
             if (do_write && (csr_addr & 0xC00) == 0xC00) {
+                take_trap(CAUSE_ILLEGAL_INSTRUCTION, inst);
+                untick_slaves(); // Undo the slave tick — instruction not retired
+                inst_count--; csr_mcycle--; csr_minstret--;
+                return;
+            }
+
+            // Unknown CSR address — any access (read or write) raises Illegal Instruction.
+            // Whitelist matches kv32_decoder.sv `inside {}` check.
+            static const std::unordered_set<uint32_t> known_csrs = {
+                CSR_MSTATUS, CSR_MISA,    CSR_MIE,      CSR_MTVEC,
+                CSR_MSCRATCH, CSR_MEPC,  CSR_MCAUSE,   CSR_MTVAL,   CSR_MIP,
+                CSR_MCYCLE,  CSR_MCYCLEH, CSR_MINSTRET, CSR_MINSTRETH,
+                CSR_CYCLE,   CSR_TIME,    CSR_INSTRET,
+                CSR_CYCLEH,  CSR_TIMEH,   CSR_INSTRETH,
+                CSR_MVENDORID, CSR_MARCHID, CSR_MIMPID, CSR_MHARTID,
+            };
+            if (known_csrs.find(csr_addr) == known_csrs.end()) {
                 take_trap(CAUSE_ILLEGAL_INSTRUCTION, inst);
                 untick_slaves(); // Undo the slave tick — instruction not retired
                 inst_count--; csr_mcycle--; csr_minstret--;

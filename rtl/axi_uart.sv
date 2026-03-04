@@ -389,7 +389,7 @@ module axi_uart #(
     assign axi_arready = 1'b1;
 
     // TX FIFO push: AXI write to offset 0x00 (drop if FIFO full)
-    assign txf_push = axi_awvalid && axi_wvalid && (axi_awaddr[7:0] == 8'h00) && !txf_full;
+    assign txf_push = axi_awvalid && axi_wvalid && (axi_awaddr[7:0] == 8'h00) && !txf_full && axi_wstrb[0];
 
     // RX FIFO pop: AXI read of offset 0x00 (advance pointer)
     assign rxf_pop = axi_arvalid && (axi_araddr[7:0] == 8'h00) && !rxf_empty;
@@ -409,8 +409,8 @@ module axi_uart #(
 
             if (axi_awvalid && axi_wvalid && axi_awready && axi_wready) begin
                 case (axi_awaddr[7:0])
-                    8'h08: ie_r        <= axi_wdata[1:0];
-                    8'h14: loopback_en <= axi_wdata[0];
+                    8'h08: if (axi_wstrb[0]) ie_r        <= axi_wdata[1:0];
+                    8'h14: if (axi_wstrb[0]) loopback_en <= axi_wdata[0];
                     default: ;
                 endcase
                 axi_bvalid <= 1'b1;
@@ -457,9 +457,15 @@ module axi_uart #(
 
     // Suppress unused-signal lint warnings: upper address/data bits and byte-enable
     // are not needed for this byte-wide register file.
+    // axi_wstrb[0] used: all UART registers are byte-wide.
+    // axi_wstrb[3:1] unused: no register maps to wdata bytes 1-3.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): wstrb[3:1] unused; upper address/data bits
+    // decoded by crossbar.
     logic _unused_ok;
-    assign _unused_ok = &{1'b0, axi_wstrb, axi_awaddr[31:8],
+    assign _unused_ok = &{1'b0, axi_wstrb[3:1], axi_awaddr[31:8],
                                 axi_wdata[31:8], axi_araddr[31:8]};
+`endif // SYNTHESIS
 
 endmodule
 

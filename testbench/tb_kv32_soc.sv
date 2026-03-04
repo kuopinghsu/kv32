@@ -77,6 +77,7 @@ module tb_kv32_soc #(
     // AXI Interface signals
     logic [31:0] axi_awaddr;
     logic [7:0]  axi_awlen;    // AW burst length
+    logic [2:0]  axi_awsize;   // AW burst size
     logic [1:0]  axi_awburst;  // AW burst type
     logic        axi_awvalid;
     logic        axi_awready;
@@ -172,6 +173,7 @@ module tb_kv32_soc #(
         // External AXI master port
         .m_axi_awaddr(axi_awaddr),
         .m_axi_awlen (axi_awlen),
+        .m_axi_awsize(axi_awsize),
         .m_axi_awburst(axi_awburst),
         .m_axi_awvalid(axi_awvalid),
         .m_axi_awready(axi_awready),
@@ -246,6 +248,7 @@ module tb_kv32_soc #(
         .rst_n(rst_n),
         .axi_awaddr (axi_awaddr),
         .axi_awlen  (axi_awlen),
+        .axi_awsize (axi_awsize),
         .axi_awburst(axi_awburst),
         .axi_awvalid(axi_awvalid),
         .axi_awready(axi_awready),
@@ -290,7 +293,7 @@ module tb_kv32_soc #(
         .s_axi_awid      (4'b0),
         .s_axi_awaddr    (axi_awaddr),
         .s_axi_awlen     (axi_awlen),
-        .s_axi_awsize    (3'b010),      // 4 bytes (DATA_WIDTH=32 → fixed)
+        .s_axi_awsize    (axi_awsize),      // forwarded from SoC
         .s_axi_awburst   (axi_awburst),
         .s_axi_awlock    (1'b0),
         .s_axi_awcache   (4'b0),

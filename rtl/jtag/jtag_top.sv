@@ -225,9 +225,12 @@ module jtag_top #(
     `endif
 
     // When USE_CJTAG=1, jtag_tck/tms/tdi/tdo are assigned from pins
-    // but not forwarded to the TAP (cJTAG bridge handles it instead)
+    // but not forwarded to the TAP (cJTAG bridge handles it instead).
+`ifndef SYNTHESIS
+    // Lint sink (debug only): standard JTAG pins unused when cJTAG bridge is active.
     logic _unused_ok_jtag;
     assign _unused_ok_jtag = &{1'b0, jtag_tck, jtag_tms, jtag_tdi, jtag_tdo};
+`endif // SYNTHESIS
 
 endmodule
 

@@ -201,7 +201,7 @@ module axi_i2c #(
 
     // TX FIFO pop: state machine idle and FIFO has data (for WRITE ops)
     assign txf_pop  = (state == IDLE) && !txf_empty && !start_cmd && !ctrl_read_trigger && i2c_enable;
-    assign txf_push = axi_awvalid && axi_wvalid && (axi_awaddr[15:0] == TX_OFFSET) && !txf_full;
+    assign txf_push = axi_awvalid && axi_wvalid && (axi_awaddr[15:0] == TX_OFFSET) && !txf_full && axi_wstrb[0];
     assign tx_valid = ctrl_read_trigger || txf_pop;
     assign tx_data  = txf_mem[txf_rd_ptr];
 
@@ -210,7 +210,6 @@ module axi_i2c #(
 
     // Status flags
     logic        busy;
-    logic        tx_ready;        // legacy (maps to !txf_full)
     logic        ack_received;
 
     // I2C state machine
@@ -262,19 +261,24 @@ module axi_i2c #(
             if (axi_awvalid && axi_wvalid) begin
                 case (axi_awaddr[15:0])
                     CTRL_OFFSET: begin
-                        i2c_enable <= axi_wdata[0];
-                        start_cmd  <= axi_wdata[1];
-                        stop_cmd   <= axi_wdata[2];
-                        read_cmd   <= axi_wdata[3];
-                        ack_cmd    <= axi_wdata[4];
-                        // Trigger READ operation directly (not through TX FIFO)
-                        if (axi_wdata[3] && !busy && i2c_enable)
-                            ctrl_read_trigger <= 1'b1;
-                        `DEBUG2(`DBG_GRP_I2C, ("CTRL write: data=0x%02h, enable=%b, start=%b, stop=%b",
-                               axi_wdata[7:0], axi_wdata[0], axi_wdata[1], axi_wdata[2]));
+                        if (axi_wstrb[0]) begin
+                            i2c_enable <= axi_wdata[0];
+                            start_cmd  <= axi_wdata[1];
+                            stop_cmd   <= axi_wdata[2];
+                            read_cmd   <= axi_wdata[3];
+                            ack_cmd    <= axi_wdata[4];
+                            // Trigger READ operation directly (not through TX FIFO)
+                            if (axi_wdata[3] && !busy && i2c_enable)
+                                ctrl_read_trigger <= 1'b1;
+                            `DEBUG2(`DBG_GRP_I2C, ("CTRL write: data=0x%02h, enable=%b, start=%b, stop=%b",
+                                   axi_wdata[7:0], axi_wdata[0], axi_wdata[1], axi_wdata[2]));
+                        end
                     end
-                    DIV_OFFSET: clk_div <= axi_wdata[15:0];
-                    IE_OFFSET:  ie_r    <= axi_wdata[2:0];
+                    DIV_OFFSET: begin
+                        if (axi_wstrb[0]) clk_div[7:0]  <= axi_wdata[7:0];
+                        if (axi_wstrb[1]) clk_div[15:8] <= axi_wdata[15:8];
+                    end
+                    IE_OFFSET: if (axi_wstrb[0]) ie_r <= axi_wdata[2:0];
                     // TX_OFFSET push is handled combinationally via txf_push
                     default: ;
                 endcase
@@ -305,7 +309,7 @@ module axi_i2c #(
                     RX_OFFSET:   axi_rdata <= {24'h0, rxf_mem[rxf_rd_ptr]};  // pop via rxf_pop assign
                     STAT_OFFSET: axi_rdata <= {28'h0, ack_received,
                                                !rxf_empty,   // [2] rx_valid compat
-                                               !txf_full,    // [1] tx_ready compat
+                                               !txf_full,    // [1] tx_not_full
                                                busy};
                     IE_OFFSET:   axi_rdata <= {29'h0, ie_r};
                     IS_OFFSET:   axi_rdata <= {29'h0, is_wire};
@@ -347,7 +351,6 @@ module axi_i2c #(
         if (!rst_n) begin
             state        <= IDLE;
             busy         <= 1'b0;
-            tx_ready     <= 1'b1;
             bit_counter  <= 4'h0;
             shift_reg    <= 8'h0;
             scl_phase    <= 2'b00;
@@ -362,7 +365,6 @@ module axi_i2c #(
             stop_done_r <= 1'b0;  // auto-clear each cycle
             case (state)
                 IDLE: begin
-                    tx_ready    <= 1'b1;
                     busy        <= 1'b0;
                     scl_phase   <= 2'b00;
                     bit_counter <= 4'h0;
@@ -370,13 +372,11 @@ module axi_i2c #(
                     if (start_cmd && i2c_enable) begin
                         state    <= START;
                         busy     <= 1'b1;
-                        tx_ready <= 1'b0;
                         `DEBUG2(`DBG_GRP_I2C, ("START command"));
                     end else if (tx_valid && i2c_enable) begin
                         shift_reg <= tx_data;
                         state     <= read_cmd ? READ : WRITE;
                         busy      <= 1'b1;
-                        tx_ready  <= 1'b0;
                         // tx_valid is combinational; txf_pop or ctrl_read_trigger auto-clears
                         `DEBUG2(`DBG_GRP_I2C, ("TX byte 0x%02h, mode=%s", tx_data, read_cmd ? "READ" : "WRITE"));
                     end else if (stop_cmd && i2c_enable) begin
@@ -395,7 +395,8 @@ module axi_i2c #(
                             end
                             2'b01: begin  // Step 2: Release SCL high
                                 i2c_scl_oe <= 1'b1;  // Release SCL (high)
-                                scl_phase <= 2'b10;
+                                if (i2c_scl_i)        // Wait if slave is clock-stretching
+                                    scl_phase <= 2'b10;
                             end
                             2'b10: begin  // Step 3: Pull SDA low (START condition)
                                 i2c_sda_o <= 1'b0;
@@ -424,7 +425,8 @@ module axi_i2c #(
                             end
                             2'b01: begin  // SCL high - data stable
                                 i2c_scl_oe <= 1'b1;
-                                scl_phase <= 2'b10;
+                                if (i2c_scl_i)  // Wait if slave is clock-stretching
+                                    scl_phase <= 2'b10;
                             end
                             2'b10: begin  // SCL high continued
                                 scl_phase <= 2'b11;
@@ -453,7 +455,8 @@ module axi_i2c #(
                             end
                             2'b01: begin  // SCL high - sample SDA
                                 i2c_scl_oe <= 1'b1;
-                                scl_phase <= 2'b10;
+                                if (i2c_scl_i)  // Wait if slave is clock-stretching
+                                    scl_phase <= 2'b10;
                             end
                             2'b10: begin  // SCL high - sample data
                                 shift_reg <= {shift_reg[6:0], i2c_sda_i};
@@ -485,7 +488,8 @@ module axi_i2c #(
                             end
                             2'b01: begin  // SCL high - slave drives ACK
                                 i2c_scl_oe <= 1'b1;
-                                scl_phase <= 2'b10;
+                                if (i2c_scl_i)  // Wait if slave is clock-stretching
+                                    scl_phase <= 2'b10;
                             end
                             2'b10: begin  // SCL high - sample ACK
                                 ack_received <= ~i2c_sda_i;  // ACK=0, NACK=1
@@ -514,7 +518,8 @@ module axi_i2c #(
                             end
                             2'b01: begin  // SCL high
                                 i2c_scl_oe <= 1'b1;
-                                scl_phase <= 2'b10;
+                                if (i2c_scl_i)  // Wait if slave is clock-stretching
+                                    scl_phase <= 2'b10;
                             end
                             2'b10: begin  // SCL high continued
                                 scl_phase <= 2'b11;
@@ -541,7 +546,8 @@ module axi_i2c #(
                             end
                             2'b01: begin  // SCL high
                                 i2c_scl_oe <= 1'b1;
-                                scl_phase  <= 2'b10;
+                                if (i2c_scl_i)  // Wait if slave is clock-stretching
+                                    scl_phase  <= 2'b10;
                             end
                             2'b10: begin  // SDA high (STOP condition)
                                 i2c_sda_oe  <= 1'b1;
@@ -562,11 +568,13 @@ module axi_i2c #(
         end
     end
 
-    // Suppress unused-signal lint warnings: upper address/data bits, byte-enable,
-    // SCL-in (not used in this loopback implementation), and legacy tx_ready.
+`ifndef SYNTHESIS
+    // Lint sink (debug only): wstrb[3:2] unused (no register maps to bytes 2-3);
+    // upper address/data bits decoded by crossbar, not this module.
     logic _unused_ok;
-    assign _unused_ok = &{1'b0, axi_wstrb, axi_awaddr[31:16], axi_wdata[31:16],
-                                axi_araddr[31:16], i2c_scl_i, tx_ready};
+    assign _unused_ok = &{1'b0, axi_wstrb[3:2], axi_awaddr[31:16], axi_wdata[31:16],
+                                axi_araddr[31:16]};
+`endif // SYNTHESIS
 
 endmodule
 

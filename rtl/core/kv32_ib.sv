@@ -159,9 +159,12 @@ module kv32_ib #(
 
     // can_accept_q: only used in DEBUG block; suppress when DEBUG not defined
 `ifndef DEBUG
+`ifndef SYNTHESIS
+    // Lint sink (debug only): can_accept_q only consumed inside DEBUG always block.
     logic _unused_ok_ib;
     assign _unused_ok_ib = &{1'b0, can_accept_q};
-`endif
+`endif // SYNTHESIS
+`endif // !DEBUG
 
 `ifdef DEBUG
     always_ff @(posedge clk or negedge rst_n) begin
