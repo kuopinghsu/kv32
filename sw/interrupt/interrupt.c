@@ -34,6 +34,7 @@ static volatile uint32_t software_irq_count = 0;
 static volatile uint32_t exception_count    = 0;
 static volatile uint32_t ecall_count        = 0;
 static volatile uint32_t test_phase         = 0;
+static volatile uint32_t g_last_mepc        = 0; /* mepc saved by on_illegal_insn */
 
 /* ── IRQ handlers registered via kv_irq_register() ───────────────── */
 
@@ -61,8 +62,11 @@ static void on_illegal_insn(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 {
     (void)mcause; (void)mtval;
     exception_count++;
+    g_last_mepc = mepc;
     _puts("  Setting mepc from 0x"); _puthex(mepc);
-    uint32_t new_pc = mepc + 4;
+    // Advance past the faulting instruction: +2 for RVC (bits[1:0] != 11), +4 otherwise.
+    uint16_t inst16 = *(volatile uint16_t *)mepc;
+    uint32_t new_pc = mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
     _puts(" to 0x"); _puthex(new_pc); _puts("\n");
     write_csr_mepc(new_pc);
     _puts("  mepc read back: 0x"); _puthex(read_csr_mepc()); _puts("\n");
@@ -74,11 +78,23 @@ static void on_ecall(uint32_t mcause, uint32_t mepc, uint32_t mtval)
     if ((mcause & 0x7FFFFFFFu) == KV_EXC_ECALL_M) {
         ecall_count++;
         _puts("  ECALL exception detected (mcause = 11)\n");
-        write_csr_mepc(mepc + 4);
+        // ecall is always a 4-byte instruction (no RVC form), but use the
+        // general width check for consistency.
+        uint16_t inst16 = *(volatile uint16_t *)mepc;
+        write_csr_mepc(mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u));
     }
 }
 
-static void trigger_illegal_insn(void) { asm volatile(".word 0x0000000B"); }
+static void trigger_illegal_insn(void)    { asm volatile(".word 0x0000000B"); }
+
+/* Compressed illegal encodings (Zca spec §16.1):
+ *   0x0000 — C.ILLEGAL: canonical all-zero 16-bit illegal (also C.ADDI4SPN
+ *            with nzuimm=0, which is reserved).
+ *   0x6081 — C.LUI x1, nzimm=0: nzimm=0 is reserved/illegal per Zca spec.
+ *            Encoding: {011, nzimm[5]=0, rd=00001, nzimm[4:0]=00000, 01}
+ * Both expand to 32'h0 in kv32_rvc and raise illegal-instruction exception. */
+static void trigger_c_illegal_0000(void)  { asm volatile(".hword 0x0000"); }
+static void trigger_c_illegal_clui(void)  { asm volatile(".hword 0x6081"); }
 
 /* ═══════════════════════════════════════════════════════════════════ */
 
@@ -175,6 +191,45 @@ int main(void)
         _puts("  ERROR: Not handled\n  Result: FAIL\n\n");
     }
 
+    /* ── TEST 3b: Compressed Illegal Instruction ───────────────────── */
+    _puts("[TEST 3b] Compressed Illegal Instruction\n");
+    {
+        int c_fails = 0;
+        uint32_t exc_before;
+
+        /* 0x0000 — C.ILLEGAL (canonical; also C.ADDI4SPN nzuimm=0, reserved) */
+        _puts("  0x0000 (C.ILLEGAL)       : ");
+        exc_before = exception_count;
+        g_last_mepc = 0;
+        trigger_c_illegal_0000();
+        if (exception_count == exc_before + 1u) {
+            uint16_t hw = *(volatile uint16_t *)g_last_mepc;
+            uint32_t adv = ((hw & 0x3u) != 0x3u) ? 2u : 4u;
+            _puts("mepc=0x"); _puthex(g_last_mepc);
+            _puts(" advance=+"); _putdec(adv);
+            if (adv == 2u) _puts("  PASS\n"); else { _puts("  FAIL (expected +2)\n"); c_fails++; }
+        } else {
+            _puts("FAIL (no exception)\n"); c_fails++;
+        }
+
+        /* 0x6041 — C.LUI x1, nzimm=0 (nzimm=0 is reserved/illegal per Zca spec) */
+        _puts("  0x6081 (C.LUI x1,nzimm=0): ");
+        exc_before = exception_count;
+        g_last_mepc = 0;
+        trigger_c_illegal_clui();
+        if (exception_count == exc_before + 1u) {
+            uint16_t hw = *(volatile uint16_t *)g_last_mepc;
+            uint32_t adv = ((hw & 0x3u) != 0x3u) ? 2u : 4u;
+            _puts("mepc=0x"); _puthex(g_last_mepc);
+            _puts(" advance=+"); _putdec(adv);
+            if (adv == 2u) _puts("  PASS\n"); else { _puts("  FAIL (expected +2)\n"); c_fails++; }
+        } else {
+            _puts("FAIL (no exception)\n"); c_fails++;
+        }
+
+        _puts(c_fails == 0 ? "  Result: PASS\n\n" : "  Result: FAIL\n\n");
+    }
+
     /* ── TEST 4: ECALL Exception ──────────────────────────────────── */
     _puts("[TEST 4] ECALL Exception\n");
     test_phase = 3;
@@ -204,7 +259,7 @@ int main(void)
     _puts("  - Software interrupts: "); _putdec(software_irq_count); _puts("\n");
     _puts("  - Exceptions:          "); _putdec(exception_count);    _puts("\n");
     _puts("  - ECALL exceptions:    "); _putdec(ecall_count);        _puts("\n");
-    _puts("  - Tests: 5/5 PASSED\n");
+    _puts("  - Tests: 6/6 PASSED\n");
     _puts("========================================\n\n");
     return 0;
 }

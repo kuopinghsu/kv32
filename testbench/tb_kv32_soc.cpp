@@ -120,12 +120,12 @@ static void dump_registers() {
     }
 
     // Get PC from WB stage
-    svBitVecVal pc_wb[1], instr_wb[1], alu_result_wb[1], mem_data_wb[1];
+    svBitVecVal pc_wb[1], instr_wb[1], orig_instr_wb[1], alu_result_wb[1], mem_data_wb[1];
     svBitVecVal store_data_wb[1], rd_addr_wb[1], csr_op_wb[1], csr_addr_wb[1], csr_rdata_wb[1];
     svBitVecVal csr_wdata_wb[1], csr_zimm_wb[1], mstatus_wb_sigint[1];
     svBit wb_valid, reg_we_wb, mem_read_wb, mem_write_wb, retire_instr;
 
-    get_wb_signals(&wb_valid, &retire_instr, pc_wb, instr_wb, rd_addr_wb,
+    get_wb_signals(&wb_valid, &retire_instr, pc_wb, instr_wb, orig_instr_wb, rd_addr_wb,
                    &reg_we_wb, &mem_read_wb, &mem_write_wb,
                    alu_result_wb, mem_data_wb, store_data_wb,
                    csr_wdata_wb, csr_zimm_wb, csr_op_wb, csr_addr_wb, csr_rdata_wb,
@@ -181,13 +181,13 @@ static void dump_instruction_trace(
     // Check if writeback is valid (trace at WB stage for accurate data)
     svBit wb_valid_val = 0;
     try {
-        svBitVecVal pc_wb[1], instr_wb[1], alu_result_wb[1], mem_data_wb[1];
+        svBitVecVal pc_wb[1], instr_wb[1], orig_instr_wb[1], alu_result_wb[1], mem_data_wb[1];
         svBitVecVal store_data_wb[1], rd_addr_wb[1], csr_op_wb[1], csr_addr_wb[1], csr_rdata_wb[1];
         svBitVecVal csr_wdata_wb[1], csr_zimm_wb[1], mstatus_wb[1];
         svBit reg_we_wb, mem_read_wb, mem_write_wb;
         svBit retire_instr;
 
-        dut->get_wb_signals(&wb_valid_val, &retire_instr, pc_wb, instr_wb, rd_addr_wb,
+        dut->get_wb_signals(&wb_valid_val, &retire_instr, pc_wb, instr_wb, orig_instr_wb, rd_addr_wb,
                     &reg_we_wb, &mem_read_wb, &mem_write_wb,
                     alu_result_wb, mem_data_wb, store_data_wb,
                     csr_wdata_wb, csr_zimm_wb, csr_op_wb, csr_addr_wb, csr_rdata_wb,
@@ -281,6 +281,13 @@ static void dump_instruction_trace(
         // Extract values (svBitVecVal is essentially uint32_t)
         uint32_t pc = pc_wb[0];
         uint32_t instr = instr_wb[0];
+
+        // Use the pre-expansion instruction encoding from the pipeline so that
+        // the trace matches kv32sim / Spike (both log original encodings).
+        // orig_instr_wb carries the 16-bit-zero-extended RVC encoding or the
+        // full 32-bit word, even for non-ELF regions such as NCM (0x4000_1000+)
+        // where mem_read_byte would return 0.
+        instr = orig_instr_wb[0];
 
         if (last_valid && pc == last_pc && instr == last_instr) {
             return;

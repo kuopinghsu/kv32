@@ -18,7 +18,7 @@ PROJECT_ROOT     = $(realpath ..)
 BUILD_DIR        = $(PROJECT_ROOT)/build
 
 # Architecture/ABI
-ARCH             ?= rv32ima_zicsr
+ARCH             ?= rv32imac_zicsr
 ABI              ?= ilp32
 
 # Simulator (kv32sim or spike)

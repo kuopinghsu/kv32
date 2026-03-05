@@ -223,8 +223,22 @@ arch-test-rv32zicsr: arch-test-setup arch-test-build
 	@echo "=========================================="
 	$(TRACE_SUMMARY)
 
+.PHONY: arch-test-rv32c
+arch-test-rv32c: arch-test-setup arch-test-build
+	@echo "=========================================="
+	@echo "Running RV32C (Compressed) Architecture Tests (RTL)"
+	@echo "=========================================="
+	@mkdir -p $(RISCOF_WORK)
+	@cd $(RISCOF_DIR) && bash -c "$(RISCOF_ACTIVATE) && riscof $(RISCOF_DEBUG) run --config=config_rtl.ini --suite=../riscv-arch-test/riscv-test-suite/rv32i_m/C --env=../riscv-arch-test/riscv-test-suite/env --work-dir=riscof_work --no-browser"
+	@echo ""
+	@echo "=========================================="
+	@echo "✓ RV32C tests complete"
+	@echo "Report: $(RISCOF_WORK)/report.html"
+	@echo "=========================================="
+	$(TRACE_SUMMARY)
+
 .PHONY: arch-test-all
-arch-test-all: arch-test-rv32i arch-test-rv32m arch-test-rv32a arch-test-rv32zicsr
+arch-test-all: arch-test-rv32i arch-test-rv32m arch-test-rv32a arch-test-rv32zicsr arch-test-rv32c
 	@echo "=========================================="
 	@echo "✓ All RTL architectural tests complete"
 	@echo "=========================================="
@@ -340,7 +354,8 @@ arch-test-info help:
 	@echo "  arch-test-rv32m       - Run RV32M multiply/divide tests"
 	@echo "  arch-test-rv32a       - Run RV32A atomic instruction tests"
 	@echo "  arch-test-rv32zicsr   - Run Zicsr CSR instruction tests"
-	@echo "  arch-test-all         - Run all architectural tests (I+M+A+Zicsr)"
+	@echo "  arch-test-rv32c       - Run RV32C compressed instruction tests (RTL)"
+	@echo "  arch-test-all         - Run all architectural tests (I+M+A+Zicsr+C)"
 	@echo "  arch-test-sim         - Test kv32sim (DUT) vs spike (REF) - all ISAs (I+M+A+Zicsr+C)"
 	@echo "  arch-test-report      - Open test report in browser"
 	@echo "  arch-test-clean       - Clean RISCOF work directory"

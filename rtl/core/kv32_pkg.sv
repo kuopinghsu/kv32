@@ -3,7 +3,7 @@
 // Project: KV32 RISC-V Processor
 // Description: RISC-V 32-bit Core Package
 //
-// Defines types, enums, and macros used by the RISC-V RV32IMA processor core.
+// Defines types, enums, and macros used by the RISC-V RV32IMAC processor core.
 // Includes instruction types, ALU operations, memory operations, CSR addresses,
 // and debug display macros.
 // ============================================================================

@@ -977,7 +977,7 @@ module kv32_icache #(
             end
             // PMA bypass: log each fetch that bypasses the cache due to non-cacheable address
             if (state == S_LOOKUP && !pma_cacheable) begin
-                `DEBUG2(`DBG_GRP_ICACHE, ("[ICACHE] PMA bypass: addr=0x%h bit31=0 \u2192 non-cacheable, issuing single INCR fetch", req_addr_r));
+                `DEBUG2(`DBG_GRP_ICACHE, ("[ICACHE] PMA bypass: addr=0x%h bit31=0 -> non-cacheable, issuing single INCR fetch", req_addr_r));
             end
         end
     end

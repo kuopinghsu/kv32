@@ -1,7 +1,7 @@
-RISC-V 32-bit IMA Processor
+RISC-V 32-bit IMAC Processor
 ============================
 
-K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMA_Zicsr support, featuring a 5-stage pipeline, instruction cache, a 1-to-10 AXI4-Lite interconnect with nine on-chip peripherals, and both RTL and functional simulators.
+K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMAC_Zicsr support, featuring a 5-stage pipeline, instruction cache, a 1-to-10 AXI4-Lite interconnect with nine on-chip peripherals, and both RTL and functional simulators.
 
 ## Features
 
@@ -41,22 +41,23 @@ K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IM
 | Slave | Device | Base Address | End Address | Size | Description |
 |-------|--------|--------------|-------------|------:|-------------|
 | 0 | **RAM** | `0x8000_0000` | `0x801F_FFFF` | 2 MB | Main memory |
-| 1 | **CLINT** | `0x0200_0000` | `0x020B_FFFF` | 768 KB | `mtime`, `mtimecmp`, software interrupt |
-| 2 | **PLIC** | `0x0C00_0000` | `0x0CFF_FFFF` | 16 MB | Platform-level interrupt controller |
-| 3 | **UART** | `0x2000_0000` | `0x2000_FFFF` | 64 KB | Serial I/O (up to 25 Mbaud) |
-| 4 | **I2C** | `0x2001_0000` | `0x2001_FFFF` | 64 KB | I2C master controller |
-| 5 | **SPI** | `0x2002_0000` | `0x2002_FFFF` | 64 KB | SPI master, 4 chip-selects |
-| 6 | **DMA** | `0x2003_0000` | `0x2003_0FFF` | 4 KB | Memory-to-memory DMA engine |
-| 7 | **GPIO** | `0x2004_0000` | `0x2004_FFFF` | 64 KB | Up to 128 configurable GPIO pins |
-| 8 | **Timer/PWM** | `0x2005_0000` | `0x2005_FFFF` | 64 KB | Four independent 32-bit timers/PWM |
-| 9 | **Magic** | `0xFFFF_0000` | `0xFFFF_FFFF` | 64 KB | Simulation console and exit control |
+| 1 | **Magic** | `0x4000_0000` | `0x4000_FFFF` | 64 KB | Simulation console and exit control |
+| 2 | **CLINT** | `0x0200_0000` | `0x020B_FFFF` | 768 KB | `mtime`, `mtimecmp`, software interrupt |
+| 3 | **PLIC** | `0x0C00_0000` | `0x0CFF_FFFF` | 16 MB | Platform-level interrupt controller |
+| 4 | **DMA** | `0x2000_0000` | `0x2000_FFFF` | 64 KB | Memory-to-memory DMA engine |
+| 5 | **UART** | `0x2001_0000` | `0x2001_FFFF` | 64 KB | Serial I/O (up to 25 Mbaud) |
+| 6 | **I2C** | `0x2002_0000` | `0x2002_FFFF` | 64 KB | I2C master controller |
+| 7 | **SPI** | `0x2003_0000` | `0x2003_FFFF` | 64 KB | SPI master, 4 chip-selects |
+| 8 | **Timer/PWM** | `0x2004_0000` | `0x2004_FFFF` | 64 KB | Four independent 32-bit timers/PWM |
+| 9 | **GPIO** | `0x2005_0000` | `0x2005_FFFF` | 64 KB | Up to 128 configurable GPIO pins |
 
 ### Magic Device Registers
 
 | Address | Name | Description |
 |---------|------|-------------|
-| `0xFFFF_FFF0` | `EXIT_MAGIC_ADDR` | Write any value to end simulation (exit code = value >> 1) |
-| `0xFFFF_FFF4` | `CONSOLE_MAGIC_ADDR` | Write a byte to emit a character to the simulator console |
+| `0x4000_0000` | `KV_MAGIC_CONSOLE` | Write a byte to emit a character to the simulator console |
+| `0x4000_0004` | `KV_MAGIC_EXIT` | Write exit code (`0`→write `1` for PASS; `N`→write `(N<<1)\|1` for FAIL) |
+| `0x4000_1000` | `KV_NCM_BASE` | Non-cacheable memory (512 B); I-cache bypassed for all fetches from this region |
 
 Refer to [docs/sdk_api_reference.adoc](docs/sdk_api_reference.adoc) and [docs/kv32_soc_datasheet.adoc](docs/kv32_soc_datasheet.adoc) for register-level details.
 
@@ -235,26 +236,15 @@ Both simulators support loading ELF files directly:
 
 Example program usage:
 ```c
-#include <stdint.h>
-
-#define CONSOLE_MAGIC_ADDR 0xFFFFFFF4
-#define EXIT_MAGIC_ADDR    0xFFFFFFF0
-
-void print_char(char c) {
-    *(volatile uint32_t*)CONSOLE_MAGIC_ADDR = c;
-}
-
-void exit_sim(int code) {
-    *(volatile uint32_t*)EXIT_MAGIC_ADDR = code;
-}
+#include "kv_platform.h"   /* sw/include/kv_platform.h */
 
 int main() {
-    print_char('H');
-    print_char('e');
-    print_char('l');
-    print_char('o');
-    print_char('\n');
-    exit_sim(0);
+    kv_magic_putc('H');
+    kv_magic_putc('e');
+    kv_magic_putc('l');
+    kv_magic_putc('o');
+    kv_magic_putc('\n');
+    kv_magic_exit(0);
     return 0;
 }
 ```
@@ -273,24 +263,6 @@ int main() {
 - **Load-Use Hazards**: Pipeline stall (1 cycle)
 - **Control Hazards**: Branch prediction (not-taken), flush on mispredict
 - **Structural Hazards**: Instruction/data arbitration via axi_arbiter
-
-## CSR Registers
-
-### Machine Mode CSRs
-- `0x300` mstatus - Machine status
-- `0x304` mie - Machine interrupt enable
-- `0x305` mtvec - Machine trap vector
-- `0x340` mscratch - Machine scratch register
-- `0x341` mepc - Machine exception PC
-- `0x342` mcause - Machine trap cause
-- `0x343` mtval - Machine trap value
-- `0x344` mip - Machine interrupt pending
-
-### Counters
-- `0xB00` mcycle - Cycle counter (lower 32 bits)
-- `0xB80` mcycleh - Cycle counter (upper 32 bits)
-- `0xB02` minstret - Instructions retired (lower 32 bits)
-- `0xB82` minstreth - Instructions retired (upper 32 bits)
 
 ## AXI4-Lite Interface
 
@@ -311,14 +283,6 @@ Edit `env.config` to set tool paths:
 RISCV_PREFIX=/path/to/riscv-toolchain/bin/riscv32-unknown-elf-
 VERILATOR=/usr/local/bin/verilator
 ```
-
-### Adding New Peripherals
-1. Create AXI slave module in `rtl/`
-2. Add slave port to `axi_xbar.sv`
-3. Update address decode logic
-4. Instantiate in `kv32_soc.sv`
-5. Update memory map documentation
-
 ## Testing
 
 ### Test Programs Structure
@@ -365,7 +329,7 @@ riscv32-unknown-elf-gcc -march=rv32ima_zicsr -mabi=ilp32 \
 
 **Important Notes:**
 - The `_zicsr` extension is required for CSR instructions (mandatory in newer GCC versions)
-- Floating-point `printf` support requires properly configured `libgcc` for RV32IMA
+- Floating-point `printf` support requires properly configured `libgcc` for RV32IMAC
 - Current common library provides: `puts()`, `putc()`, and basic console I/O via `_write()`
 - For printf functionality, include `printf.c` from common/ and ensure `-lgcc` is added to link against compiler runtime
 

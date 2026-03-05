@@ -4,7 +4,7 @@ This FPGA implementation targets a specific verification board (Kintex UltraScal
 
 ## Features
 
-- **Processor**: RV32IMA core running at 50MHz
+- **Processor**: RV32IMAC core running at 50MHz
 - **Memory**: DDR4 SDRAM interface (external, 300MHz UI clock)
 - **Peripherals**: UART, SPI, I2C
 - **Debug**: JTAG/cJTAG interface with 4-pin multiplexing

@@ -234,7 +234,7 @@ module kv32_csr (
         endcase
     end
 
-    assign misa = 32'h4014_1101;        // RV32IMASU (A+I+M+S+U, matches rv32sim/spike)
+    assign misa = 32'h4014_1105;        // RV32IMCASU (A+C+I+M+S+U, matches rv32sim/spike)
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -290,7 +290,7 @@ module kv32_csr (
                     end
                     CSR_MTVEC:     mtvec_r  <= {csr_wdata_final[31:2], 2'b00};
                     CSR_MSCRATCH:  mscratch <= csr_wdata_final;
-                    CSR_MEPC:      mepc     <= {csr_wdata_final[31:2], 2'b00};
+                    CSR_MEPC:      mepc     <= {csr_wdata_final[31:1], 1'b0};  // halfword aligned (RVC)
                     CSR_MCAUSE:    mcause   <= csr_wdata_final;
                     CSR_MTVAL:     mtval    <= csr_wdata_final;
                     CSR_MCYCLE:    mcycle[31:0]  <= csr_wdata_final;

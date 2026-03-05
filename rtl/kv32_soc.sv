@@ -1,10 +1,10 @@
 // ============================================================================
 // File: kv32_soc.sv
 // Project: KV32 RISC-V Processor
-// Description: RV32IMA System-on-Chip Top-Level Module
+// Description: RV32IMAC System-on-Chip Top-Level Module
 //
 // Integrates all major components of the RISC-V SoC:
-//   - RV32IMA processor core (5-stage pipeline)
+//   - RV32IMAC processor core (5-stage pipeline)
 //   - External 2MB RAM via AXI4-Lite
 //   - Memory-mapped peripherals (CLINT, PLIC, UART, SPI, I2C, GPIO, Timer, DMA, Magic)
 //   - AXI4-Lite interconnect infrastructure
@@ -13,7 +13,7 @@
 // or FPGA designs.
 //
 // Features:
-//   - 5-stage pipelined RV32IMA core with CSRs
+//   - 5-stage pipelined RV32IMAC core with CSRs
 //   - Separate instruction and data memory interfaces
 //   - AXI arbiter for read channel arbitration
 //   - Standard RISC-V CLINT timer with mtime/mtimecmp
@@ -583,9 +583,9 @@ module kv32_soc #(
     );
 
     // ========================================================================
-    // RV32IMA Processor Core Instance
+    // RV32IMAC Processor Core Instance
     // ========================================================================
-    // 5-stage pipelined RISC-V core implementing RV32IMA ISA
+    // 5-stage pipelined RISC-V core implementing RV32IMAC ISA
     // Features: CSRs, interrupts, precise exceptions, performance counters
     // Configurable instruction buffer (IB_DEPTH) and store buffer (SB_DEPTH)
     kv32_core #(

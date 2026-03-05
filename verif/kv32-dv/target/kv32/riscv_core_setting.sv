@@ -2,7 +2,7 @@
 // File: riscv_core_setting.sv
 // Project: KV32 RISC-V Processor — riscv-dv target
 // Description: Core-specific settings for Google riscv-dv random instruction
-//              generator.  Describes the KV32 RV32IMA core capabilities.
+//              generator.  Describes the KV32 RV32IMAC core capabilities.
 //
 // This file is consumed by riscv-dv (via +incdir) and must not depend on any
 // project-specific packages.
@@ -17,11 +17,12 @@ privileged_mode_t supported_privileged_mode[] = {MACHINE_MODE};
 // --------------------------------------------------------------------------
 // Supported ISA Extensions
 // --------------------------------------------------------------------------
-// KV32 implements RV32IMA:
+// KV32 implements RV32IMAC:
 //   I — Base integer instruction set
 //   M — Integer multiply/divide
 //   A — Atomic instructions (AMO + LR/SC)
-riscv_instr_group_t supported_isa[] = {RV32I, RV32M, RV32A};
+//   C — 16-bit compressed instructions (Zca)
+riscv_instr_group_t supported_isa[] = {RV32I, RV32M, RV32A, RV32C};
 
 // --------------------------------------------------------------------------
 // Register Descriptions
@@ -40,7 +41,7 @@ riscv_instr_name_t unsupported_instr[] = {};
 // --------------------------------------------------------------------------
 // ISA Extension Setting
 // --------------------------------------------------------------------------
-// No C (compressed) extension.
+// C (compressed/Zca) extension is supported.
 parameter int XLEN = 32;
 
 // --------------------------------------------------------------------------

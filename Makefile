@@ -1,5 +1,5 @@
 # RISC-V SoC Project Makefile
-# Main build system for the RV32IMA processor
+# Main build system for the RV32IMAC processor
 
 # On macOS the system make is 3.81 which has jobserver deadlock bugs with nested
 # recursive makes.  Prefer gmake (4.x) if available for all $(MAKE) invocations.
@@ -39,8 +39,8 @@ READELF = $(RISCV_PREFIX)readelf
 
 MAX_CYCLES ?= 0
 
-# Compiler flags for RV32IMA
-CFLAGS = -march=rv32ima_zicsr -mabi=ilp32 -O2 -g
+# Compiler flags for RV32IMAC
+CFLAGS = -march=rv32imac_zicsr -mabi=ilp32 -O2 -g
 CFLAGS += -Wall -Werror -ffreestanding
 CFLAGS += -nostartfiles
 CFLAGS += -ffunction-sections -fdata-sections
@@ -324,7 +324,7 @@ TB_SOURCES = $(TB_DIR)/tb_kv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-
 # Output executable
 BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
-.PHONY: all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl build-spike-plugins clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
+.PHONY: all test-all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl build-spike-plugins clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
 # Default target - run all tests
 all: rtl-all sim-all compare-all spike-all freertos-compare-simple
@@ -333,6 +333,9 @@ all: rtl-all sim-all compare-all spike-all freertos-compare-simple
 	@make -f Makefile ICACHE_EN=0 compare-all rtl-all
 	@make -f Makefile TRACE=1 arch-test-all
 	@make -f Makefile TRACE=1 arch-test-sim
+
+# Run minimum tests (RTL + software sim + trace comparison)
+test-all: rtl-all sim-all compare-all
 
 # Verify memory interface
 verify-mem:
@@ -574,7 +577,7 @@ SPIKE_EXTLIBS_LOCAL = $(patsubst $(BUILD_DIR)/%,--extlib=./%,$(SPIKE_PLUGINS))
 ifeq ($(SIM),spike)
 _SIM_PREREQ = build-spike-plugins
 define _SIM_RUN
-cd $(BUILD_DIR) && $(SPIKE) --isa=rv32ima_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $(1).elf 2>&1 || true
+cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $(1).elf 2>&1 || true
 endef
 else
 _SIM_PREREQ =
@@ -605,7 +608,7 @@ spike-%: build-spike-plugins
 	@echo "=========================================="
 	@echo "Running test '$*' with Spike"
 	@echo "=========================================="
-	cd $(BUILD_DIR) && $(SPIKE) --isa=rv32ima_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $*.elf 2>&1
+	cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $*.elf 2>&1
 	@echo ""
 ifeq ($(TRACE),1)
 	@echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"
@@ -1023,6 +1026,8 @@ help:
 	@echo "Main Targets:"
 	@echo "  all        - Full correctness run: RTL + sim + compare + arch-tests"
 	@echo "               (Use this to verify core correctness at default latency)"
+	@echo "  test-all   - Minimum test run: rtl-all + sim-all + compare-all"
+	@echo "               (Faster than 'all'; skips Spike, FreeRTOS, arch-test variants)"
 	@echo "  verify-mem - AXI interface stress: runs compare-all + rtl-all across"
 	@echo "               10 latency/port combinations (read=1/4/16, write=1/4/16,"
 	@echo "               dual-port=0/1) to catch memory interface bugs"
@@ -1065,6 +1070,7 @@ help:
 	@echo "Examples:"
 	@echo "  make                 # Build RTL"
 	@echo "  make all             # Run full correctness suite (RTL+sim+compare+arch)"
+	@echo "  make test-all        # Run minimum test suite (RTL+sim+compare)"
 	@echo "  make verify-mem      # Stress AXI interface across 10 latency/port configs"
 	@echo "  make hello           # Build hello test"
 	@echo "  make rtl-hello       # Run hello test with RTL"

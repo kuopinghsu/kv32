@@ -479,6 +479,7 @@ module tb_kv32_soc #(
         output bit        retire_instr,
         output bit [31:0] pc_wb,
         output bit [31:0] instr_wb,
+        output bit [31:0] orig_instr_wb,
         output bit [4:0]  rd_addr_wb,
         output bit        reg_we_wb,
         output bit        mem_read_wb,
@@ -497,6 +498,7 @@ module tb_kv32_soc #(
         retire_instr = dut.core.retire_instr;
         pc_wb = dut.core.pc_wb;
         instr_wb = dut.core.instr_wb;
+        orig_instr_wb = dut.core.orig_instr_wb;
         rd_addr_wb = dut.core.rd_addr_wb;
         reg_we_wb = dut.core.reg_we_wb;
         mem_read_wb = dut.core.mem_read_wb;

@@ -123,7 +123,7 @@
      font-weight="bold"
      fill="#0F172A"
      id="text4">
-    RV32IMA KV32 SoC — Block Diagram
+    RV32IMAC KV32 SoC — Block Diagram
   </text>
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!--  KV32 CORE                                                         -->

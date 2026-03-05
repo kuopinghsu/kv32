@@ -53,7 +53,11 @@ static void bus_err_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
     (void)mtval;
     g_bus_err_caught = 1;
     g_bus_err_mcause = mcause;
-    write_csr_mepc(mepc + 4);  /* skip the faulting load/store/fence instruction */
+    /* Skip the faulting load/store/fence instruction: +2 for RVC, +4 otherwise. */
+    {
+        uint16_t inst16 = *(volatile uint16_t *)mepc;
+        write_csr_mepc(mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u));
+    }
 }
 
 /* ── instruction-access-fault handler (null function call) ──────────────── */

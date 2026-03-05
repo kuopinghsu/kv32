@@ -17,8 +17,7 @@
 // ============================================================================
 
 #include <stdint.h>
-
-extern void magic_exit(int code);
+#include "kv_platform.h"
 
 // Minimal write helper used for result reporting
 extern int _write(int fd, const char *buf, int len);
@@ -163,10 +162,10 @@ int main(void) {
 
     if (failures == 0) {
         write_str("PASS: all RVC tests passed\n");
-        magic_exit(0);
+        kv_magic_exit(0);
     } else {
         write_str("FAIL: some RVC tests failed\n");
-        magic_exit(1);
+        kv_magic_exit(1);
     }
     return failures;
 }

@@ -4,10 +4,11 @@
 // Description: RISC-V 32-bit Instruction Decoder
 //
 // Decodes 32-bit RISC-V instructions into control signals for pipeline stages.
-// Supports RV32IMA instruction set:
+// Supports RV32IMAC instruction set (C instructions pre-expanded by kv32_rvc):
 //   - Base integer instructions (RV32I)
 //   - Multiply/divide extension (M)
 //   - Atomic operations extension (A)
+//   - Compressed extension (C/Zca): handled upstream by kv32_rvc expander
 //
 // Outputs:
 //   - Register addresses (rs1, rs2, rd)

@@ -41,9 +41,13 @@ void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
     g_trapped = 1;
     g_mcause  = mcause;
     g_mepc    = mepc;
-    // Advance mepc past the 4-byte faulting instruction so execution resumes
-    // after the test instruction rather than retrying it forever.
-    asm volatile("csrw mepc, %0" :: "r"(mepc + 4));
+    // Advance mepc past the faulting instruction: +2 for RVC (bits[1:0] != 11),
+    // +4 otherwise.  Without this the core retries the same instruction forever.
+    {
+        uint16_t inst16 = *(volatile uint16_t *)mepc;
+        uint32_t next_pc = mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
+        asm volatile("csrw mepc, %0" :: "r"(next_pc));
+    }
 }
 
 static void before_test(void) {

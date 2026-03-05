@@ -1,6 +1,6 @@
 # KV32 riscv-dv Integration
 
-Random instruction verification for the KV32 RV32IMA processor using
+Random instruction verification for the KV32 RV32IMAC processor using
 [Google riscv-dv](https://github.com/chipsalliance/riscv-dv).
 
 ## Overview
@@ -100,7 +100,7 @@ make gen TEST=kv32_rand_instr ITERATIONS=1 SEED=42
 ## How It Works
 
 1. **Generate**: riscv-dv produces random RISC-V assembly programs constrained
-   by the KV32 core settings in `riscv_core_setting.sv` (RV32IMA, M-mode only).
+   by the KV32 core settings in `riscv_core_setting.sv` (RV32IMAC, M-mode only).
 
 2. **Compile**: The generated `.S` files are compiled with the project's GCC
    toolchain using the KV32-specific linker script (`link.ld`), which places
@@ -122,7 +122,7 @@ The KV32 is configured for riscv-dv as:
 | Setting | Value |
 |---|---|
 | XLEN | 32 |
-| ISA | RV32IMA |
+| ISA | RV32IMAC |
 | Privilege Modes | Machine (M) only |
 | PMP Regions | 0 |
 | Boot Address | `0x80000000` |

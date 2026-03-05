@@ -1,4 +1,4 @@
-= RV32IMA System-on-Chip Datasheet
+= RV32IMAC System-on-Chip Datasheet
 :doctype: book
 :author: KV32 Development Team
 :revnumber: 1.0
@@ -15,7 +15,7 @@
 [abstract]
 == Abstract
 
-This document provides comprehensive technical specifications for the RV32IMA System-on-Chip (SoC), a high-performance 32-bit RISC-V processor platform. The SoC features a 5-stage pipelined RV32IMA core with instruction cache, AXI4/AXI4-Lite interconnect, and a rich set of peripherals including UART, SPI, I2C, DMA, GPIO, timer/PWM, and interrupt controller. Designed for embedded applications, the SoC supports both RTL simulation and FPGA implementation.
+This document provides comprehensive technical specifications for the RV32IMAC System-on-Chip (SoC), a high-performance 32-bit RISC-V processor platform. The SoC features a 5-stage pipelined RV32IMAC core with instruction cache, AXI4/AXI4-Lite interconnect, and a rich set of peripherals including UART, SPI, I2C, DMA, GPIO, timer/PWM, and interrupt controller. Designed for embedded applications, the SoC supports both RTL simulation and FPGA implementation.
 
 <<<
 
@@ -23,9 +23,9 @@ This document provides comprehensive technical specifications for the RV32IMA Sy
 
 === Overview
 
-The RV32IMA SoC is a complete embedded processor system implementing the RISC-V RV32IMA instruction set architecture with Machine mode (M-mode) privilege support. The system integrates:
+The RV32IMAC SoC is a complete embedded processor system implementing the RISC-V RV32IMAC instruction set architecture with Machine mode (M-mode) privilege support. The system integrates:
 
-* **RV32IMA Processor Core**: 5-stage pipeline with instruction cache, store buffer, and instruction buffer
+* **RV32IMAC Processor Core**: 5-stage pipeline with RVC expander, instruction cache, store buffer, and instruction buffer
 * **Memory Subsystem**: 2MB external RAM with AXI4 interface, configurable instruction cache
 * **Interconnect**: AXI4-Lite crossbar interconnect supporting multiple master and slave devices
 * **Standard Peripherals**: UART, SPI, I2C, DMA with FIFO-buffered interfaces
@@ -39,7 +39,7 @@ The RV32IMA SoC is a complete embedded processor system implementing the RISC-V 
 |Feature |Specification
 
 |ISA
-|RV32IMA_Zicsr (Integer, Multiply/Divide, Atomic, CSR)
+|RV32IMAC_Zicsr (Integer, Multiply/Divide, Atomic, Compressed, CSR)
 
 |Pipeline
 |5-stage in-order (Fetch, Decode, Execute, Memory, Writeback)
@@ -95,7 +95,7 @@ This datasheet is organized as follows:
 [listing]
 ....
                       +-----------------------------------------------------+
-                      |           RV32IMA SoC Top Level                     |
+                      |           RV32IMAC SoC Top Level                    |
                       |                                                     |
     +-----------------+-------------------------------------------------+   |
     |  KV32 Core      |                                                 |   |
@@ -202,7 +202,7 @@ This datasheet is organized as follows:
 
 ==== Processor Core (kv32_core)
 
-The RV32IMA processor core implements a 5-stage pipeline with the following key features:
+The RV32IMAC processor core implements a 5-stage pipeline with the following key features:
 
 * **Instruction Fetch (IF)**: Fetches instructions from I-cache or memory via instruction buffer
 * **Instruction Decode (ID)**: Decodes instructions, reads register file
@@ -301,7 +301,7 @@ Interrupt sources may assert for only a single cycle on the ungated system clock
 
 === Address Space Overview
 
-The RV32IMA SoC implements a 32-bit address space (4GB) with the following allocation:
+The RV32IMAC SoC implements a 32-bit address space (4GB) with the following allocation:
 
 [cols="2,3,1,4"]
 .Complete Memory Map
@@ -380,7 +380,7 @@ Unmapped addresses return an AXI SLVERR (2'b10) response on the read channel and
 
 == Processor Core Specification
 
-=== RV32IMA ISA Support
+=== RV32IMAC ISA Support
 
 The processor core implements the following RISC-V instruction set extensions:
 
@@ -397,6 +397,9 @@ The processor core implements the following RISC-V instruction set extensions:
 
 |A
 |Atomic instructions (LR/SC, AMO)
+
+|C (Zca)
+|16-bit compressed instructions; expanded to 32-bit by `kv32_rvc` before the decode stage
 
 |Zicsr
 |CSR access instructions (CSRRW, CSRRS, CSRRC, etc.)
@@ -505,7 +508,7 @@ The core implements Machine-mode CSRs per RISC-V Privileged Spec v1.11:
 |0x301
 |misa
 |R/W
-|ISA and extensions (reports RV32IMA)
+|ISA and extensions (reports RV32IMAC; misa=0x40001105: A=bit0, C=bit2, I=bit8, M=bit12)
 
 |0x304
 |mie
@@ -2678,7 +2681,7 @@ The trace format is:
 
 == Conclusion
 
-This datasheet provides a complete reference for the RV32IMA SoC, covering architecture, memory map, peripheral specifications, electrical characteristics, and programming guidelines. For additional information, refer to:
+This datasheet provides a complete reference for the RV32IMAC SoC, covering architecture, memory map, peripheral specifications, electrical characteristics, and programming guidelines. For additional information, refer to:
 
 * **RISC-V Specifications**: https://riscv.org/technical/specifications/
 * **AMBA AXI4 Specification**: https://developer.arm.com/documentation/ihi0022/latest/

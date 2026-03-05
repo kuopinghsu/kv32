@@ -36,8 +36,10 @@ static void print_dec(uint32_t v) {
 
 // ---------------------------------------------------------------------------
 // Hot loop – must NOT be inlined so we can target its address with cbo.inval
+// aligned(4): RVC may produce 2-byte-aligned function placement; word-copy in
+// TEST 4 requires the source to be naturally word-aligned.
 // ---------------------------------------------------------------------------
-static uint32_t __attribute__((noinline)) hot_loop(uint32_t iters) {
+static uint32_t __attribute__((noinline, aligned(4))) hot_loop(uint32_t iters) {
     uint32_t acc = 0;
     for (uint32_t i = 0; i < iters; i++) {
         acc += i;
@@ -81,11 +83,17 @@ static inline void cbo_inval(void *addr) {
 // Minimal trap handler (required by start.S)
 // ---------------------------------------------------------------------------
 void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
-    (void)mcause; (void)mepc; (void)mtval;
     my_puts("TRAP mcause=0x"); print_hex32(mcause);
     my_puts(" mepc=0x");       print_hex32(mepc);
     my_puts(" mtval=0x");      print_hex32(mtval);
     my_puts("\n");
+
+    // Skip the faulting instruction so execution can continue.
+    // Read the 16-bit halfword at mepc: if bits [1:0] != 2'b11 it is a
+    // 2-byte compressed instruction (RVC), otherwise it is 4 bytes.
+    uint16_t inst16 = *(volatile uint16_t *)mepc;
+    uint32_t next_pc = mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
+    asm volatile("csrw mepc, %0" :: "r"(next_pc));
 }
 
 // ---------------------------------------------------------------------------

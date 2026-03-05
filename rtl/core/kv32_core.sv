@@ -1,12 +1,13 @@
 // ============================================================================
 // File: kv32_core.sv
 // Project: KV32 RISC-V Processor
-// Description: RV32IMA Processor Core with 5-Stage Pipeline
+// Description: RV32IMAC Processor Core with 5-Stage Pipeline
 //
-// Implements the RISC-V RV32IMA instruction set architecture:
+// Implements the RISC-V RV32IMAC instruction set architecture:
 //   - RV32I: Base integer instruction set
 //   - M extension: Integer multiplication and division
 //   - A extension: Atomic instructions
+//   - C extension: 16-bit compressed instructions (Zca), decoded by kv32_rvc
 //   - Machine mode CSRs and exception handling
 //   - Precise exceptions
 //
@@ -160,6 +161,7 @@ module kv32_core #(
     logic [31:0] pc_if;          // Program counter in fetch stage
     logic [31:0] pc_next;        // Next sequential PC (pc_if + 4)
     logic [31:0] instr_if;       // Instruction fetched from memory
+    logic [31:0] orig_instr_if;  // Original encoding from RVC (16-bit zero-ext or 32-bit)
     logic        if_valid;       // Valid instruction available
     logic        if_id_stall;    // Stall IF/ID pipeline register
     logic        if_flush;       // Flush IF stage (on branch/exception)
@@ -169,6 +171,7 @@ module kv32_core #(
     // reads source registers from the register file, and detects hazards.
     logic [31:0] pc_id;                  // Program counter in decode stage
     logic [31:0] instr_id;               // Instruction being decoded
+    logic [31:0] orig_instr_id;          // Original encoding (pre-expansion) in ID stage
     logic        id_valid;               // Valid instruction in decode stage
     logic        instr_access_fault_id;  // Instruction fetch error from IF stage
     logic [4:0]  rs1_addr, rs2_addr, rd_addr_id;
@@ -208,6 +211,7 @@ module kv32_core #(
     logic        is_fence_i_id;  // FENCE.I: also flush icache
     logic        is_cbo_id;      // Zicbom CBO: cache block operation
     logic        is_wfi_id;      // WFI instruction in ID stage
+    logic        is_compressed_id; // Instruction was originally 16-bit RVC
     logic        id_ex_stall;
     logic        id_flush;
 
@@ -216,6 +220,7 @@ module kv32_core #(
     // evaluates branch conditions, and handles data forwarding.
     logic [31:0] pc_ex;                  // Program counter in execute stage
     logic [31:0] instr_ex;               // Instruction being executed
+    logic [31:0] orig_instr_ex;          // Original encoding (pre-expansion) in EX stage
     logic        instr_access_fault_ex;  // Instruction fetch error propagated from ID
     logic [31:0] rs1_data_ex, rs2_data_ex;
     logic [31:0] imm_ex;
@@ -255,6 +260,7 @@ module kv32_core #(
     logic        is_fence_i_ex;  // FENCE.I in EX stage
     logic        is_cbo_ex;      // CBO in EX stage
     logic        is_wfi_ex;      // WFI instruction in EX stage
+    logic        is_compressed_ex; // Instruction was originally 16-bit RVC
     logic        wfi_active;       // WFI instruction is in EX stage this cycle
     logic        wfi_branch;       // One-shot: flush IF/ID and redirect PC back to WFI (like a branch)
     logic        wfi_sleeping;     // Core is in WFI sleep state (pipeline flushed, awaiting wake)
@@ -271,7 +277,8 @@ module kv32_core #(
     // The memory stage handles load and store operations, interfaces with
     // the data memory system, and manages the store buffer.
     logic [31:0] pc_mem;                 // Program counter in memory stage
-    logic [31:0] instr_mem;              // Instruction in memory stage
+    logic [31:0] instr_mem;              // Instruction in memory stage (post-expansion)
+    logic [31:0] orig_instr_mem;         // Original encoding (pre-expansion) in MEM stage
     logic [31:0] alu_result_mem;         // ALU result (address for loads/stores)
     logic [31:0] rs1_data_mem;
     logic [31:0] rs2_data_mem;
@@ -336,7 +343,7 @@ module kv32_core #(
     // The writeback stage writes results back to the register file and
     // handles late-arriving exceptions (e.g., from memory responses).
     logic [31:0] pc_wb;                  // Program counter in writeback stage
-    logic [31:0] instr_wb;               // Instruction in writeback stage
+    logic [31:0] instr_wb;               // Instruction in writeback stage (post-expansion)
     logic [31:0] alu_result_wb;          // ALU result to write back
     logic [31:0] mem_data_wb;
     logic [4:0]  rd_addr_wb;
@@ -350,6 +357,7 @@ module kv32_core #(
     logic [31:0] csr_rdata_wb;
     /* verilator lint_off UNUSEDSIGNAL */
     // Probed from testbench via DPI-C; not used within RTL
+    logic [31:0] orig_instr_wb;          // Original encoding (pre-expansion) in WB stage (for trace)
     logic [31:0] csr_wdata_wb;
     logic [4:0]  csr_zimm_wb;
     logic [11:0] csr_addr_wb;
@@ -506,16 +514,43 @@ module kv32_core #(
     logic [31:0] last_issued_fetch_pc;
     logic        last_issued_valid;
 
-    // IF stage outputs
-    assign if_valid = imem_resp_valid && !if_flush && !ib_resp_discard;
-    assign instr_if = if_valid ? imem_resp_data : 32'h00000013; // NOP on invalid
-    // Consume responses when pipeline not stalled OR when discarding flushed requests.
-    // Also force-accept during WFI stall: the WFI instruction is already in EX,
-    // so any in-flight fetch response is for a post-WFI instruction that won't
-    // execute until after the interrupt fires.  Consuming it (as a discard via
-    // if_flush=1 while wfi_stall=1) drains ib_outstanding to zero, letting
-    // core_sleep_o assert and the clock gate engage.
-    assign imem_resp_ready = !if_id_stall || ib_resp_discard || wfi_sleeping;
+    // -------------------------------------------------------------------------
+    // RVC expander signals
+    // -------------------------------------------------------------------------
+    logic        rvc_instr_valid;    // expanded instruction valid
+    logic [31:0] rvc_instr_data;     // expanded 32-bit instruction
+    logic [31:0] rvc_orig_instr;     // original encoding (16-bit zero-ext for RVC, 32-bit for regular)
+    logic [31:0] rvc_instr_pc;       // actual instruction PC (halfword aligned)
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic        rvc_is_compressed;  // instruction was originally 16-bit (informational)
+    /* verilator lint_on UNUSEDSIGNAL */
+    logic        rvc_mem_ready;      // controls imem_resp_ready
+    logic branch_flushed;             // Branch already flushed — suppresses re-flush for same branch
+
+    // flush_pc: target PC on any if_flush event, forwarded to kv32_rvc so it
+    // can set init_offset = flush_pc[1] (second halfword of aligned word).
+    logic [31:0] if_flush_pc;
+    assign if_flush_pc =
+        (dbg_pc_we_i && dbg_halted_o)             ? dbg_pc_i      :
+        (wb_exception || exception || irq_pending) ? mtvec         :
+        is_mret_ex                                 ? mepc          :
+        wfi_branch                                 ? pc_ex         :
+        (branch_taken && !branch_flushed)          ? branch_target :
+        (fence_i_committing || cbo_committing)     ? (pc_mem + 32'd4) :
+                                                     32'h8000_0000;
+
+    // rvc_consume_en mirrors the old imem_resp_ready gating logic and is
+    // passed into kv32_rvc so the module can decide when to consume a word.
+    logic rvc_consume_en;
+    assign rvc_consume_en = !if_id_stall || ib_resp_discard || wfi_sleeping;
+
+    // IF stage outputs now come from the RVC expander
+    assign if_valid        = rvc_instr_valid;
+    assign instr_if        = rvc_instr_valid ? rvc_instr_data   : 32'h00000013;
+    assign orig_instr_if   = rvc_instr_valid ? rvc_orig_instr   : 32'h00000013;
+    // imem_resp_ready is now driven by the RVC expander.  kv32_rvc sets
+    // rvc_mem_ready=1 only when it actually consumes the 32-bit word.
+    assign imem_resp_ready = rvc_mem_ready;
 
     // Early-branch-target fetch:
     //   On the same cycle branch_taken=1, override imem_req_addr with
@@ -570,14 +605,14 @@ module kv32_core #(
     logic dedup_consuming;
     assign dedup_consuming = dedup_consumed && imem_req_ready;
 
-    logic branch_flushed;  // Flushed for current branch in EX (primary decl: branch tracking section)
+    // branch_flushed declared above (near if_flush_pc) to satisfy forward-reference order.
 
     // imem_req_addr / imem_req_valid:
     //   Combinational address and valid.
     //   - branch cycle: use branch_target for early fetch
     //   - dedup-consume: use pc_next (pc_if is about to advance this cycle)
     //   - otherwise: use current pc_if
-    assign imem_req_addr_comb = (branch_taken && !branch_flushed) ? branch_target :
+    assign imem_req_addr_comb = (branch_taken && !branch_flushed) ? {branch_target[31:2], 2'b00} :
                                 dedup_consuming                   ? pc_next :
                                                                    pc_if;
 
@@ -595,7 +630,7 @@ module kv32_core #(
     // completes in the same cycle regardless.
     assign imem_req_valid_comb = ib_can_accept && !non_branch_flush &&
                                  !fetch_issued_for_effective_pc &&
-                                 !wfi_sleeping &&        // suppress fetches during WFI sleep
+                                 !wfi_sleeping && !wfi_branch &&  // suppress fetches during WFI sleep/branch
                                  imem_req_ready;
 
     assign imem_req_valid = imem_req_valid_comb;
@@ -608,7 +643,7 @@ module kv32_core #(
     // at pc_if while imem_req_addr_fill advances to pc_next.  The two values give
     // identical fill_same_line / fill_pend_burst_comb results because pc_if and
     // pc_next are always in the same 32-byte cache line during sequential fetches.
-    assign imem_req_addr_fill = (branch_taken && !branch_flushed) ? branch_target :
+    assign imem_req_addr_fill = (branch_taken && !branch_flushed) ? {branch_target[31:2], 2'b00} :
                                 dedup_consumed                    ? pc_next :
                                                                    pc_if;
 
@@ -717,6 +752,27 @@ module kv32_core #(
         .outstanding_count(ib_outstanding)
     );
 
+    // -------------------------------------------------------------------------
+    // RVC expander instantiation
+    // -------------------------------------------------------------------------
+    kv32_rvc rvc_expander (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .imem_resp_valid  (imem_resp_valid),
+        .imem_resp_data   (imem_resp_data),
+        .ib_resp_pc       (ib_resp_pc),
+        .ib_resp_discard  (ib_resp_discard),
+        .consume_en       (rvc_consume_en),
+        .flush            (if_flush),
+        .flush_pc         (if_flush_pc),
+        .instr_valid      (rvc_instr_valid),
+        .instr_data       (rvc_instr_data),
+        .orig_instr       (rvc_orig_instr),
+        .instr_pc         (rvc_instr_pc),
+        .is_compressed    (rvc_is_compressed),
+        .mem_ready        (rvc_mem_ready)
+    );
+
     // Program Counter (PC) Update Logic
     // Priority (highest to lowest):
     //   1. Debug PC write (when halted)
@@ -738,31 +794,40 @@ module kv32_core #(
                 `DEBUG2(`DBG_GRP_FETCH, ("[PC] EXCEPTION/IRQ: pc=0x%h -> mtvec=0x%h (exc=%b wb_exc=%b irq=%b), outstanding=%0d",
                        pc_if, mtvec, exception, wb_exception, irq_pending, ib_outstanding));
             end else if (is_mret_ex) begin
-                // Return from trap: jump to saved exception PC
-                pc_if <= mepc;
-                `DEBUG2(`DBG_GRP_FETCH, ("[PC] MRET: pc=0x%h -> mepc=0x%h, outstanding=%0d", pc_if, mepc, ib_outstanding));
+                // Return from trap: jump to saved exception PC (mepc).
+                // mepc may be halfword-aligned (C extension); align the fetch address
+                // to 4 bytes and preserve bit[1] in if_flush_pc for the RVC expander.
+                pc_if <= {mepc[31:2], 2'b00};
+                `DEBUG2(`DBG_GRP_FETCH, ("[PC] MRET: pc=0x%h -> mepc=0x%h (aligned 0x%h), outstanding=%0d", pc_if, mepc, {mepc[31:2], 2'b00}, ib_outstanding));
             end else if (wfi_branch) begin
                 // WFI sleep entry: redirect fetch back to the WFI instruction.
+                // pc_ex may be halfword-aligned (C extension WFI); align the
+                // fetch address to 4 bytes.  if_flush_pc preserves bit[1] for
+                // the RVC expander init_offset.
                 // Fetches are suppressed by wfi_sleeping; pc_if is parked here
                 // so that on wakeup the first fetch re-executes WFI (which will
                 // then complete as a NOP because irq_pending=1).
-                pc_if <= pc_ex;
-                `DEBUG1(("[WFI] Sleep branch: parking pc_if=0x%h at WFI addr=0x%h", pc_if, pc_ex));
+                pc_if <= {pc_ex[31:2], 2'b00};
+                `DEBUG1(("[WFI] Sleep branch: parking pc_if=0x%h at WFI addr=0x%h (aligned 0x%h)", pc_if, pc_ex, {pc_ex[31:2], 2'b00}));
             end else if (branch_taken && !branch_flushed) begin
                 // Branch/jump taken: update to target address.
                 // Guard with !branch_flushed to avoid re-redirecting on stall cycles
                 // (branch_flushed prevents duplicate flushes when branch stays in EX).
-                pc_if <= branch_target;
-                `DEBUG2(`DBG_GRP_FETCH, ("[PC] BRANCH: pc=0x%h -> target=0x%h, outstanding=%0d",
-                       pc_if, branch_target, ib_outstanding));
+                // Always store 4-byte aligned address; branch_target[1] is forwarded
+                // via if_flush_pc to kv32_rvc which sets init_offset accordingly.
+                pc_if <= {branch_target[31:2], 2'b00};
+                `DEBUG2(`DBG_GRP_FETCH, ("[PC] BRANCH: pc=0x%h -> target=0x%h (aligned=0x%h), outstanding=%0d",
+                       pc_if, branch_target, {branch_target[31:2], 2'b00}, ib_outstanding));
             end else if (fence_i_committing || cbo_committing) begin
-                // FENCE.I / CBO.INVAL commits: reset fetch pointer to instr+4.
+                // FENCE.I / CBO.INVAL commits: reset fetch pointer to instr+4
+                // (or instr+2 if compressed).  Align to 4 bytes for the fetch;
+                // if_flush_pc carries the full unaligned value for RVC init_offset.
                 // During the CMO stall pc_if drifted ahead; pre-fetched instructions
                 // were discarded by the flush.  Without this correction the CPU would
                 // resume from the drifted pc_if, silently skipping those instructions.
-                pc_if <= pc_mem + 32'd4;
+                pc_if <= (pc_mem + 32'd4) & ~32'h3;
                 `DEBUG1(("[CMO] Commit: resetting pc_if 0x%h -> 0x%h",
-                       pc_if, pc_mem + 32'd4));
+                       pc_if, (pc_mem + 32'd4) & ~32'h3));
             end else begin
                 if (imem_req_ready && imem_req_valid) begin
                     // Fetch accepted: advance to the PC after what was issued.
@@ -814,25 +879,31 @@ module kv32_core #(
     // Can be flushed on branch misprediction or exception.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            pc_id     <= 32'd0;
-            instr_id  <= 32'h00000013;
-            id_valid  <= 1'b0;
+            pc_id              <= 32'd0;
+            instr_id           <= 32'h00000013;
+            orig_instr_id      <= 32'h00000013;
+            id_valid           <= 1'b0;
             instr_access_fault_id <= 1'b0;
+            is_compressed_id   <= 1'b0;
         end else if (if_flush || id_flush) begin
-            instr_id  <= 32'h00000013;
-            id_valid  <= 1'b0;
+            instr_id           <= 32'h00000013;
+            orig_instr_id      <= 32'h00000013;
+            id_valid           <= 1'b0;
             instr_access_fault_id <= 1'b0;
+            is_compressed_id   <= 1'b0;
             if (if_flush || id_flush) begin
                 `DEBUG2(`DBG_GRP_FETCH, ("[PIPE] IF/ID flush - if_flush=%b id_flush=%b", if_flush, id_flush));
             end
         end else if (!if_id_stall && if_valid) begin
             // Only update when pipeline advances AND we have a valid instruction
-            pc_id     <= ib_resp_pc;  // Use PC from instruction buffer
-            instr_id  <= instr_if;
+            pc_id              <= rvc_instr_pc;  // Use PC from RVC expander (halfword aligned)
+            instr_id           <= instr_if;
+            orig_instr_id      <= orig_instr_if;
+            is_compressed_id   <= rvc_is_compressed;
             id_valid  <= 1'b1;
-            instr_access_fault_id <= imem_resp_valid && imem_resp_error;
+            instr_access_fault_id <= imem_resp_valid && imem_resp_error && rvc_mem_ready;
             `DEBUG2(`DBG_GRP_FETCH, ("[PIPE] IF->ID: pc=0x%h instr=0x%h error=%b outstanding=%0d",
-                   ib_resp_pc, instr_if, imem_resp_error, ib_outstanding));
+                   rvc_instr_pc, instr_if, imem_resp_error, ib_outstanding));
         end else if (!if_id_stall && !if_valid) begin
             // Pipeline advances but no valid instruction, insert bubble
             id_valid <= 1'b0;
@@ -840,7 +911,7 @@ module kv32_core #(
         end else if (if_id_stall && if_valid) begin
             // Valid instruction but pipeline stalled
             `DEBUG2(`DBG_GRP_FETCH, ("[PIPE] IF/ID STALL: pc=0x%h instr=0x%h, outstanding=%0d",
-                   ib_resp_pc, instr_if, ib_outstanding));
+                   rvc_instr_pc, instr_if, ib_outstanding));
         end
     end
 
@@ -1108,6 +1179,7 @@ module kv32_core #(
         if (!rst_n) begin
             pc_ex         <= 32'd0;
             instr_ex      <= 32'h00000013;
+            orig_instr_ex <= 32'h00000013;
             instr_access_fault_ex <= 1'b0;
             rs1_data_ex   <= 32'd0;
             rs2_data_ex   <= 32'd0;
@@ -1139,11 +1211,13 @@ module kv32_core #(
             is_fence_i_ex <= 1'b0;
             is_cbo_ex     <= 1'b0;
             is_wfi_ex     <= 1'b0;
+            is_compressed_ex <= 1'b0;
             ex_valid      <= 1'b0;
         end else if (ex_flush) begin
             // Branch misprediction or exception: flush pipeline stage
             pc_ex         <= 32'd0;
             instr_ex      <= 32'h00000013;  // NOP
+            orig_instr_ex <= 32'h00000013;
             instr_access_fault_ex <= 1'b0;
             reg_we_ex    <= 1'b0;  // Disable writes
             mem_read_ex  <= 1'b0;  // Disable memory ops
@@ -1158,6 +1232,7 @@ module kv32_core #(
             is_ecall_ex  <= 1'b0;
             is_ebreak_ex <= 1'b0;
             is_wfi_ex    <= 1'b0;
+            is_compressed_ex <= 1'b0;
             `DEBUG2(`DBG_GRP_PIPE, ("Cycle %0t: ID/EX flush - ex_flush=%b, blocking PC=0x%h instr=0x%h", $time, ex_flush, pc_id, instr_id));
         end else if (if_id_stall && !downstream_stall) begin
             // IF/ID stalled (e.g., load-use hazard) but EX can advance: inject bubble
@@ -1169,6 +1244,7 @@ module kv32_core #(
             jal_ex       <= 1'b0;
             jalr_ex      <= 1'b0;
             is_wfi_ex    <= 1'b0;
+            is_compressed_ex <= 1'b0;
             ex_valid     <= 1'b0;
         end else if (downstream_stall) begin
             // Downstream stall: hold current EX contents
@@ -1176,6 +1252,7 @@ module kv32_core #(
         end else if (id_flush) begin
             pc_ex         <= 32'd0;
             instr_ex      <= 32'h00000013;
+            orig_instr_ex <= 32'h00000013;
             instr_access_fault_ex <= 1'b0;
             rs1_data_ex   <= 32'd0;
             rs2_data_ex   <= 32'd0;
@@ -1207,10 +1284,12 @@ module kv32_core #(
             is_fence_i_ex <= 1'b0;
             is_cbo_ex     <= 1'b0;
             is_wfi_ex     <= 1'b0;
+            is_compressed_ex <= 1'b0;
             ex_valid      <= 1'b0;
         end else if (!id_ex_stall) begin
             pc_ex         <= pc_id;
             instr_ex      <= instr_id;
+            orig_instr_ex <= orig_instr_id;
             instr_access_fault_ex <= instr_access_fault_id;
             rs1_data_ex   <= rs1_data_id;  // Use forwarded data if WB->ID hazard
             rs2_data_ex   <= rs2_data_id;  // Use forwarded data if WB->ID hazard
@@ -1241,8 +1320,9 @@ module kv32_core #(
             is_fence_ex   <= is_fence_id;
             is_fence_i_ex <= is_fence_i_id;
             is_cbo_ex     <= is_cbo_id;
-            is_wfi_ex     <= is_wfi_id;
-            ex_valid      <= id_valid;
+            is_wfi_ex        <= is_wfi_id;
+            is_compressed_ex <= is_compressed_id;
+            ex_valid         <= id_valid;
             if (id_valid) begin
                 `DEBUG2(`DBG_GRP_PIPE, ("Cycle %0t: ID->EX pc=0x%h instr=0x%h rd=%0d mem_w=%b mem_r=%b id_valid=%b ex_valid_next=%b",
                        $time, pc_id, instr_id, rd_addr_id, mem_write_id, mem_read_id, id_valid, id_valid));
@@ -1468,7 +1548,7 @@ module kv32_core #(
     // JAL/JALR store return address (PC+4) instead of ALU result
     logic [31:0] alu_result_final;
     assign alu_result_final = lui_ex ? imm_ex :
-                              (jal_ex || jalr_ex) ? (pc_ex + 32'd4) :
+                              (jal_ex || jalr_ex) ? (pc_ex + (is_compressed_ex ? 32'd2 : 32'd4)) :
                               alu_result_ex;
 
     // Stall EX stage if ALU is busy (FAST_MUL=0 or FAST_DIV=0)
@@ -1689,8 +1769,8 @@ module kv32_core #(
             end else if (illegal_ex) begin
                 exception = 1'b1;
                 exception_cause = EXC_ILLEGAL_INSTR;
-                exception_tval = instr_ex;  // Illegal instruction word (for mtval)
-                `DEBUG1(("EXCEPTION: Illegal instruction @ PC=0x%h instr=0x%h%s", pc_ex, instr_ex,
+                exception_tval = orig_instr_ex;  // Original instruction encoding for mtval
+                `DEBUG1(("EXCEPTION: Illegal instruction @ PC=0x%h instr=0x%h (orig=0x%h)%s", pc_ex, instr_ex, orig_instr_ex,
                         (instr_ex[6:0] == 7'h73 && instr_ex[14:12] != 3'b0) ? " (illegal CSR)" : ""));
             end else if (is_ecall_ex) begin
                 exception = 1'b1;
@@ -1717,9 +1797,10 @@ module kv32_core #(
                 exception_cause = EXC_STORE_ADDR_MISALIGNED;
                 exception_tval  = alu_result_final;
                 `DEBUG1(("EXCEPTION: Store addr misaligned @ PC=0x%h addr=0x%h", pc_ex, alu_result_final));
-            end else if (branch_taken && (branch_target[1:0] != 2'b00)) begin
+            end else if (branch_taken && (branch_target[0] != 1'b0)) begin
                 // Instruction-address-misaligned: branch/jump target is not
-                // 4-byte aligned (RISC-V spec section 2.5).
+                // halfword-aligned (RISC-V spec section 2.5; with C extension,
+                // 2-byte alignment is sufficient — only odd targets are illegal).
                 // The fetch is suppressed via non_branch_flush = exception.
                 exception       = 1'b1;
                 exception_cause = EXC_INSTR_ADDR_MISALIGNED;
@@ -1738,6 +1819,7 @@ module kv32_core #(
         if (!rst_n) begin
             pc_mem        <= 32'd0;
             instr_mem     <= 32'h00000013;
+            orig_instr_mem <= 32'h00000013;
             alu_result_mem <= 32'd0;
             rs1_data_mem  <= 32'd0;
             rs2_data_mem  <= 32'd0;
@@ -1773,6 +1855,7 @@ module kv32_core #(
                 // Normal advance: EX result is ready, copy into MEM stage
                 pc_mem        <= pc_ex;
                 instr_mem     <= instr_ex;
+                orig_instr_mem <= orig_instr_ex;
                 // alu_result_final already contains PC+4 for JAL/JALR
                 alu_result_mem <= alu_result_final;
                 if ((jal_ex || jalr_ex) && ex_valid) begin
@@ -2615,6 +2698,7 @@ module kv32_core #(
         if (!rst_n) begin
             pc_wb         <= 32'd0;
             instr_wb      <= 32'h00000013;  // NOP instruction
+            orig_instr_wb <= 32'h00000013;
             alu_result_wb <= 32'd0;
             mem_data_wb   <= 32'd0;
             rd_addr_wb    <= 5'd0;
@@ -2638,6 +2722,7 @@ module kv32_core #(
         end else if (!mem_wb_stall) begin
             pc_wb         <= pc_mem;
             instr_wb      <= instr_mem;
+            orig_instr_wb <= orig_instr_mem;
             alu_result_wb <= alu_result_mem;
             mem_data_wb   <= mem_data_wb_next;  // Aligned load data
             rd_addr_wb    <= rd_addr_mem;
@@ -2877,18 +2962,27 @@ module kv32_core #(
     // PC Management and Alignment
     // ========================================================================
 
+    // pc_if tracks 4-byte-aligned fetch addresses (fetch granularity = 32 bits)
+    property p_pc_if_alignment;
+        @(posedge clk) disable iff (!rst_n)
+        (pc_if[1:0] == 2'b00);
+    endproperty
+    assert property (p_pc_if_alignment)
+        else $error("[CORE] pc_if misalignment: IF=0x%h", pc_if);
+
+    // Instruction PCs in ID/EX/MEM/WB may be halfword-aligned (RVC)
     property p_pc_alignment;
         @(posedge clk) disable iff (!rst_n)
-        (pc_if[1:0] == 2'b00) && (pc_id[1:0] == 2'b00) &&
-        (pc_ex[1:0] == 2'b00) && (pc_mem[1:0] == 2'b00) && (pc_wb[1:0] == 2'b00);
+        (pc_id[0]  == 1'b0) && (pc_ex[0]  == 1'b0) &&
+        (pc_mem[0] == 1'b0) && (pc_wb[0]  == 1'b0);
     endproperty
     assert property (p_pc_alignment)
-        else $error("[CORE] PC misalignment detected: IF=0x%h ID=0x%h EX=0x%h MEM=0x%h WB=0x%h",
-                    pc_if, pc_id, pc_ex, pc_mem, pc_wb);
+        else $error("[CORE] PC misalignment detected: ID=0x%h EX=0x%h MEM=0x%h WB=0x%h",
+                    pc_id, pc_ex, pc_mem, pc_wb);
 
     property p_branch_target_alignment;
         @(posedge clk) disable iff (!rst_n || instr_access_fault_ex || exception)
-        branch_taken |-> (branch_target[1:0] == 2'b00);
+        branch_taken |-> (branch_target[0] == 1'b0);
     endproperty
     assert property (p_branch_target_alignment)
         else $error("[CORE] Branch target misaligned: PC=0x%h target=0x%h", pc_ex, branch_target);
@@ -3176,8 +3270,11 @@ module kv32_core #(
         // restores MIE=1 combinatorially; an interrupt that was pending can fire on
         // the very next cycle, changing pc_if from mepc to mtvec — that is correct
         // architectural behaviour, not a bug.
+        //
+        // pc_if is always 4-byte aligned; mepc may be halfword-aligned (C ext).
+        // Compare against the aligned form of $past(mepc).
         (is_mret_ex && !irq_pending && !exception && !wb_exception) |=>
-            (pc_if == $past(mepc)) || irq_pending || wb_exception || exception;
+            (pc_if == {$past(mepc[31:2]), 2'b00}) || irq_pending || wb_exception || exception;
     endproperty
     assert property (p_mret_updates_pc_to_mepc)
         else $error("[CORE] MRET did not update PC to mepc");

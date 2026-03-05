@@ -1,6 +1,6 @@
 /*
  * FreeRTOS Kernel V11.2.0
- * Configuration for RISC-V RV32IMA Core
+ * Configuration for RISC-V RV32IMAC Core
  */
 
 #ifndef FREERTOS_CONFIG_H

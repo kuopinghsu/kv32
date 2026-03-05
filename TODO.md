@@ -14,11 +14,13 @@
 ### 2. D-Cache Implementation
 **Priority: HIGH** — Major microarchitecture feature; depends on #1 (PMA) for cacheability policy.
 - [ ] Design and implement `kv32_dcache.sv`: write-back, write-allocate, direct-mapped or set-associative. Refer to `kv32_icache.sv` to provide configurable options.
+- [ ] Issue WRAP AXI transaction, CWF (Crtitical Word First) data read
 - [ ] Integrate with the AXI data bus; handle store-buffer interaction (flush / drain on cache miss).
 - [ ] Add CMO (Cache Management Operation) support to match the existing I-cache interface.
 - [ ] Update `kv32_core.sv` to instantiate D-cache and wire the data-memory interface.
 - [ ] Update `kv32_soc.sv` and synthesis / FPGA compile lists.
 - [ ] Add `sw/dcache` test suite: basic hit/miss, eviction, coherency with store buffer, CMO flush.
+- [ ] Update `sw/dma` to invalidate cache to ensure coherency
 - [ ] Update `docs/kv32_soc_datasheet.adoc`, `docs/kv32_soc_block_diagram.svg` and `docs/pipeline_architecture.md`.
 
 ### 3. RISC-V Debug Interface
@@ -83,26 +85,25 @@
 **Priority: LOW** — Broad verification; high effort, no prerequisite blockers.
 - [ ] Evaluate and run the Google RISC-V DV random instruction test suite against the kv32 RTL.
 
-### 7. Compressed Instruction Support (RVC / Zca)
-**Priority: MEDIUM** — Reduces code size by ~25%; required for GCC `-march=rv32imac` and Zephyr default builds.
-- [ ] Implement 16-bit instruction decode in `rtl/core/kv32_decoder.sv`: detect `inst[1:0] != 2'b11`, expand to 32-bit equivalent before the existing decode tree.
-- [ ] Handle fetch alignment in `rtl/core/kv32_ib.sv`: a 32-bit fetch word may contain two 16-bit instructions or a 16-bit + 32-bit split across a fetch boundary; update the instruction buffer to pack/unpack correctly.
-- [ ] Update the PC logic in `rtl/core/kv32_core.sv` to advance by 2 bytes for 16-bit instructions.
-- [ ] Update the I-cache (`rtl/kv32_icache.sv`) and instruction-fetch path to handle 16-bit-aligned accesses at cache-line boundaries.
-- [x] Extend the software simulator (`sim/kv32sim.cpp`, `sim/riscv-dis.cpp`) with RVC decode and execution.
-- [ ] Extend the Spike plugins (if needed) and update `-march` / `-mabi` flags in `sw/common/Makefile`.
-- [ ] Add `sw/rvc/` test: exercises all major RVC instruction groups (CI, CR, CL, CS, CB, CJ) and verifies correct execution and PC tracking.
-- [ ] Update `docs/pipeline_architecture.md` and `docs/kv32_soc_datasheet.adoc` with compressed-ISA support.
-- [ ] Update ISA string in `kv32_dtm.sv` IDCODE, `misa` CSR, and Makefile `-march` flags from `rv32ima` → `rv32imac`.
+### 7. FuseSoC Support
+**Priority: LOW** — Enables standard IP packaging and integration with third-party EDA flows.
+- [ ] Create a top-level `kv32_soc.core` FuseSoC core description file: declare all RTL source files (`rtl/`, `rtl/core/`, `rtl/jtag/`, `rtl/memories/`), testbench files (`testbench/`), and parameters (`CLK_FREQ`, `BAUD_RATE`, `ICACHE_EN`, `ICACHE_SIZE`, etc.).
+- [ ] Add a `fusesoc_libraries.conf` (or `fusesoc.conf`) at the repo root pointing to the local core library.
+- [ ] Define at least two named targets in the `.core` file: `sim` (Verilator backend, mirrors the existing `Makefile` flow) and `synth` (Yosys or Genus backend for synthesis).
+- [ ] Verify `fusesoc run --target sim kv32::kv32_soc` reproduces the existing Verilator simulation results for a representative test (e.g. `hello`).
+- [ ] Add a `make fusesoc-sim` convenience target to the top-level `Makefile`.
+- [ ] Package peripheral cores (`axi_uart`, `axi_dma`, `axi_spi`, `axi_i2c`, `axi_gpio`, `axi_timer`, `axi_clint`, `axi_plic`) as individual `.core` files so they can be reused independently.
+- [ ] Document setup in a new `docs/fusesoc_integration.md`: installation, core file layout, available targets, and how to add a new peripheral core.
 
-### 8. RISC-V Architectural Tests (riscv-arch-test)
-**Priority: MEDIUM** — Formal compliance baseline; catches corner cases missed by custom tests.
-- [ ] Integrate the upstream `riscv-arch-test` suite (already present under `verif/riscv-arch-test/`) with the kv32 RTL simulation flow.
-- [ ] Add a `riscof` target configuration under `verif/riscof_targets/kv32/` (plugin `riscof_kv32.py`): invoke the Verilator simulation, capture the signature region, compare against the reference model.
-- [ ] Add `make arch-test` Makefile target: runs `riscof run` for the `rv32i`, `rv32im`, `rv32ima` (and eventually `rv32imac`) test suites; reports pass/fail count.
-- [ ] Fix any failures exposed by the suite (mismatches in edge-case ALU, CSR, exception, or memory-access behavior).
-- [ ] Add the arch-test run to the GitHub CI workflow (item #5) as a required check.
-- [ ] Document setup in `verif/riscof_targets/README.md`: Python environment, `riscof` version, reference model (Spike), and expected runtime.
+### 8. Doxygen Documentation
+**Priority: LOW** — Improves API discoverability and cross-referencing for SDK and RTL users.
+- [ ] Add a `Doxyfile` at the repo root: set `INPUT` to `sw/include/`, `sim/`, `rtl/` (comment-only pass); configure `RECURSIVE = YES`, `EXTRACT_ALL = YES`, `GENERATE_HTML = YES`, `OUTPUT_DIRECTORY = docs/doxygen`.
+- [ ] Annotate all public C/C++ APIs in `sw/include/kv_platform.h`, `sw/include/kv_*.h`, `sim/kv32sim.h`, `sim/device.h`, and `sim/gdb_stub.h` with Doxygen `/** … */` doc-comments: `@brief`, `@param`, `@return`, `@note`.
+- [ ] Set up `doxygen-filter-sv` (or equivalent) as a Doxygen `FILTER_PATTERNS` pre-processor for `.sv` files: install `doxygen-filter-sv` (`pip install doxygen-filter-sv` or build from source), configure `FILTER_PATTERNS = *.sv=doxygen-filter-sv` and `EXTENSION_MAPPING = sv=SystemC` in the `Doxyfile` so module ports, parameters, and `//!` / `/** */` block comments are extracted correctly.
+- [ ] Annotate key RTL module headers in `rtl/kv32_soc.sv`, `rtl/core/kv32_core.sv`, `rtl/kv32_icache.sv`, and peripheral `axi_*.sv` files with Doxygen `/** @brief … */` block comments above each `module` declaration and `//!< inline` comments on `parameter` and `input`/`output` port lines, following the `doxygen-filter-sv` syntax expectations.
+- [ ] Add a `make docs` target to the top-level `Makefile` that runs `doxygen Doxyfile` and prints the output path.
+- [ ] Add `docs/doxygen/` to `.gitignore` (generated output should not be committed).
+- [ ] Optionally configure Doxygen to cross-link with the existing AsciiDoc datasheet: add a `@see` reference pointing to `docs/kv32_soc_datasheet.adoc` from the top-level group.
 
 ---
 
@@ -286,3 +287,23 @@ Final AXI slave assignment:
   - `rtl/kv32_icache.sv`: removed unreachable `default: next_state = S_IDLE`.
   - `rtl/jtag/jtag_tap.sv`: removed unreachable `default: state_next = TEST_LOGIC_RESET`.
 - All 25 RTL tests pass; Verilator lint clean.
+
+### ~~C17. RISC-V Architectural Tests (riscv-arch-test)~~
+- Integrated the upstream `riscv-arch-test` suite with the kv32 RTL simulation flow via RISCOF.
+- Added `verif/riscof_targets/kv32/` plugin (`riscof_kv32.py`): invokes Verilator simulation, captures the signature region, and compares against the Spike reference model.
+- Added `make arch-test-rv32i`, `arch-test-rv32m`, `arch-test-rv32a`, `arch-test-rv32zicsr`, `arch-test-rv32c`, and `arch-test-all` (`rv32imac`) targets; each reports pass/fail count.
+- Extended `kv32_isa.yaml` to declare `RV32IMACZicsr_Zifencei` so the C-extension suite is selected by RISCOF.
+- All tests pass: RV32I, RV32M, RV32A, Zicsr, and RV32C (compressed) suites against Spike reference.
+- Documented setup in `verif/riscof_targets/README.md`: Python virtual-environment setup, `riscof` version, reference model (Spike), and expected runtime.
+
+### ~~C18. Compressed Instruction Support (RVC / Zca)~~
+- Added `rtl/core/kv32_rvc.sv`: pre-decode expander that detects `inst[1:0] != 2'b11`, expands all RVC (Quadrant 0/1/2) instructions to 32-bit equivalents before the decode stage.
+- Updated `rtl/core/kv32_ib.sv`: instruction buffer handles 16-bit-aligned fetch boundaries; packs/unpacks 16-bit and 32-bit instructions correctly across cache-line edges.
+- Updated `rtl/core/kv32_core.sv`: PC advances by 2 for compressed instructions (`is_compressed_id/ex` flags); `rvc_instr_pc` carries halfword-aligned PC through the pipeline.
+- Updated `rtl/kv32_icache.sv` and fetch path to handle 16-bit-aligned accesses at cache-line boundaries.
+- Extended `sim/kv32sim.cpp` and `sim/riscv-dis.cpp` with full RVC decode and execution.
+- Updated `-march=rv32imac_zicsr` / `-mabi=ilp32` in `sw/common/Makefile` and Spike `--isa=rv32imac_zicsr_...` flags.
+- Added `sw/rvc/rvc.c` test: exercises all major RVC instruction groups (CI, CR, CL, CS, CB, CJ).
+- Updated `docs/pipeline_architecture.md` and `docs/kv32_soc_datasheet.adoc` with RVC/`kv32_rvc` expander description and C-extension ISA table entry.
+- Updated `misa = 32'h4014_1105` (C bit set) in `rtl/core/kv32_csr.sv` and IDCODE in `rtl/kv32_dtm.sv`.
+- All tests pass: `make test-all` 18/18, `make TRACE=1 arch-test-rv32c` 29/29.

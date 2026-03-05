@@ -6,7 +6,7 @@ This directory contains the RISCOF configuration for running RISC-V architectura
 
 RISCOF (RISC-V COmpliance Framework) is used to verify that the kv32 implementation complies with the RISC-V ISA specification. It runs the official RISC-V architectural test suite and compares the results between:
 
-- **DUT (Device Under Test)**: kv32 - RV32IMA processor with Verilator (loads ELF files directly)
+- **DUT (Device Under Test)**: kv32 - RV32IMAC processor with Verilator (loads ELF files directly)
 - **Reference Model**: Choice of two simulators:
   - **Spike** (default): Official RISC-V ISA simulator - authoritative reference
   - **kv32sim**: kv32 custom RV32IMAC software simulator - fast alternative
@@ -20,7 +20,7 @@ verif/riscof_targets/
 ├── config.ini                  # RISCOF configuration file
 ├── kv32/                       # DUT plugin for kv32
 │   ├── riscof_kv32.py          # Plugin implementation (Verilator)
-│   ├── kv32_isa.yaml           # ISA specification (RV32IMA)
+│   ├── kv32_isa.yaml           # ISA specification (RV32IMAC)
 │   ├── kv32_platform.yaml      # Platform specification
 │   └── env/                    # Test environment
 ├── spike/                      # Reference plugin for Spike
@@ -246,7 +246,7 @@ RISCOF can use different reference models to compare against the DUT (kv32). Thr
 |---------|-------------|---------|-------|
 | **Type** | RTL (Verilator) | Software Simulator | Software Simulator |
 | **Purpose** | Device Under Test | Alternative Reference | Primary Reference |
-| **ISA** | RV32IMA | RV32IMAZicsr_Zifencei | RV32IMACZicsr_Zifencei |
+| **ISA** | RV32IMAC | RV32IMACZicsr_Zifencei | RV32IMACZicsr_Zifencei |
 | **Language** | SystemVerilog | C++ | C++ |
 | **Build** | Requires Verilator | Built with kv32 | Separate installation |
 | **Speed** | Slow (~5-10s/test) | Fast (~0.2s/test) | Fast (~0.3s/test) |
@@ -258,8 +258,8 @@ RISCOF can use different reference models to compare against the DUT (kv32). Thr
 ### Detailed Comparison
 
 #### ISA Support
-- **kv32**: RV32IMA (base integer + multiply/divide + atomics)
-- **kv32sim**: RV32IMA + Zicsr + Zifencei (CSR and fence instructions)
+- **kv32**: RV32IMAC (base integer + multiply/divide + atomics + compressed)
+- **kv32sim**: RV32IMAC + Zicsr + Zifencei (CSR and fence instructions)
 - **Spike**: Full RISC-V with all extensions (RV32/RV64, IMAFDCV, etc.)
 
 #### Memory Layout
@@ -477,7 +477,7 @@ Main RISCOF configuration that specifies:
 Specifies the ISA implementation for kv32:
 - **ISA**: RV32IMAZicsr_Zifencei
 - **XLEN**: 32-bit
-- **MISA reset value**: 0x40001105 (RV32IMA)
+- **MISA reset value**: 0x40001105 (RV32IMAC: A=bit0, C=bit2, I=bit8, M=bit12)
 - Physical address size: 32 bits
 
 ### kv32_platform.yaml
@@ -655,7 +655,7 @@ riscof-test: build-verilator
 
 ## Notes
 
-- The kv32 processor is **RV32IMA** (no C-extension support)
+- The kv32 processor is **RV32IMAC** (C-extension/Zca supported via `kv32_rvc` expander)
 - Spike reference is configured for **RV32IMAC** to match available tests
 - Test signatures must be properly extracted from Verilator simulation output
 - Some tests may timeout if `MAX_CYCLES` is too low (currently set to 100000)
