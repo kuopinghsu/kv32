@@ -1,64 +1,79 @@
 # svlint configuration for kv32 RV32IMAC SoC
-# Rule set: simsynth (simulation-synthesis consistency) + structural checks.
-#
-# Reference configs from /opt/svlint/bin/:
-#   simsynth.toml       — core sim/synth consistency rules (base of this file)
-#   designintent.toml   — additional design-intent rules (subset enabled below)
-#
-# Run via: make lint-svlint
-# Or directly: svlint <files>      (reads this file automatically from cwd)
+# Based on /opt/svlint/bin/designintent.toml with two project-specific exceptions.
+# All rules below match designintent.toml exactly unless annotated otherwise.
 
 # ── Simulation / synthesis consistency ─────────────────────────────────────
-# These rules prevent coding patterns whose simulation and synthesis semantics
-# diverge, which can cause post-synthesis functional mismatches.
-
-# Blocking assignment in always_ff can cause race conditions in simulation
-# even when synthesis infers the correct FF.
 syntaxrules.blocking_assignment_in_always_ff = true
 
 # NOTE: blocking_assignment_in_always_latch is intentionally NOT enabled.
-# Clock-gate latches (always_latch with if/else) require blocking assignment =
-# because the latch is transparent and the output must update immediately.
-# Using <= (non-blocking) makes Verilator emit COMBDLY and treats it as =
-# anyway.  The svlint rule is a false positive for this standard pattern.
+# Clock-gate latches (always_latch if (!clk) latch_en = ...) require blocking
+# assignment = because the output must track the input transparently.
+# Using <= triggers Verilator COMBDLY; both tools treat it as = anyway.
+# This is the one divergence from designintent.toml.
 
-# Non-blocking assignment in always_comb is unnecessary and may shadow the
-# driving signal for one time-step before the NBA update queue runs.
 syntaxrules.non_blocking_assignment_in_always_comb = true
-
-# Incomplete case in always_comb / function can infer latches in synthesis
-# while simulation sees X.  Require explicit default arm.
 syntaxrules.case_default = true
-
-# Untyped enums default to int (2-state) in some tools and logic (4-state) in
-# others, causing mismatches.  Require explicit type on every enum.
 syntaxrules.enum_with_type = true
-
-# Functions without 'automatic' storage class share state across calls in
-# non-automatic modules — a common source of hard-to-debug simulation issues.
 syntaxrules.function_with_automatic = true
-
-# priority/unique/unique0 semantics differ between simulators and synthesis
-# tools.  Use plain case instead.
 syntaxrules.keyword_forbidden_priority = true
 syntaxrules.keyword_forbidden_unique   = true
 syntaxrules.keyword_forbidden_unique0  = true
-
-# === operator (case equality including X/Z) does not synthesise to a simple
-# equality comparison.  Use == unless explicitly testing for 4-state values.
 syntaxrules.operator_case_equality = true
-
-# Procedural continuous assignment (assign/deassign inside always) is not
-# synthesisable and behaves differently across simulators.
 syntaxrules.procedural_continuous_assignment = true
-
-# ── Additional structural / design-intent rules ─────────────────────────────
-
-# Side-effects in action blocks of immediate assertions (e.g. $display inside
-# assert) are skipped in synthesis, so they must not drive logic.
 syntaxrules.action_block_with_side_effect = true
 
-# NOTE: default_nettype_none is intentionally NOT enabled here because it
-# requires the directive to be present at the top of every source file.
-# kv32_rvc.sv correctly guards it with `ifndef SYNTHESIS; other files can be
-# migrated incrementally as a separate effort.
+# ── Design-intent rules (from designintent.toml) ───────────────────────────
+syntaxrules.function_same_as_system_function = true
+syntaxrules.keyword_forbidden_always     = true
+syntaxrules.keyword_forbidden_wire_reg   = true
+syntaxrules.module_nonansi_forbidden     = true
+
+# NOTE: default_nettype_none is intentionally NOT enabled.
+# kv32_rvc.sv guards it with `ifndef SYNTHESIS; other files to be migrated
+# incrementally as a separate effort.
+
+# Generate block labels improve readability and are required by some tools.
+syntaxrules.generate_case_with_label = true
+syntaxrules.generate_for_with_label  = true
+syntaxrules.generate_if_with_label   = true
+
+# Forbid implicit-typed localparams/parameters; require two-state base types.
+syntaxrules.localparam_type_twostate    = true
+syntaxrules.parameter_type_twostate     = true
+syntaxrules.localparam_explicit_type    = true
+syntaxrules.parameter_explicit_type     = true
+syntaxrules.parameter_default_value     = true
+syntaxrules.parameter_in_generate       = true
+syntaxrules.parameter_in_package        = true
+
+# genvar: require declaration inside the for loop (out-loop forbidden).
+syntaxrules.genvar_declaration_in_loop  = true
+syntaxrules.genvar_declaration_out_loop = false
+
+# Forbid redundant 'generate'/'endgenerate' keywords.
+syntaxrules.keyword_forbidden_generate  = true
+syntaxrules.keyword_required_generate   = false
+
+# Require explicit else/default on every if and case.
+syntaxrules.explicit_case_default = true
+syntaxrules.explicit_if_else      = true
+
+# Forbid loop statements inside always blocks.
+syntaxrules.loop_statement_in_always_comb  = true
+syntaxrules.loop_statement_in_always_ff    = true
+syntaxrules.loop_statement_in_always_latch = true
+
+# Forbid sequential blocks (begin/end) inside always blocks.
+syntaxrules.sequential_block_in_always_comb  = true
+syntaxrules.sequential_block_in_always_ff    = true
+syntaxrules.sequential_block_in_always_latch = true
+
+# Require begin/end for multi-line for/if bodies.
+syntaxrules.multiline_for_begin = true
+syntaxrules.multiline_if_begin  = true
+
+# Port direction / type conventions.
+syntaxrules.inout_with_tri              = true
+syntaxrules.input_with_var              = true
+syntaxrules.output_with_var             = true
+syntaxrules.interface_port_with_modport = true

@@ -15,7 +15,6 @@ export SPIKE
 export SPIKE_INCLUDE
 export ZEPHYR_BASE
 export SVLINT
-export SVLINT_CONF
 
 # Append additional paths if specified
 ifdef PATH_APPEND
@@ -126,7 +125,6 @@ VERILATOR ?= verilator
 # Loaded from env.config; falls back to 'None' so the target is safely skipped
 # when no path is configured or the binary does not exist.
 SVLINT ?= None
-SVLINT_CONF ?= /opt/svlint/bin/designintent.toml
 VERILATOR_JOBS ?= 0
 VERILATOR_FLAGS = -Wall -Wno-UNSIGNED --trace --trace-fst --cc --exe --build -j $(VERILATOR_JOBS)
 VERILATOR_FLAGS += -sv --timing
@@ -429,7 +427,7 @@ lint-decl:
 
 # svlint structural/intent lint of RTL source files.
 # Skipped automatically when SVLINT is 'None' or the binary does not exist.
-# Config is read from SVLINT_CONF (default: /opt/svlint/bin/designintent.toml).
+# Rules are read from .svlint.toml (mirrors /opt/svlint/bin/designintent.toml).
 lint-svlint:
 	@echo "=========================================="
 	@echo "svlint RTL check"
@@ -440,8 +438,8 @@ lint-svlint:
 		echo "svlint binary not found at: $(SVLINT) — skipping."; \
 	else \
 		echo "svlint: $(SVLINT)"; \
-		echo "config: $(SVLINT_CONF)"; \
-		$(SVLINT) --config $(SVLINT_CONF) $(RTL_ONLY_SRCS) && \
+		echo "config: .svlint.toml"; \
+		$(SVLINT) $(RTL_ONLY_SRCS) && \
 		echo "" && \
 		echo "==========================================" && \
 		echo "svlint passed!" && \
