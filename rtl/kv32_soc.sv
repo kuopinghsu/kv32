@@ -52,19 +52,19 @@
 // ============================================================================
 
 module kv32_soc #(
-    parameter CLK_FREQ          = 100_000_000,      // System clock frequency in Hz
-    parameter BAUD_RATE         = 25_000_000,       // UART baud rate (max = CLK_FREQ/4)
-    parameter IB_DEPTH          = 4,                // Instruction buffer depth (outstanding fetches); must be power-of-2 >= effective_latency+1
-    parameter SB_DEPTH          = 2,                // Store buffer depth (buffered stores)
-    parameter FAST_MUL          = 1,                // Multiply mode: 1=combinatorial, 0=serial
-    parameter FAST_DIV          = 1,                // Division mode: 1=combinatorial, 0=serial
-    parameter ICACHE_EN         = 1,                // Instruction cache: 1=enabled, 0=bypass (uses mem_axi_ro)
-    parameter ICACHE_SIZE       = 4096,             // I-cache total bytes
-    parameter ICACHE_LINE_SIZE  = 32,               // Cache line size in bytes (32 = 8 words/line)
-    parameter ICACHE_WAYS       = 2,                // Cache associativity (number of ways)
-    parameter USE_CJTAG         = 1,                // JTAG mode: 0=JTAG, 1=cJTAG
-    parameter JTAG_IDCODE       = 32'h1DEAD3FF,     // JTAG device identification code
-    parameter GPIO_NUM_PINS     = 4                 // Number of GPIO pins (1-128, generates only required registers)
+    parameter int unsigned CLK_FREQ          = 100_000_000,      // System clock frequency in Hz
+    parameter int unsigned BAUD_RATE         = 25_000_000,       // UART baud rate (max = CLK_FREQ/4)
+    parameter int unsigned IB_DEPTH          = 4,                // Instruction buffer depth (outstanding fetches); must be power-of-2 >= effective_latency+1
+    parameter int unsigned SB_DEPTH          = 2,                // Store buffer depth (buffered stores)
+    parameter int unsigned FAST_MUL          = 1,                // Multiply mode: 1=combinatorial, 0=serial
+    parameter int unsigned FAST_DIV          = 1,                // Division mode: 1=combinatorial, 0=serial
+    parameter bit          ICACHE_EN         = 1'b1,             // Instruction cache: 1=enabled, 0=bypass (uses mem_axi_ro)
+    parameter int unsigned ICACHE_SIZE       = 4096,             // I-cache total bytes
+    parameter int unsigned ICACHE_LINE_SIZE  = 32,               // Cache line size in bytes (32 = 8 words/line)
+    parameter int unsigned ICACHE_WAYS       = 2,                // Cache associativity (number of ways)
+    parameter bit          USE_CJTAG         = 1'b1,             // JTAG mode: 0=JTAG, 1=cJTAG
+    parameter bit [31:0]   JTAG_IDCODE       = 32'h1DEAD3FF,     // JTAG device identification code
+    parameter int unsigned GPIO_NUM_PINS     = 4                 // Number of GPIO pins (1-128, generates only required registers)
 )(
     input  logic clk,
     input  logic rst_n,
@@ -666,7 +666,6 @@ module kv32_soc #(
     // ========================================================================
     // ICACHE_EN=1: kv32_icache (AXI4 burst master, WPL=LINE_SIZE/4 beats)
     // ICACHE_EN=0: mem_axi_ro  (single-beat AXI4-Lite bridge, legacy path)
-    generate
         if (ICACHE_EN) begin : g_icache
 
             // CMO interface: connect core directly to icache.
@@ -784,7 +783,6 @@ module kv32_soc #(
 `endif
 
         end
-    endgenerate
 
     // ========================================================================
     // Data Memory to AXI Bridge (Read/Write)
@@ -1283,7 +1281,7 @@ module kv32_soc #(
     // ========================================================================
     // Base address: 0x0C00_0000 - 0x0FFF_FFFF
     // Interrupt sources (1..NUM_IRQ) - extend when peripherals gain IRQ outputs
-    localparam PLIC_NUM_IRQ = 7;
+    localparam int unsigned PLIC_NUM_IRQ = 7;
     logic [PLIC_NUM_IRQ:0] plic_irq_src;
     // PLIC interrupt source assignment:
     //   [1] = UART RX-not-empty / TX-empty

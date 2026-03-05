@@ -24,9 +24,9 @@
 // ============================================================================
 
 module jtag_top #(
-    parameter USE_CJTAG = 1,            // 0=JTAG, 1=cJTAG (default: cJTAG)
-    parameter IDCODE = 32'h1DEAD3FF,    // JTAG ID code
-    parameter IR_LEN = 5                // Instruction register length
+    parameter bit          USE_CJTAG = 1'b1,          // 0=JTAG, 1=cJTAG (default: cJTAG)
+    parameter bit [31:0]   IDCODE    = 32'h1DEAD3FF, // JTAG ID code
+    parameter int unsigned IR_LEN    = 5             // Instruction register length
 )(
     // System clock (required for cJTAG mode)
     input  logic        clk_i,          // System clock (e.g., 100MHz)
@@ -107,62 +107,58 @@ module jtag_top #(
     assign cjtag_tmsc_in = pin1_tms_i;          // cJTAG TMSC from pin 1
 
     // Mux outputs to shared pins based on mode
-    generate
-        if (USE_CJTAG) begin : gen_pin_mux_cjtag
-            // cJTAG mode: Pin 1 is bidirectional TMSC, Pin 3 is unused
-            assign pin1_tms_o   = cjtag_tmsc_out;
-            assign pin1_tms_oe  = cjtag_tmsc_oen;
-            assign pin3_tdo_o   = 1'b0;
-            assign pin3_tdo_oe  = 1'b1;         // Tristate (unused)
+    if (USE_CJTAG) begin : gen_pin_mux_cjtag
+        // cJTAG mode: Pin 1 is bidirectional TMSC, Pin 3 is unused
+        assign pin1_tms_o   = cjtag_tmsc_out;
+        assign pin1_tms_oe  = cjtag_tmsc_oen;
+        assign pin3_tdo_o   = 1'b0;
+        assign pin3_tdo_oe  = 1'b1;         // Tristate (unused)
 
-        end else begin : gen_pin_mux_jtag
-            // JTAG mode: Pin 1 is input-only TMS, Pin 3 is TDO output
-            assign pin1_tms_o   = 1'b0;
-            assign pin1_tms_oe  = 1'b1;         // Tristate (input mode)
-            assign pin3_tdo_o   = jtag_tdo;
-            assign pin3_tdo_oe  = 1'b0;         // Drive output
-        end
-    endgenerate
+    end else begin : gen_pin_mux_jtag
+        // JTAG mode: Pin 1 is input-only TMS, Pin 3 is TDO output
+        assign pin1_tms_o   = 1'b0;
+        assign pin1_tms_oe  = 1'b1;         // Tristate (input mode)
+        assign pin3_tdo_o   = jtag_tdo;
+        assign pin3_tdo_oe  = 1'b0;         // Drive output
+    end
 
     // =========================================================================
     // Conditional cJTAG Bridge Instantiation
     // =========================================================================
-    generate
-        if (USE_CJTAG) begin : gen_cjtag_mode
-            // cJTAG mode: Instantiate bridge to convert 2-wire to 4-wire
-            cjtag_bridge u_cjtag_bridge (
-                .clk_i          (clk_i),
-                .ntrst_i        (ntrst_i),
+    if (USE_CJTAG) begin : gen_cjtag_mode
+        // cJTAG mode: Instantiate bridge to convert 2-wire to 4-wire
+        cjtag_bridge u_cjtag_bridge (
+            .clk_i          (clk_i),
+            .ntrst_i        (ntrst_i),
 
-                // cJTAG Interface (external 2-wire via shared pins)
-                .tckc_i         (cjtag_tckc),
-                .tmsc_i         (cjtag_tmsc_in),
-                .tmsc_o         (cjtag_tmsc_out),
-                .tmsc_oen       (cjtag_tmsc_oen),
+            // cJTAG Interface (external 2-wire via shared pins)
+            .tckc_i         (cjtag_tckc),
+            .tmsc_i         (cjtag_tmsc_in),
+            .tmsc_o         (cjtag_tmsc_out),
+            .tmsc_oen       (cjtag_tmsc_oen),
 
-                // JTAG Interface (internal 4-wire to TAP)
-                .tck_o          (tap_tck),
-                .tms_o          (tap_tms),
-                .tdi_o          (tap_tdi),
-                .tdo_i          (tap_tdo),
+            // JTAG Interface (internal 4-wire to TAP)
+            .tck_o          (tap_tck),
+            .tms_o          (tap_tms),
+            .tdi_o          (tap_tdi),
+            .tdo_i          (tap_tdo),
 
-                // Status
-                .online_o       (cjtag_online_o),
-                .nsp_o          (cjtag_nsp_o)
-            );
+            // Status
+            .online_o       (cjtag_online_o),
+            .nsp_o          (cjtag_nsp_o)
+        );
 
-        end else begin : gen_jtag_mode
-            // JTAG mode: Direct connection from shared pins
-            assign tap_tck = jtag_tck;
-            assign tap_tms = jtag_tms;
-            assign tap_tdi = jtag_tdi;
-            assign jtag_tdo = tap_tdo;
+    end else begin : gen_jtag_mode
+        // JTAG mode: Direct connection from shared pins
+        assign tap_tck = jtag_tck;
+        assign tap_tms = jtag_tms;
+        assign tap_tdi = jtag_tdi;
+        assign jtag_tdo = tap_tdo;
 
-            // Tie off unused cJTAG status outputs
-            assign cjtag_online_o = 1'b0;
-            assign cjtag_nsp_o = 1'b1;
-        end
-    endgenerate
+        // Tie off unused cJTAG status outputs
+        assign cjtag_online_o = 1'b0;
+        assign cjtag_nsp_o = 1'b1;
+    end
 
     // =========================================================================
     // JTAG TAP Controller (Always Instantiated)
