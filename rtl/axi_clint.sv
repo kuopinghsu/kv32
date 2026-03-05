@@ -20,6 +20,16 @@
 //   - Timer interrupt generation when MTIME >= MTIMECMP
 // ============================================================================
 
+/**
+ * @brief RISC-V CLINT (Core-Local Interrupt Controller).
+ *
+ * Implements mtime (64-bit wall-clock), mtimecmp (64-bit compare), and
+ * MSIP (machine software interrupt pending) per the RISC-V Privileged
+ * Specification.  AXI4-Lite slave interface.
+ *
+ * @see kv_clint.h, kv32_soc
+ * @ingroup rtl
+ */
 module axi_clint (
     input  logic        clk,
     input  logic        rst_n,

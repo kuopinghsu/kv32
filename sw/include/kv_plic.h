@@ -1,12 +1,12 @@
-// ============================================================================
-// File: kv_plic.h
-// Project: KV32 RISC-V Processor
-// Description: PLIC driver: interrupt enable, threshold, claim/complete for hart 0
-//
-// Hardware: axi_plic.sv at KV_PLIC_BASE.
-// Supports a single hart (hart 0, machine-mode context 0).
-// IRQ source IDs are defined in kv_platform.h (KV_PLIC_SRC_*).
-// ============================================================================
+/**
+ * @file kv_plic.h
+ * @brief PLIC driver — interrupt enable/threshold, claim/complete for hart 0.
+ *
+ * Supports a single hart (hart 0, machine-mode context 0).  IRQ source
+ * IDs are defined in kv_platform.h (KV_PLIC_SRC_*).
+ * @see axi_plic.sv
+ * @ingroup drivers
+ */
 
 #ifndef KV_PLIC_H
 #define KV_PLIC_H

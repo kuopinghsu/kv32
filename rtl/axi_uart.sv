@@ -59,6 +59,16 @@
 //   insufficient sampling resolution and poor center alignment.
 // ============================================================================
 
+/**
+ * @brief AXI4-Lite UART peripheral with TX/RX FIFOs and IRQ.
+ *
+ * Configurable baud rate, 8N1 format, FIFO-backed TX and RX paths, and
+ * a PLIC-compatible IRQ output.  Supports internal loopback for hardware
+ * testing.
+ *
+ * @see kv_uart.h, kv32_soc
+ * @ingroup rtl
+ */
 module axi_uart #(
     parameter int unsigned CLK_FREQ   = 100_000_000,
     parameter int unsigned BAUD_RATE  = 25_000_000,

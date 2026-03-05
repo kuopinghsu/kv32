@@ -1,11 +1,12 @@
-// ============================================================================
-// File: kv_gpio.h
-// Project: KV32 RISC-V Processor
-// Description: GPIO driver: data/direction/interrupt configuration, loopback helpers
-//
-// Hardware: axi_gpio.sv at KV_GPIO_BASE.
-// Header-only inline driver; pair with kv_plic.h for IRQ-driven use.
-// ============================================================================
+/**
+ * @file kv_gpio.h
+ * @brief GPIO driver — data/direction/interrupt configuration, loopback helpers.
+ *
+ * Header-only inline driver for the kv32 AXI GPIO peripheral at
+ * ::KV_GPIO_BASE.  Pair with kv_plic.h for interrupt-driven use.
+ * @see axi_gpio.sv
+ * @ingroup drivers
+ */
 
 #ifndef KV_GPIO_H
 #define KV_GPIO_H

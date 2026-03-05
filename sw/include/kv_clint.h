@@ -1,11 +1,11 @@
-// ============================================================================
-// File: kv_clint.h
-// Project: KV32 RISC-V Processor
-// Description: CLINT driver: mtime read/write, mtimecmp, MSIP software interrupt
-//
-// Hardware: axi_clint.sv at KV_CLINT_BASE (0x0200_0000).
-// All functions are header-only inline; no separate .c required.
-// ============================================================================
+/**
+ * @file kv_clint.h
+ * @brief CLINT driver — mtime read/write, mtimecmp, MSIP software interrupt.
+ *
+ * Header-only inline driver for the kv32 AXI CLINT at ::KV_CLINT_BASE.
+ * @see axi_clint.sv
+ * @ingroup drivers
+ */
 
 #ifndef KV_CLINT_H
 #define KV_CLINT_H

@@ -20,6 +20,16 @@
 // via AXI ID mechanism.
 // ============================================================================
 
+/**
+ * @brief AXI4-Lite 1×10 crossbar interconnect.
+ *
+ * Routes a single AXI master to up to 10 slaves via address decoding.
+ * Handles read and write channel arbitration, SLVERR for unmapped
+ * addresses, and ID pass-through.
+ *
+ * @see kv32_soc
+ * @ingroup rtl
+ */
 module axi_xbar (
     input  logic        clk,
     input  logic        rst_n,

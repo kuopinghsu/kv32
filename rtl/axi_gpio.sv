@@ -63,6 +63,15 @@
 //
 // ============================================================================
 
+/**
+ * @brief AXI4-Lite general-purpose I/O controller (1-128 pins).
+ *
+ * Per-pin direction, interrupt-on-change (level/edge, polarity), set/clear
+ * registers, and loopback test mode.  PLIC-compatible IRQ output.
+ *
+ * @see kv_gpio.h, kv32_soc
+ * @ingroup rtl
+ */
 module axi_gpio #(
     parameter int unsigned NUM_PINS = 4          // Number of GPIO pins (1-128)
 )(

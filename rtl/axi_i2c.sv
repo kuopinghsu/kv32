@@ -42,6 +42,15 @@
 import kv32_pkg::*;
 `endif
 
+/**
+ * @brief AXI4-Lite I²C master controller with TX/RX FIFOs and IRQ.
+ *
+ * Implements SCL/SDA generation: START, STOP, byte WRITE, byte READ,
+ * ACK/NACK, and clock-stretching.  PLIC-compatible IRQ.
+ *
+ * @see kv_i2c.h, kv32_soc
+ * @ingroup rtl
+ */
 module axi_i2c #(
     parameter int unsigned CLK_FREQ   = 100_000_000,  // System clock frequency
     parameter int unsigned FIFO_DEPTH = 8             // Must be a power of 2

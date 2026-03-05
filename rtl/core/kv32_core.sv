@@ -38,10 +38,19 @@
 //     - 0: Serial divider (33 cycles, smaller area)
 // ============================================================================
 
-`ifdef SYNTHESIS
-import kv32_pkg::*;
-`endif
-
+/**
+ * @brief RV32IMAC 5-stage pipelined processor core.
+ *
+ * Implements the RISC-V RV32IMAC ISA: base integer (RV32I), M-extension
+ * (multiply/divide), A-extension (atomics/LR/SC), and C-extension
+ * (16-bit compressed via kv32_rvc).  Machine-mode CSRs, precise
+ * exceptions, data forwarding, load-use stalls, and a store buffer are
+ * included.  Instruction fetches flow through an optional I-cache
+ * (kv32_icache) on the imem AXI port.
+ *
+ * @see kv32_soc, kv32_icache, kv32_alu
+ * @ingroup rtl
+ */
 module kv32_core #(
     parameter int IB_DEPTH = 4,  // Instruction buffer depth (outstanding fetches); must be power-of-2 and >= effective_latency+1
     parameter int SB_DEPTH = 4,  // Store buffer depth (buffered stores)

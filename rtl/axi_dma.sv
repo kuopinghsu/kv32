@@ -59,6 +59,17 @@
 import kv32_pkg::*;
 `endif
 
+/**
+ * @brief Multi-channel AXI4 DMA controller.
+ *
+ * Supports up to 8 independent channels with 1-D flat, 2-D strided,
+ * 3-D planar, and scatter-gather transfer modes.  Each channel issues
+ * AXI4 INCR bursts up to MAX_BURST_LEN beats.  Per-channel PLIC-compatible
+ * IRQ output.  Performance counters track active cycles and byte totals.
+ *
+ * @see kv_dma.h, kv32_soc
+ * @ingroup rtl
+ */
 module axi_dma #(
     parameter int NUM_CHANNELS  = 4,    // 1..8
     parameter int DATA_WIDTH    = 32,   // 32, 64, or 128

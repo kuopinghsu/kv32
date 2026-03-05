@@ -42,6 +42,17 @@
 //   - Backpressure handling: if core is not ready, response is registered
 // ============================================================================
 
+/**
+ * @brief Configurable set-associative instruction cache.
+ *
+ * Provides configurable size, line size, and associativity.  Supports
+ * RISC-V CMO (Cache Management Operations: INVAL/DISABLE/ENABLE) and
+ * critical-word-first AXI4 WRAP bursts.  Physical-memory-attribute (PMA)
+ * bypass is applied for non-cacheable addresses (bit[31]=0).
+ *
+ * @see kv32_core, kv32_soc
+ * @ingroup rtl
+ */
 module kv32_icache #(
     parameter int  CACHE_SIZE      = 4096,   // bytes, must be power-of-2
     parameter int  CACHE_LINE_SIZE = 64,     // bytes, must be power-of-2 >= 4

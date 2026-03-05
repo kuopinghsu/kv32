@@ -1,3 +1,12 @@
+/**
+ * @file kv32sim.h
+ * @brief RV32IMAC functional simulator — ELF types, CSR constants, and KV32Simulator class.
+ *
+ * Declares the KV32Simulator class used by kv32sim.cpp and the RTL testbench
+ * (tb_kv32_soc.cpp) as the golden-reference software model.
+ * @defgroup simulator Simulator API
+ * @{
+ */
 // RISC-V RV32IMAC Functional Simulator - Header
 // Contains ELF definitions, magic addresses, and device classes
 
@@ -124,6 +133,17 @@ struct Elf32_Sym {
 #define CAUSE_MACHINE_EXTERNAL_INT 0x8000000B  // MEIP (bit 11)
 
 // RV32IMAC CPU simulator
+/**
+ * @brief RV32IMAC functional simulator implementing the full instruction set,
+ *        memory-mapped peripherals, CSRs, and optional GDB remote debugging.
+ *
+ * KV32Simulator is the golden-reference software model used to validate the
+ * RTL implementation via trace comparison.  It exposes the same AXI slave
+ * address map as kv32_soc.sv and provides instruction-accurate execution
+ * including precise exception semantics.
+ *
+ * @note Instantiated in kv32sim.cpp (standalone) and tb_kv32_soc.cpp (co-sim).
+ */
 class KV32Simulator {
 public:
     struct SlaveRegion {
@@ -218,35 +238,78 @@ public:
     KV32Simulator(uint32_t base = MEM_BASE, uint32_t size = MEM_SIZE);
     ~KV32Simulator();
 
+    /** @brief Enable instruction trace output.
+     * @param filename Output file path.
+     * @param rtl_format If true, emit RTL-compatible trace format (default: Spike format). */
     void enable_trace(const char* filename, bool rtl_format = false);
+    /** @brief Enable reference-signature capture (RISC-V arch-test).
+     * @param filename Output file path for the signature file.
+     * @param granularity Bytes per signature word (default 4). */
     void enable_signature(const char* filename, uint32_t granularity = 4);
+    /** @brief Write the captured signature to the file. */
     void write_signature();
     void log_commit(uint32_t pc, uint32_t inst, int rd_num, uint32_t rd_val, bool has_mem, uint32_t mem_addr, uint32_t mem_val, bool is_store, bool is_csr, uint32_t csr_num);
 
     // Universal memory/slave interface helpers
+    /** @brief Register an AXI slave device.
+     * @param base Base address.
+     * @param size Address window size in bytes.
+     * @param device Pointer to device object.
+     * @param name Human-readable name for debug output. */
     void register_device_slave(uint32_t base, uint32_t size, Device* device, const char* name);
-    // Undo a tick for all registered slave devices (used when exception fires)
+    /** @brief Undo a tick for all registered slave devices (used when exception fires). */
     void untick_slaves();
+    /** @brief Find the slave region covering @p addr, or nullptr. */
     const SlaveRegion* find_slave(uint32_t addr) const;
+    /** @brief Perform a bus read; sets device::last_bus_error on SLVERR.
+     * @param addr Physical address.
+     * @param size Transfer size in bytes (1/2/4).
+     * @param handled Optional output set to true if a slave responded.
+     * @return Data word (zero-extended). */
     uint32_t bus_read(uint32_t addr, int size, bool* handled = nullptr);
+    /** @brief Perform a bus write.
+     * @param addr Physical address.
+     * @param value Data to write.
+     * @param size Transfer size in bytes (1/2/4).
+     * @return true if a slave accepted the transaction. */
     bool bus_write(uint32_t addr, uint32_t value, int size);
+    /** @brief Tick all registered slave devices by one cycle. */
     void tick_slaves();
 
+    /** @brief Read a physical memory address.
+     * @param addr Address.
+     * @param size Bytes (1/2/4).
+     * @param is_fetch True for instruction fetches (affects exception type). */
     uint32_t read_mem(uint32_t addr, int size, bool is_fetch = false);
+    /** @brief Write a physical memory address. */
     void write_mem(uint32_t addr, uint32_t value, int size);
+    /** @brief Sign-extend @p value from @p bits to 32 bits. */
     int32_t sign_extend(uint32_t value, int bits);
 
     // CSR operations
+    /** @brief Read a CSR by address. @param csr CSR address (12-bit). @return CSR value. */
     uint32_t read_csr(uint32_t csr);
+    /** @brief Write a CSR by address. @param csr CSR address. @param value New value. */
     void write_csr(uint32_t csr, uint32_t value);
 
     // Interrupt and exception handling
+    /** @brief Deliver a synchronous or asynchronous trap.
+     * @param cause mcause value (bit 31 set for interrupts).
+     * @param tval mtval value (faulting address or instruction). */
     void take_trap(uint32_t cause, uint32_t tval);
+    /** @brief Check and deliver any pending interrupts. */
     void check_interrupts();
 
+    /** @brief Execute a single instruction (advance PC by one step). */
     void step();
+    /** @brief Load an ELF32 binary into the simulator memory.
+     * @param filename Path to the ELF file.
+     * @return true on success. */
     bool load_elf(const char* filename);
+    /** @brief Run the simulator until exit or instruction limit. */
     void run();
 };
+
+/** @} */ /* end group simulator */
 
 #endif // KV32SIM_H

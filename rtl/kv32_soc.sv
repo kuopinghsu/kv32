@@ -51,6 +51,22 @@
 //   - Division Mode: FAST_DIV=1 (combinatorial, single cycle)
 // ============================================================================
 
+/** @defgroup rtl RTL Modules
+ *  @brief SystemVerilog RTL modules for the KV32 RISC-V SoC.
+ */
+
+/**
+ * @brief RV32IMAC System-on-Chip top-level module.
+ *
+ * Integrates the 5-stage kv32_core with all AXI4-Lite peripherals
+ * (CLINT, PLIC, UART, SPI, I2C, GPIO, Timer, DMA, Magic), the
+ * instruction cache, clock gating (kv32_pm), and the debug transport
+ * module (kv32_dtm / JTAG).  Intended for both FPGA and ASIC targets.
+ *
+ * @see kv32_core, kv32_icache, kv32_dtm
+ * @see docs/kv32_soc_datasheet.adoc
+ * @ingroup rtl
+ */
 module kv32_soc #(
     parameter int unsigned CLK_FREQ          = 100_000_000,      // System clock frequency in Hz
     parameter int unsigned BAUD_RATE         = 25_000_000,       // UART baud rate (max = CLK_FREQ/4)

@@ -1,11 +1,13 @@
-// ============================================================================
-// File: kv_dma.h
-// Project: KV32 RISC-V Processor
-// Description: DMA controller driver: descriptor setup, channel start/poll, IRQ helpers
-//
-// Hardware: axi_dma.sv at KV_DMA_BASE.
-// Header-only inline driver; pair with kv_plic.h for IRQ-driven use.
-// ============================================================================
+/**
+ * @file kv_dma.h
+ * @brief DMA controller driver — descriptor setup, channel start/poll, IRQ helpers.
+ *
+ * Supports 1-D flat, 2-D strided, 3-D planar, and scatter-gather transfer
+ * modes.  Header-only inline driver for the kv32 AXI DMA peripheral at
+ * ::KV_DMA_BASE.  Pair with kv_plic.h for interrupt-driven use.
+ * @see axi_dma.sv
+ * @ingroup drivers
+ */
 
 #ifndef KV_DMA_H
 #define KV_DMA_H

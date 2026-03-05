@@ -54,6 +54,9 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Doxygen generated output
+docs/doxygen/
+
 # Temporary files
 *.tmp
 .*.swp

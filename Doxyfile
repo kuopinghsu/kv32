@@ -1,0 +1,126 @@
+# ============================================================================
+# Doxyfile – KV32 RISC-V Processor documentation configuration
+#
+# Usage:
+#   make docs          → runs doxygen and opens docs/doxygen/html/index.html
+#   doxygen Doxyfile   → direct invocation
+#
+# Generated HTML is placed in docs/doxygen/ and is listed in .gitignore.
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Project identity
+# ---------------------------------------------------------------------------
+PROJECT_NAME           = "KV32 RISC-V Processor"
+PROJECT_BRIEF          = "RV32IMAC 5-stage pipelined SoC — SDK, Simulator & RTL Reference"
+PROJECT_NUMBER         = ""
+OUTPUT_DIRECTORY       = docs/doxygen
+OUTPUT_LANGUAGE        = English
+
+# ---------------------------------------------------------------------------
+# Input sources
+# ---------------------------------------------------------------------------
+INPUT                  = sw/include \
+                         sim \
+                         rtl \
+                         rtl/core \
+                         rtl/jtag \
+                         rtl/memories
+
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.hpp *.c *.cpp *.sv *.svh
+
+# Exclude generated / third-party content
+EXCLUDE_PATTERNS       = */build/* \
+                         */objdir/* \
+                         */verif/* \
+                         */rtos/* \
+                         */spike/* \
+                         */syn/* \
+                         */fpga/* \
+                         *kv32_pkg.sv
+
+# ---------------------------------------------------------------------------
+# Extraction settings
+# ---------------------------------------------------------------------------
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_METHODS  = YES
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+
+# ---------------------------------------------------------------------------
+# SystemVerilog support
+# ---------------------------------------------------------------------------
+# Treat .sv/.svh files as C++ so Doxygen can parse /** */ doc-comments.
+# The custom filter translates module/endmodule to class/{} for the parser.
+EXTENSION_MAPPING      = sv=C++ svh=C++
+FILTER_PATTERNS        = *.sv="python3 scripts/doxygen_sv_filter.py" \
+                         *.svh="python3 scripts/doxygen_sv_filter.py"
+FILTER_SOURCE_FILES    = YES
+
+# ---------------------------------------------------------------------------
+# HTML output
+# ---------------------------------------------------------------------------
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = YES
+
+# ---------------------------------------------------------------------------
+# LaTeX / other backend – disabled
+# ---------------------------------------------------------------------------
+GENERATE_LATEX         = NO
+GENERATE_MAN           = NO
+GENERATE_RTF           = NO
+GENERATE_XML           = NO
+
+# ---------------------------------------------------------------------------
+# Diagrams (dot – optional; won't fail if Graphviz is absent)
+# ---------------------------------------------------------------------------
+HAVE_DOT               = YES
+DOT_GRAPH_MAX_NODES    = 80
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+COLLABORATION_GRAPH    = NO
+
+# ---------------------------------------------------------------------------
+# Source browsing
+# ---------------------------------------------------------------------------
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_CODE_COMMENTS    = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+# ---------------------------------------------------------------------------
+# Preprocessing (C/C++ headers with feature macros)
+# ---------------------------------------------------------------------------
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+SKIP_FUNCTION_MACROS   = YES
+PREDEFINED             = __DOXYGEN__ \
+                         KV_REG32(base,off)=(*((volatile uint32_t *)((base)+(off))))
+
+# ---------------------------------------------------------------------------
+# Warnings
+# ---------------------------------------------------------------------------
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+QUIET                  = NO
+
+# ---------------------------------------------------------------------------
+# Cross-reference to existing AsciiDoc datasheet
+# ---------------------------------------------------------------------------
+# @see docs/kv32_soc_datasheet.adoc for the full hardware reference manual.
+ALIASES                = "datasheet=@see docs/kv32_soc_datasheet.adoc"
+
+# ---------------------------------------------------------------------------
+# Groups / modules (logical organisation)
+# ---------------------------------------------------------------------------
+AUTOLINK_SUPPORT       = YES

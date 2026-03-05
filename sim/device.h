@@ -1,3 +1,13 @@
+/**
+ * @file device.h
+ * @brief Device driver interface for the KV32 functional simulator.
+ *
+ * Provides the abstract base class Device plus concrete implementations
+ * for all peripheral models (UART, SPI, I2C, GPIO, etc.) used by
+ * KV32Simulator.
+ * @defgroup devices Simulator Device Models
+ * @{
+ */
 // Device Driver Interface for KV32 Simulator
 // Provides abstract interface for peripheral devices (UART, I2C, SPI, etc.)
 
@@ -42,34 +52,52 @@
 #define MAGIC_BASE          KV_MAGIC_BASE
 #define MAGIC_SIZE          KV_MAGIC_SIZE
 
-// Abstract base class for all peripheral devices
+/**
+ * @brief Abstract base class for all peripheral device models.
+ *
+ * Each peripheral (UART, SPI, I2C, …) derives from Device and implements
+ * read(), write(), name(), and optionally tick() / reset().
+ * The bus bridge calls find_slave() to locate a device and then invokes
+ * read() or write() with an offset relative to the device base address.
+ */
 class Device {
 public:
-    // Set to true by read()/write() when the requested offset is out-of-range
-    // for this peripheral (mirrors AXI SLVERR).  Cleared by the bus bridge
-    // (bus_read / bus_write) before each call so devices need only set it.
+    /** @brief Set to true by read()/write() when the requested offset is
+     *  out-of-range (mirrors AXI SLVERR).  Cleared by the bus bridge before
+     *  each call so devices need only set it. */
     bool last_bus_error{false};
 
     virtual ~Device() {}
 
-    // Read from device register (offset relative to device base)
+    /** @brief Read a device register.
+     * @param offset Register offset relative to the device base address.
+     * @param size Transfer size in bytes (1, 2, or 4).
+     * @return Register value (zero-extended). */
     virtual uint32_t read(uint32_t offset, int size) = 0;
 
-    // Write to device register (offset relative to device base)
+    /** @brief Write a device register.
+     * @param offset Register offset relative to the device base address.
+     * @param value Data to write.
+     * @param size Transfer size in bytes (1, 2, or 4). */
     virtual void write(uint32_t offset, uint32_t value, int size) = 0;
 
-    // Get device name for debugging
+    /** @brief Return a human-readable device name (for debug output). */
     virtual const char* name() const = 0;
 
-    // Tick the device (called every cycle for time-based operations)
+    /** @brief Advance device state by one simulation cycle. */
     virtual void tick() {}
+    /** @brief Undo the last tick (used when an exception fires mid-cycle). */
     virtual void untick() {}  // Undo a tick (default: no-op)
 
-    // Reset the device
+    /** @brief Reset device registers to power-on state. */
     virtual void reset() {}
 };
 
-// Main memory as a slave device
+/** @brief Main SRAM modelled as a bus slave device.
+ *
+ * Stores bytes in a std::vector and handles byte/halfword/word
+ * access sizes.  Used by KV32Simulator as the primary memory.
+ */
 class MemoryDevice : public Device {
 private:
     std::vector<uint8_t> bytes;
@@ -548,5 +576,7 @@ public:
     // Get PWM output state (for testing)
     bool get_pwm_output(int timer_num) const;
 };
+
+/** @} */ /* end group devices */
 
 #endif // DEVICE_H

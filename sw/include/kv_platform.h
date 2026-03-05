@@ -1,11 +1,15 @@
-// ============================================================================
-// File: kv_platform.h
-// Project: KV32 RISC-V Processor
-// Description: KV32 SoC memory map and peripheral register definitions
-//
-// Base addresses, register offsets, and bit-field constants for every
-// peripheral in kv32_soc.sv.  Included by all peripheral drivers.
-// ============================================================================
+/**
+ * @file kv_platform.h
+ * @brief KV32 SoC memory map and peripheral register definitions.
+ *
+ * Defines base addresses, register offsets, and bit-field constants for
+ * every peripheral in kv32_soc.sv.  Included by all peripheral driver
+ * headers and firmware modules.
+ *
+ * @see docs/kv32_soc_datasheet.adoc
+ * @defgroup platform Platform Definitions
+ * @{
+ */
 
 #ifndef KV_PLATFORM_H
 #define KV_PLATFORM_H
@@ -375,17 +379,20 @@
  * addresses (useful when building host-side code such as Spike plugins). */
 #ifndef KV_PLATFORM_NO_INLINE_HELPERS
 
-/* Write one character to the simulator/testbench console. */
+/* Write one character to the simulator/testbench console.
+ * @param c Character to write. */
 static inline void kv_magic_putc(char c)
 {
     KV_MAGIC_CONSOLE = (uint32_t)(unsigned char)c;
 }
 
-/* Signal program exit to the simulator/testbench and spin forever.
+/** Signal program exit to the simulator/testbench and spin forever.
  * Uses the HTIF tohost encoding so the host receives the correct
  * exit code regardless of whether HTIF or the magic address is used:
  *   code == 0  →  write 1        (PASS)
- *   code != 0  →  write (code<<1)|1  (FAIL, non-zero exit code) */
+ *   code != 0  →  write (code<<1)|1  (FAIL, non-zero exit code)
+ * @param code Exit code (0 = pass, non-zero = fail).
+ * @note This function never returns. */
 static inline void kv_magic_exit(int code)
 {
     KV_MAGIC_EXIT = (code == 0) ? 1u : (((uint32_t)code << 1) | 1u);
@@ -393,5 +400,7 @@ static inline void kv_magic_exit(int code)
 }
 
 #endif /* KV_PLATFORM_NO_INLINE_HELPERS */
+
+/** @} */ /* end of group platform */
 
 #endif /* KV_PLATFORM_H */

@@ -1,11 +1,11 @@
-// ============================================================================
-// File: csr.h
-// Project: KV32 RISC-V Processor
-// Description: RISC-V CSR (Control and Status Register) inline accessor macros
-//
-// Provides read_csr(), write_csr(), set_csr(), clear_csr() wrappers
-// and named constants for every machine-mode CSR used by kv32_core.
-// ============================================================================
+/**
+ * @file csr.h
+ * @brief RISC-V CSR (Control and Status Register) inline accessor macros.
+ *
+ * Provides read_csr(), write_csr(), set_csr(), clear_csr() wrappers
+ * and named constants for every machine-mode CSR used by kv32_core.
+ * @ingroup platform
+ */
 
 #ifndef CSR_H
 #define CSR_H

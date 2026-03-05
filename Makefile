@@ -330,7 +330,7 @@ TB_SOURCES = $(TB_DIR)/tb_kv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-
 # Output executable
 BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
-.PHONY: all test-all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl lint-svlint build-spike-plugins clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
+.PHONY: all test-all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl lint-svlint build-spike-plugins docs clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
 # Default target - run all tests
 all: rtl-all sim-all compare-all spike-all freertos-compare-simple
@@ -985,6 +985,16 @@ waves: run
 	else \
 		echo "GTKWave not found. Please install it to view waveforms."; \
 	fi
+
+# Generate Doxygen HTML documentation
+docs:
+	@echo "====================================="
+	@echo "Generating Doxygen documentation..."
+	@echo "====================================="
+	@doxygen Doxyfile
+	@echo "====================================="
+	@echo "Documentation generated: docs/doxygen/html/index.html"
+	@echo "====================================="
 
 # Clean build artifacts
 clean:

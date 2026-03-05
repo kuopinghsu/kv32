@@ -41,6 +41,15 @@
 import kv32_pkg::*;
 `endif
 
+/**
+ * @brief AXI4-Lite SPI master controller with TX/RX FIFOs and IRQ.
+ *
+ * Configurable SCK frequency, CPOL/CPHA, and multiple chip-select outputs.
+ * PLIC-compatible IRQ.  Supports internal MOSI→MISO loopback.
+ *
+ * @see kv_spi.h, kv32_soc
+ * @ingroup rtl
+ */
 module axi_spi #(
     parameter int unsigned CLK_FREQ   = 100_000_000,  // System clock frequency
     parameter int unsigned FIFO_DEPTH = 8             // Must be a power of 2

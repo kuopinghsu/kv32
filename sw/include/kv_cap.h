@@ -1,12 +1,12 @@
-// ============================================================================
-// File: kv_cap.h
-// Project: KV32 RISC-V Processor
-// Description: Expected capability register values for all KV32 AXI peripherals
-//
-// Constants mirror the RTL localparam CAPABILITY_REG definitions;
-// test code compares these against the actual register reads to
-// verify hardware matches the SDK version expectations.
-// ============================================================================
+/**
+ * @file kv_cap.h
+ * @brief Expected capability register values for all KV32 AXI peripherals.
+ *
+ * Constants mirror the RTL @c localparam @c CAPABILITY_REG definitions.
+ * Test code compares these against actual register reads to verify that
+ * the hardware matches the SDK version expectations.
+ * @ingroup platform
+ */
 
 #ifndef KV_CAP_H
 #define KV_CAP_H

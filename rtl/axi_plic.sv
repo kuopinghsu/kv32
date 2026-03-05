@@ -33,6 +33,16 @@
 // with SLVERR (2'b10) AXI response to signal the out-of-range access.
 // ============================================================================
 
+/**
+ * @brief RISC-V PLIC (Platform-Level Interrupt Controller), single hart.
+ *
+ * Implements priority-based interrupt arbitration for up to 31 external
+ * sources.  Context 0 (hart 0, machine mode): priority, enable, threshold,
+ * and claim/complete registers at the standard PLIC offsets.
+ *
+ * @see kv_plic.h, kv32_soc
+ * @ingroup rtl
+ */
 module axi_plic #(
     parameter int NUM_IRQ = 7    // Interrupt sources 1..NUM_IRQ (max 31)
 )(

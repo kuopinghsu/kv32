@@ -1,11 +1,12 @@
-// ============================================================================
-// File: kv_spi.h
-// Project: KV32 RISC-V Processor
-// Description: SPI master driver: single-byte and burst transfers, polling and IRQ modes
-//
-// Hardware: axi_spi.sv at KV_SPI_BASE.
-// Header-only inline driver; pair with kv_plic.h for IRQ-driven use.
-// ============================================================================
+/**
+ * @file kv_spi.h
+ * @brief SPI master driver — single-byte and burst transfers, polling and IRQ modes.
+ *
+ * Header-only inline driver for the kv32 AXI SPI master at ::KV_SPI_BASE.
+ * Pair with kv_plic.h for interrupt-driven use.
+ * @see axi_spi.sv
+ * @ingroup drivers
+ */
 
 #ifndef KV_SPI_H
 #define KV_SPI_H

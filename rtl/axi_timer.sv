@@ -74,6 +74,16 @@
 //
 // ============================================================================
 
+/**
+ * @brief AXI4-Lite Timer/PWM peripheral with 4 independent channels.
+ *
+ * Each 32-bit channel provides free-running counter, two compare fields
+ * (interrupt and PWM duty-cycle boundary), and an optional 16-bit
+ * prescaler.  PLIC-compatible IRQ output.
+ *
+ * @see kv_timer.h, kv32_soc
+ * @ingroup rtl
+ */
 module axi_timer (
     input  logic        clk,
     input  logic        rst_n,

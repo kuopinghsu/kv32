@@ -1,11 +1,11 @@
-// ============================================================================
-// File: kv_irq.h
-// Project: KV32 RISC-V Processor
-// Description: Machine-mode interrupt and exception management API
-//
-// Covers: global MIE enable/disable, per-source mie bit control,
-// per-cause IRQ/exception handler registration, and trap entry hooks.
-// ============================================================================
+/**
+ * @file kv_irq.h
+ * @brief Machine-mode interrupt and exception management API.
+ *
+ * Covers global MIE enable/disable, per-source mie bit control,
+ * per-cause IRQ/exception handler registration, and trap entry hooks.
+ * @ingroup drivers
+ */
 
 #ifndef KV_IRQ_H
 #define KV_IRQ_H

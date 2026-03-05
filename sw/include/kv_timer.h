@@ -1,11 +1,13 @@
-// ============================================================================
-// File: kv_timer.h
-// Project: KV32 RISC-V Processor
-// Description: Timer/PWM driver: compare, PWM duty cycle, and interrupt helpers
-//
-// Hardware: axi_timer.sv at KV_TIMER_BASE.
-// Header-only inline driver; pair with kv_plic.h for IRQ-driven use.
-// ============================================================================
+/**
+ * @file kv_timer.h
+ * @brief Timer/PWM driver — compare, PWM duty cycle, and interrupt helpers.
+ *
+ * Header-only inline driver for the kv32 AXI Timer at ::KV_TIMER_BASE.
+ * Provides 4 independent 32-bit timer/counter/PWM channels.  Pair with
+ * kv_plic.h for interrupt-driven use.
+ * @see axi_timer.sv
+ * @ingroup drivers
+ */
 
 #ifndef KV_TIMER_H
 #define KV_TIMER_H
