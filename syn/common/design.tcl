@@ -195,45 +195,70 @@ proc kv32_available_corners {} {
     return $out
 }
 
-set TECH_LIB_FILES [kv32_resolve_libs_for_corner $ACTIVE_CORNER]
+# Returns the OpenRAM Liberty files for the given corner (TT/SS/FF).
+# Searches syn/lib/openram/ first (generated), then syn/lib/ (committed fallback).
+# Used by all Liberty-based tool flows (Genus, DC) for both the active corner
+# and per-corner MCMM timing sweeps.
+proc kv32_resolve_openram_libs_for_corner {corner} {
+    global OPENRAM_TAG_NAME OPENRAM_DATA_NAME OPENRAM_DIR OPENRAM_DIR_FALLBACK
+    set corner_map {tt TT  ss SS  ff FF}
+    if {![dict exists $corner_map $corner]} {
+        error "kv32_resolve_openram_libs_for_corner: unknown corner '$corner'"
+    }
+    set pfx [dict get $corner_map $corner]
+    set result {}
+    foreach mem_name [list $OPENRAM_TAG_NAME $OPENRAM_DATA_NAME] {
+        set candidates [glob -nocomplain \
+            [file join $OPENRAM_DIR "${mem_name}_${pfx}_*.lib"]]
+        if {[llength $candidates] == 0} {
+            set candidates [glob -nocomplain \
+                [file join $OPENRAM_DIR_FALLBACK "${mem_name}_${pfx}_*.lib"]]
+        }
+        if {[llength $candidates] > 0} {
+            lappend result [lindex $candidates 0]
+        }
+    }
+    return $result
+}
+
+# Returns all Liberty files for a corner: OpenRAM macros prepended to PDK cells.
+# This is the single source of truth used by Genus and DC for read_libs /
+# target_library.  Always call this instead of kv32_resolve_libs_for_corner
+# directly when a complete library set is needed.
+proc kv32_resolve_all_libs_for_corner {corner} {
+    set openram_libs [kv32_resolve_openram_libs_for_corner $corner]
+    set pdk_libs     [kv32_resolve_libs_for_corner $corner]
+    return [concat $openram_libs $pdk_libs]
+}
 
 # OpenRAM-generated memory macros
 # Primary:  syn/lib/openram/  – produced by 'make gen-mem'
 # Fallback: syn/lib/          – committed copies (TT/SS/FF corners + Verilog)
-set OPENRAM_DIR      [file normalize [file join $SYN_LIB_ROOT openram]]
+set OPENRAM_DIR          [file normalize [file join $SYN_LIB_ROOT openram]]
 set OPENRAM_DIR_FALLBACK [file normalize $SYN_LIB_ROOT]
-set OPENRAM_LIB_FILES {}
 set OPENRAM_RTL_FILES {}
-# OpenRAM names Liberty files with a corner suffix, e.g. sram_1rw_64x21_TT_1p0V_25C.lib.
-# Map the active corner to the OpenRAM suffix prefix (TT/SS/FF).
-set _openram_corner_map {tt TT  ss SS  ff FF}
-set _openram_corner_pfx [dict get $_openram_corner_map $ACTIVE_CORNER]
+
+# Verilog functional models (needed by Yosys; Liberty-based tools use .lib).
 foreach mem_name [list $OPENRAM_TAG_NAME $OPENRAM_DATA_NAME] {
-    # Liberty: check generated dir first, then committed fallback.
-    set lib_candidates [glob -nocomplain \
-        [file join $OPENRAM_DIR "${mem_name}_${_openram_corner_pfx}_*.lib"]]
-    if {[llength $lib_candidates] == 0} {
-        set lib_candidates [glob -nocomplain \
-            [file join $OPENRAM_DIR_FALLBACK "${mem_name}_${_openram_corner_pfx}_*.lib"]]
-    }
-    if {[llength $lib_candidates] > 0} {
-        lappend OPENRAM_LIB_FILES [lindex $lib_candidates 0]
-    }
-    # Verilog functional model: check generated dir first, then fallback.
     set vlog_f [file join $OPENRAM_DIR "${mem_name}.v"]
     if {![file exists $vlog_f]} {
         set vlog_f [file join $OPENRAM_DIR_FALLBACK "${mem_name}.v"]
     }
     if {[file exists $vlog_f]} { lappend OPENRAM_RTL_FILES $vlog_f }
 }
-# Prepend OpenRAM Liberty files so they take precedence for memory timing.
-if {[llength $OPENRAM_LIB_FILES] > 0} {
-    set TECH_LIB_FILES [concat $OPENRAM_LIB_FILES $TECH_LIB_FILES]
-}
-# Append OpenRAM Verilog functional models to the RTL list (needed by Yosys).
-if {[llength $OPENRAM_RTL_FILES] > 0} {
-    set RTL_FILES [concat $RTL_FILES $OPENRAM_RTL_FILES]
-}
+
+# TECH_LIB_FILES: complete lib set for the active corner (OpenRAM + PDK).
+# Used directly by Genus/DC main library loading so neither tool has to
+# reconstruct this list itself.
+set OPENRAM_LIB_FILES [kv32_resolve_openram_libs_for_corner $ACTIVE_CORNER]
+set TECH_LIB_FILES    [kv32_resolve_all_libs_for_corner     $ACTIVE_CORNER]
+# NOTE: OPENRAM_RTL_FILES is intentionally NOT appended to RTL_FILES here.
+# Liberty-based tools (Genus, DC) treat the OpenRAM macros as black boxes
+# using the .lib timing models — feeding the behavioral .v to read_hdl would
+# cause the tool to elaborate the simulation model (multiple always-blocks
+# driving dout0 → CDFG2G-622) instead of using the library cell.
+# The Yosys flow appends OPENRAM_RTL_FILES itself because it has no .lib
+# black-box mechanism and must elaborate the functional model directly.
 
 puts "Configuration loaded:"
 puts "  Design: $DESIGN_NAME"

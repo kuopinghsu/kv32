@@ -20,10 +20,12 @@ if {[llength $available_corners] == 0} {
     exit 1
 }
 
-set target_libs [kv32_resolve_libs_for_corner $ACTIVE_CORNER]
-set_app_var search_path [concat . $LIB_ROOT]
-set_app_var target_library $target_libs
-set_app_var link_library [concat * $target_libs]
+# TECH_LIB_FILES is built by design.tcl: OpenRAM .lib files prepended to the
+# PDK standard-cell library.  Use it directly so SRAM macros are black-boxed
+# with correct timing models rather than elaborated as behavioral RTL.
+set_app_var search_path [concat . $LIB_ROOT [file normalize [file join $SYN_DIR lib]]]
+set_app_var target_library $TECH_LIB_FILES
+set_app_var link_library   [concat * $TECH_LIB_FILES]
 
 # Apply top-level parameter overrides before analysis
 set_app_var hdl_parameter_override_list [list \
@@ -184,23 +186,35 @@ proc kv32_count_leaf_cells {leaf_cells nand2_area} {
     return [list $area $gates $seq $comb $nand2eq]
 }
 
+# Truncate a string to at most $maxlen characters.
+# If the string is longer, keep the first (maxlen-3) chars and append "...".
+proc kv32_trunc {s maxlen} {
+    if {[string length $s] <= $maxlen} { return $s }
+    return "[string range $s 0 [expr {$maxlen - 4}]]..."
+}
+
 proc kv32_write_formatted_area_gate_report {report_file top_module} {
     set nand2_area [kv32_find_nand2_area]
+
+    # Column widths: Hierarchy=48, Module=32, numeric cols unchanged.
+    # Total line width: 48+1+32+1+12+1+12+1+12+1+12+1+14 = 148 chars.
+    set H_W 48
+    set M_W 32
 
     set fp [open $report_file w]
     puts $fp "KV32 Formatted Area/Gate Report (DC)"
     puts $fp "Top Module      : $top_module"
     puts $fp [format "NAND2 Unit Area: %.6f" $nand2_area]
     puts $fp ""
-    puts $fp [format "%-70s %-28s %12s %12s %12s %12s %14s" \
+    puts $fp [format "%-${H_W}s %-${M_W}s %12s %12s %12s %12s %14s" \
         "Hierarchy" "Module" "Area" "GateCnt" "SeqCnt" "CombCnt" "NAND2Eq"]
-    puts $fp [string repeat "-" 168]
+    puts $fp [string repeat "-" 148]
 
     # Top summary row
     set top_leafs [get_cells -hierarchical -filter "is_hierarchical == false"]
     lassign [kv32_count_leaf_cells $top_leafs $nand2_area] t_area t_gates t_seq t_comb t_n2
-    puts $fp [format "%-70s %-28s %12.3f %12d %12d %12d %14.3f" \
-        "/" $top_module $t_area $t_gates $t_seq $t_comb $t_n2]
+    puts $fp [format "%-${H_W}s %-${M_W}s %12.3f %12d %12d %12d %14.3f" \
+        "/" [kv32_trunc $top_module $M_W] $t_area $t_gates $t_seq $t_comb $t_n2]
 
     # Per-hierarchy-module rows
     set hmods [get_cells -hierarchical -filter "is_hierarchical == true"]
@@ -212,8 +226,9 @@ proc kv32_write_formatted_area_gate_report {report_file top_module} {
         set leafs [get_cells -hierarchical -of_objects $h -filter "is_hierarchical == false"]
         lassign [kv32_count_leaf_cells $leafs $nand2_area] area gates seq comb n2
 
-        puts $fp [format "%-70s %-28s %12.3f %12d %12d %12d %14.3f" \
-            $hname $mname $area $gates $seq $comb $n2]
+        puts $fp [format "%-${H_W}s %-${M_W}s %12.3f %12d %12d %12d %14.3f" \
+            [kv32_trunc $hname $H_W] [kv32_trunc $mname $M_W] \
+            $area $gates $seq $comb $n2]
     }
 
     puts $fp ""
@@ -242,7 +257,8 @@ if {[catch {
 # Multi-corner timing reports if enabled
 if {$ENABLE_MCMM} {
     foreach c $available_corners {
-        set libs [kv32_resolve_libs_for_corner $c]
+        # Include OpenRAM libs for this corner so SRAM timing is correct.
+        set libs [kv32_resolve_all_libs_for_corner $c]
         if {[catch {
             set_app_var target_library $libs
             set_app_var link_library [concat * $libs]

@@ -27,13 +27,16 @@ puts "Corner: $ACTIVE_CORNER"
 puts "=========================================="
 
 puts "\n\[1/6\] Reading RTL files..."
-foreach rtl_file $RTL_FILES {
+# Yosys has no Liberty black-box mechanism so the OpenRAM Verilog functional
+# models must be included in the RTL list (unlike Genus/DC which use the .lib).
+set yosys_rtl_files [concat $RTL_FILES $OPENRAM_RTL_FILES]
+foreach rtl_file $yosys_rtl_files {
     if {![file exists $rtl_file]} {
         puts "ERROR: RTL file not found: $rtl_file"
         exit 1
     }
 }
-yosys read_verilog -sv -D SYNTHESIS -D NO_ASSERTION -D GENERIC_SRAM {*}$RTL_FILES
+yosys read_verilog -sv -D SYNTHESIS -D NO_ASSERTION -D GENERIC_SRAM {*}$yosys_rtl_files
 
 puts "\n\[2/6\] Applying top parameters..."
 yosys chparam -set FAST_DIV          $FAST_DIV          $TOP_MODULE
