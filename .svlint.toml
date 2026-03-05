@@ -16,9 +16,11 @@
 # even when synthesis infers the correct FF.
 syntaxrules.blocking_assignment_in_always_ff = true
 
-# Blocking assignment in always_latch can cause unexpected event ordering.
-# Use non-blocking (<=) for values captured by a latch.
-syntaxrules.blocking_assignment_in_always_latch = true
+# NOTE: blocking_assignment_in_always_latch is intentionally NOT enabled.
+# Clock-gate latches (always_latch with if/else) require blocking assignment =
+# because the latch is transparent and the output must update immediately.
+# Using <= (non-blocking) makes Verilator emit COMBDLY and treats it as =
+# anyway.  The svlint rule is a false positive for this standard pattern.
 
 # Non-blocking assignment in always_comb is unnecessary and may shadow the
 # driving signal for one time-step before the NBA update queue runs.

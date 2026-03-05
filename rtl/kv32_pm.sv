@@ -168,7 +168,7 @@ module kv32_pm (
     /* verilator lint_off LATCH */
     always_latch begin
         if (!clk_i)
-            latch_en <= clk_en;  // non-blocking in always_latch avoids scheduling hazard
+            latch_en = clk_en;  // blocking = is correct in always_latch (clock-gate latch)
     end
     /* verilator lint_on LATCH */
 
