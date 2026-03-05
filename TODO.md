@@ -95,19 +95,19 @@
 - [ ] Package peripheral cores (`axi_uart`, `axi_dma`, `axi_spi`, `axi_i2c`, `axi_gpio`, `axi_timer`, `axi_clint`, `axi_plic`) as individual `.core` files so they can be reused independently.
 - [ ] Document setup in a new `docs/fusesoc_integration.md`: installation, core file layout, available targets, and how to add a new peripheral core.
 
-### 8. Doxygen Documentation
-**Priority: LOW** — Improves API discoverability and cross-referencing for SDK and RTL users.
-- [x] Add a `Doxyfile` at the repo root: set `INPUT` to `sw/include/`, `sim/`, `rtl/` (comment-only pass); configure `RECURSIVE = YES`, `EXTRACT_ALL = YES`, `GENERATE_HTML = YES`, `OUTPUT_DIRECTORY = docs/doxygen`.
-- [x] Annotate all public C/C++ APIs in `sw/include/kv_platform.h`, `sw/include/kv_*.h`, `sim/kv32sim.h`, `sim/device.h`, and `sim/gdb_stub.h` with Doxygen `/** … */` doc-comments: `@brief`, `@param`, `@return`, `@note`.
-- [x] Write a Python `doxygen-filter-sv` (or equivalent) as a Doxygen `FILTER_PATTERNS` pre-processor for `.sv` files: install `doxygen-filter-sv` (`pip install doxygen-filter-sv` or build from source), configure `FILTER_PATTERNS = *.sv=doxygen-filter-sv` and `EXTENSION_MAPPING = sv=SystemC` in the `Doxyfile` so module ports, parameters, and `//!` / `/** */` block comments are extracted correctly.
-- [x] Annotate key RTL module headers in `rtl/kv32_soc.sv`, `rtl/core/kv32_core.sv`, `rtl/kv32_icache.sv`, and peripheral `axi_*.sv` files with Doxygen `/** @brief … */` block comments above each `module` declaration and `//!< inline` comments on `parameter` and `input`/`output` port lines, following the `doxygen-filter-sv` syntax expectations.
-- [x] Add a `make docs` target to the top-level `Makefile` that runs `doxygen Doxyfile` and prints the output path.
-- [x] Add `docs/doxygen/` to `.gitignore` (generated output should not be committed).
-- [x] Optionally configure Doxygen to cross-link with the existing AsciiDoc datasheet: add a `@see` reference pointing to `docs/kv32_soc_datasheet.adoc` from the top-level group.
-
 ---
 
 ## Completed
+
+### ~~C8. Doxygen Documentation~~
+- Added `Doxyfile` at repo root: `INPUT=sw/include,sim,rtl`, `RECURSIVE=YES`, `EXTRACT_ALL=YES`, `GENERATE_HTML=YES`, `OUTPUT_DIRECTORY=docs/doxygen`.
+- Wrote `scripts/doxygen_sv_filter.py`: custom SV→C++ filter (module/endmodule → class/};, preserves `/** */` comments) since `doxygen-filter-sv` is not on PyPI; configured via `FILTER_PATTERNS` and `EXTENSION_MAPPING=sv=C++`.
+- Annotated all `sw/include/*.h` with `@file`/`@brief`/`@defgroup`/`@ingroup` and per-function `/** @brief @param @return */` doc-comments.
+- Annotated `sim/kv32sim.h`, `sim/device.h`, and `sim/gdb_stub.h` with full Doxygen class/struct/function documentation.
+- Added `/** @brief @ingroup rtl */` above `module` declarations in `kv32_soc.sv`, `kv32_core.sv`, `kv32_icache.sv`, and all `axi_*.sv` peripherals; `@see` cross-links to `docs/kv32_soc_datasheet.adoc`.
+- Added `make docs` target to top-level `Makefile`.
+- Added `docs/doxygen/` to `.gitignore`.
+- `make docs` builds with zero warnings: `docs/doxygen/html/index.html`.
 
 ### ~~C1. Null Address Bus-Error Test~~
 - Added null pointer load/store and function-call cases to `sw/bus_err`.
