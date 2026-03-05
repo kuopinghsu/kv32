@@ -706,8 +706,10 @@ uint32_t KV32Simulator::read_mem(uint32_t addr, int size, bool is_fetch) {
         }
     }
 
-    // Handle tohost
-    if (addr == tohost_addr && tohost_addr != 0) {
+    // Handle tohost: only intercept data reads, never instruction fetches.
+    // (tohost may share an address with code when placed by the linker inside
+    // .text; returning 0 on a fetch would inject an illegal instruction.)
+    if (!is_fetch && addr == tohost_addr && tohost_addr != 0) {
         return 0;
     }
 

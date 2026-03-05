@@ -88,9 +88,18 @@ SECTIONS
         __heap_end = .;
     } > RAM
 
-    /* RISC-V test interface symbols */
-    tohost = 0x80001000;
-    fromhost = 0x80001040;
+    /* RISC-V test interface symbols.
+     * These must NOT overlap with .text.  Place them as NOLOAD data after
+     * the IRQ stack so that kv32sim can locate them via the symbol table
+     * and the CPU can write to tohost to signal exit.
+     */
+    .htif (NOLOAD) : {
+        . = ALIGN(8);
+        PROVIDE(tohost = .);
+        . += 8;
+        PROVIDE(fromhost = .);
+        . += 8;
+    } > RAM
 
     _end = .;
 }
