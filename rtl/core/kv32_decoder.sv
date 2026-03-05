@@ -269,14 +269,31 @@ module kv32_decoder (
                         end
                         // Unknown CSR address: any access (read or write) to a
                         // non-existent CSR is illegal (RISC-V priv. spec §2.1).
-                        if (!(instr[31:20] inside {
-                            CSR_MSTATUS, CSR_MISA, CSR_MIE, CSR_MTVEC,
-                            CSR_MSCRATCH, CSR_MEPC, CSR_MCAUSE, CSR_MTVAL, CSR_MIP,
-                            CSR_MCYCLE, CSR_MCYCLEH, CSR_MINSTRET, CSR_MINSTRETH,
-                            CSR_CYCLE, CSR_TIME, CSR_INSTRET,
-                            CSR_CYCLEH, CSR_TIMEH, CSR_INSTRETH,
-                            CSR_MVENDORID, CSR_MARCHID, CSR_MIMPID, CSR_MHARTID
-                        })) begin
+                        // Note: 'inside' is not supported by all synthesis tools;
+                        // expanded to explicit equality chain for compatibility.
+                        if (instr[31:20] != CSR_MSTATUS   &&
+                            instr[31:20] != CSR_MISA      &&
+                            instr[31:20] != CSR_MIE       &&
+                            instr[31:20] != CSR_MTVEC     &&
+                            instr[31:20] != CSR_MSCRATCH  &&
+                            instr[31:20] != CSR_MEPC      &&
+                            instr[31:20] != CSR_MCAUSE    &&
+                            instr[31:20] != CSR_MTVAL     &&
+                            instr[31:20] != CSR_MIP       &&
+                            instr[31:20] != CSR_MCYCLE    &&
+                            instr[31:20] != CSR_MCYCLEH   &&
+                            instr[31:20] != CSR_MINSTRET  &&
+                            instr[31:20] != CSR_MINSTRETH &&
+                            instr[31:20] != CSR_CYCLE     &&
+                            instr[31:20] != CSR_TIME      &&
+                            instr[31:20] != CSR_INSTRET   &&
+                            instr[31:20] != CSR_CYCLEH    &&
+                            instr[31:20] != CSR_TIMEH     &&
+                            instr[31:20] != CSR_INSTRETH  &&
+                            instr[31:20] != CSR_MVENDORID &&
+                            instr[31:20] != CSR_MARCHID   &&
+                            instr[31:20] != CSR_MIMPID    &&
+                            instr[31:20] != CSR_MHARTID) begin
                             illegal = 1'b1;
                         end
                     end

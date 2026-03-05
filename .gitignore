@@ -17,6 +17,10 @@ objdir/
 syn/reports
 syn/results
 
+# OpenRAM generated files and local venv (created by 'make openram-setup' / 'make gen-mem')
+syn/.venv/
+syn/lib/openram/
+
 # Executables
 *.exe
 

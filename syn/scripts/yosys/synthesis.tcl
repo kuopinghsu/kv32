@@ -36,6 +36,7 @@ foreach rtl_file $RTL_FILES {
 yosys read_verilog -sv -D SYNTHESIS -D NO_ASSERTION -D GENERIC_SRAM {*}$RTL_FILES
 
 puts "\n\[2/6\] Applying top parameters..."
+yosys chparam -set FAST_DIV          $FAST_DIV          $TOP_MODULE
 yosys chparam -set ICACHE_EN        $ICACHE_EN        $TOP_MODULE
 yosys chparam -set ICACHE_SIZE      $ICACHE_SIZE      $TOP_MODULE
 yosys chparam -set ICACHE_LINE_SIZE $ICACHE_LINE_SIZE $TOP_MODULE

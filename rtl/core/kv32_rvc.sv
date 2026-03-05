@@ -141,10 +141,10 @@ module kv32_rvc (
     //   raw[0]=0 (halfword-aligned, must be explicit to get the right width)
     /* verilator lint_off UNUSEDSIGNAL */
     /* verilator lint_off WIDTHEXPAND */
+    // Inlined to avoid local-variable declarations inside ANSI-style function bodies
+    // (not supported by all synthesis tools including older Yosys versions).
     function automatic logic [31:0] c_j_offset(input logic [15:0] ci);
-        logic [11:0] raw;
-        raw = {ci[12], ci[8], ci[10:9], ci[6], ci[7], ci[2], ci[11], ci[5:3], 1'b0};
-        return c_sext12(raw);
+        c_j_offset = c_sext12({ci[12], ci[8], ci[10:9], ci[6], ci[7], ci[2], ci[11], ci[5:3], 1'b0});
     endfunction
 
     // C.BEQZ / C.BNEZ offset — 9-bit signed (bit shuffle from spec §26.9)
@@ -152,9 +152,7 @@ module kv32_rvc (
     //   raw[8]=ci[12], raw[7:6]=ci[6:5], raw[5]=ci[2],
     //   raw[4:3]=ci[11:10], raw[2:1]=ci[4:3], raw[0]=0 (halfword-aligned)
     function automatic logic [31:0] c_b_offset(input logic [15:0] ci);
-        logic [8:0] raw;
-        raw = {ci[12], ci[6:5], ci[2], ci[11:10], ci[4:3], 1'b0};
-        return c_sext9(raw);
+        c_b_offset = c_sext9({ci[12], ci[6:5], ci[2], ci[11:10], ci[4:3], 1'b0});
     endfunction
     /* verilator lint_on UNUSEDSIGNAL */
     /* verilator lint_on WIDTHEXPAND */
@@ -164,7 +162,7 @@ module kv32_rvc (
     /* verilator lint_off UNUSEDSIGNAL */
     function automatic logic [31:0] encode_jal(input logic [4:0] rd,
                                                input logic [31:0] imm);
-        return {imm[20], imm[10:1], imm[11], imm[19:12], rd, 7'h6F};
+        encode_jal = {imm[20], imm[10:1], imm[11], imm[19:12], rd, 7'h6F};
     endfunction
 
     // encode_branch: B-type (funct3, rs1, rs2, imm)
@@ -172,7 +170,7 @@ module kv32_rvc (
                                                    input logic [4:0] rs1,
                                                    input logic [4:0] rs2,
                                                    input logic [31:0] imm);
-        return {imm[12], imm[10:5], rs2, rs1, ft3, imm[4:1], imm[11], 7'h63};
+        encode_branch = {imm[12], imm[10:5], rs2, rs1, ft3, imm[4:1], imm[11], 7'h63};
     endfunction
     /* verilator lint_on UNUSEDSIGNAL */
 
@@ -181,7 +179,10 @@ module kv32_rvc (
     // are referenced in each instruction encoding — this is intentional.
     /* verilator lint_off UNUSEDSIGNAL */
     /* verilator lint_off WIDTHEXPAND */
-    function automatic logic [31:0] expand_c(input logic [15:0] ci);
+    // Non-ANSI port style so that local variable declarations appear before the
+    // function body — required for Yosys compatibility.
+    function automatic logic [31:0] expand_c;
+        input logic [15:0] ci;
         logic [1:0]  quad;
         logic [2:0]  funct3;
         logic [4:0]  rd_rs1, rs2;

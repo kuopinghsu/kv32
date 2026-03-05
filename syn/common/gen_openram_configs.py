@@ -16,12 +16,10 @@ import argparse
 import math
 import os
 
-
 def log2(n):
     v = int(round(math.log2(n)))
     assert (1 << v) == n, f"{n} is not a power of 2"
     return v
-
 
 def main():
     p = argparse.ArgumentParser(description="Generate OpenRAM configs for kv32 cache SRAMs")
@@ -103,7 +101,6 @@ def main():
     print(f"Tag  SRAM: {num_sets} × {tag_bits} bits  →  {tag_name}")
     print(f"Data SRAM: {data_depth} × 32 bits      →  {data_name}")
     print(f"Configs written to {args.output_dir}/")
-
 
 if __name__ == "__main__":
     main()

@@ -10,7 +10,6 @@ by intercepting the moment openram.tech is inserted into sys.modules.
 """
 import sys
 
-
 class _PatchingModules(dict):
     """sys.modules drop-in that patches openram.tech whenever it is set."""
 
@@ -26,7 +25,6 @@ class _PatchingModules(dict):
                     ln.get("m2", "metal2"),
                     ln.get("m3", "metal3"),
                 ]
-
 
 # Replace sys.modules once; Python's import machinery respects the substitution.
 # Existing modules are preserved; only future assignments are intercepted.

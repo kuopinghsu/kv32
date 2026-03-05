@@ -25,6 +25,15 @@ set_app_var search_path [concat . $LIB_ROOT]
 set_app_var target_library $target_libs
 set_app_var link_library [concat * $target_libs]
 
+# Apply top-level parameter overrides before analysis
+set_app_var hdl_parameter_override_list [list \
+    FAST_DIV          $FAST_DIV \
+    ICACHE_EN         $ICACHE_EN \
+    ICACHE_SIZE       $ICACHE_SIZE \
+    ICACHE_LINE_SIZE  $ICACHE_LINE_SIZE \
+    ICACHE_WAYS       $ICACHE_WAYS \
+]
+
 # Read RTL
 foreach rtl $RTL_FILES {
     analyze -format sverilog -define {SYNTHESIS NO_ASSERTION GENERIC_SRAM} $rtl
@@ -113,8 +122,9 @@ write -format ddc -hierarchy -output $DC_DDC
 
 # Formatted area/gate report helpers
 proc kv32_find_nand2_area {} {
-    # Prefer canonical ASAP7 NAND2 cell
-    set cands [get_lib_cells */NAND2x1_ASAP7_75t_R]
+    global NAND2_CELL
+    # Use PDK-specific NAND2 cell defined in common/design.tcl
+    set cands [get_lib_cells */$NAND2_CELL]
     if {[sizeof_collection $cands] == 0} {
         set cands [get_lib_cells */NAND2*]
     }

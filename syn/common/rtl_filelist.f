@@ -4,10 +4,10 @@
 ../rtl/core/kv32_csr.sv
 ../rtl/core/kv32_alu.sv
 ../rtl/core/kv32_decoder.sv
+../rtl/core/kv32_rvc.sv
 ../rtl/core/kv32_sb.sv
 ../rtl/core/kv32_core.sv
-../syn/lib/generic_sram_1rw.sv
-../rtl/memories/sram_1rw.sv
+../syn/lib/sram_1rw.sv
 ../rtl/axi_pkg.sv
 ../rtl/axi_arbiter.sv
 ../rtl/axi_dma.sv

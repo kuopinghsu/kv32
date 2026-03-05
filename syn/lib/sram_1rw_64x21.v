@@ -52,7 +52,6 @@ module sram_1rw_64x21(
       $display($time," Writing %m addr0=%b din0=%b",addr0_reg,din0_reg);
   end
 
-
   // Memory Write Block Port 0
   // Write Operation : When web0 = 0, csb0 = 0
   always @ (negedge clk0)

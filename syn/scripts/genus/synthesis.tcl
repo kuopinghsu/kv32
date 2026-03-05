@@ -48,7 +48,8 @@ read_hdl -language sv \
     -define NO_ASSERTION \
     -define GENERIC_SRAM \
     $RTL_FILES
-elaborate $TOP_MODULE
+elaborate $TOP_MODULE \
+    -parameters "FAST_DIV $FAST_DIV ICACHE_EN $ICACHE_EN ICACHE_SIZE $ICACHE_SIZE ICACHE_LINE_SIZE $ICACHE_LINE_SIZE ICACHE_WAYS $ICACHE_WAYS"
 
 # Constraints
 source [file join $SYN_DIR common constraints.sdc]
@@ -133,8 +134,9 @@ write_db -design $TOP_MODULE $GENUS_DDC
 
 # Formatted area/gate report helpers
 proc kv32_find_nand2_area {} {
-    # Prefer canonical ASAP7 NAND2 cell
-    set cands [get_lib_cells */NAND2x1_ASAP7_75t_R]
+    global NAND2_CELL
+    # Use PDK-specific NAND2 cell defined in common/design.tcl
+    set cands [get_lib_cells */$NAND2_CELL]
     if {[sizeof_collection $cands] == 0} {
         set cands [get_lib_cells */NAND2*]
     }
