@@ -47,7 +47,12 @@
 //   RISC-V ISA Volume I, Chapter 26 (C Standard Extension, Zca)
 //   sim/kv32sim.cpp expand_compressed() — golden functional reference
 
+// `default_nettype none is beneficial for simulation (catches undeclared nets)
+// but triggers Genus VLOGPT-43 for `input logic` ports even in SV mode.
+// Guard it so synthesis tools that define SYNTHESIS skip the directive.
+`ifndef SYNTHESIS
 `default_nettype none
+`endif
 
 module kv32_rvc (
     input  logic        clk,

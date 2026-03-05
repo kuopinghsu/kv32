@@ -41,6 +41,12 @@ if {![catch {set all_lib_cells [get_db lib_cells *]}]} {
     }
 }
 
+# Suppress expected non-actionable warnings:
+#   VLOGPT-35 — simulation #delay specifiers in OpenRAM blackbox models (harmless)
+#   LBR-81    — non-monotonic wireload table in NangateOpenCellLibrary (PDK issue)
+suppress_message VLOGPT-35
+suppress_message LBR-81
+
 puts "Genus input mode: rtl"
 set_db init_hdl_search_path [list ../rtl ../rtl/core ../rtl/jtag]
 read_hdl -language sv \
@@ -48,8 +54,13 @@ read_hdl -language sv \
     -define NO_ASSERTION \
     -define GENERIC_SRAM \
     $RTL_FILES
+
+# Use name=value format for -parameters so Genus binds parameter names
+# explicitly.  The space-separated form ("FAST_DIV $VAL ...") causes Genus to
+# treat each token as a positional expression, emitting VLOGPT-20 errors for
+# the bare name tokens and failing with CDFG-304 (no top-level design found).
 elaborate $TOP_MODULE \
-    -parameters "FAST_DIV $FAST_DIV ICACHE_EN $ICACHE_EN ICACHE_SIZE $ICACHE_SIZE ICACHE_LINE_SIZE $ICACHE_LINE_SIZE ICACHE_WAYS $ICACHE_WAYS"
+    -parameters "FAST_DIV=$FAST_DIV ICACHE_EN=$ICACHE_EN ICACHE_SIZE=$ICACHE_SIZE ICACHE_LINE_SIZE=$ICACHE_LINE_SIZE ICACHE_WAYS=$ICACHE_WAYS"
 
 # Constraints
 source [file join $SYN_DIR common constraints.sdc]
