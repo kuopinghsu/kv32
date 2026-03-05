@@ -14,6 +14,7 @@ export VERILATOR
 export SPIKE
 export SPIKE_INCLUDE
 export ZEPHYR_BASE
+export SVLINT
 
 # Append additional paths if specified
 ifdef PATH_APPEND
@@ -119,6 +120,11 @@ SPIKE_DEVICES  = \
 
 # Verilator settings
 VERILATOR ?= verilator
+
+# svlint SystemVerilog linter.
+# Loaded from env.config; falls back to 'None' so the target is safely skipped
+# when no path is configured or the binary does not exist.
+SVLINT ?= None
 VERILATOR_JOBS ?= 0
 VERILATOR_FLAGS = -Wall -Wno-UNSIGNED --trace --trace-fst --cc --exe --build -j $(VERILATOR_JOBS)
 VERILATOR_FLAGS += -sv --timing
@@ -324,7 +330,7 @@ TB_SOURCES = $(TB_DIR)/tb_kv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-
 # Output executable
 BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
-.PHONY: all test-all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl build-spike-plugins clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
+.PHONY: all test-all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl lint-svlint build-spike-plugins clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report __build-test $(TEST_NAMES) FORCE
 
 # Default target - run all tests
 all: rtl-all sim-all compare-all spike-all freertos-compare-simple
@@ -358,9 +364,9 @@ build-rtl: $(BUILD_TARGET)
 # Alias for build-rtl (so both 'make build-rtl' and 'make rtl-build' work)
 rtl-build: build-rtl
 
-# Lint umbrella: runs all three lint passes in sequence.
+# Lint umbrella: runs all four lint passes in sequence.
 # Stops on the first failing pass.
-lint: lint-full lint-modules lint-decl
+lint: lint-full lint-modules lint-decl lint-svlint
 
 # Full-design Verilator lint (all RTL + testbench compiled together)
 lint-full:
@@ -418,6 +424,27 @@ lint-decl:
 	@echo "Declaration-order check ($(words $(RTL_ONLY_SRCS)) files)"
 	@echo "=========================================="
 	@python3 scripts/check_decl_order.py $(RTL_ONLY_SRCS)
+
+# svlint structural/intent lint of RTL source files.
+# Skipped automatically when SVLINT is 'None' or the binary does not exist.
+# Rules are read from .svlint.toml in the project root (simsynth rule set).
+lint-svlint:
+	@echo "=========================================="
+	@echo "svlint RTL check"
+	@echo "=========================================="
+	@if [ "$(SVLINT)" = "None" ] || [ -z "$(SVLINT)" ]; then \
+		echo "SVLINT is set to None or unset — skipping svlint."; \
+	elif ! [ -x "$(SVLINT)" ]; then \
+		echo "svlint binary not found at: $(SVLINT) — skipping."; \
+	else \
+		echo "svlint: $(SVLINT)"; \
+		echo "config: .svlint.toml"; \
+		$(SVLINT) $(RTL_ONLY_SRCS) && \
+		echo "" && \
+		echo "==========================================" && \
+		echo "svlint passed!" && \
+		echo "=========================================="; \
+	fi
 
 # Stamp rule: always runs (FORCE), but only touches the file when params changed.
 # This means kv32soc is rebuilt only when a compile-time parameter actually differs.
@@ -1032,10 +1059,11 @@ help:
 	@echo "               10 latency/port combinations (read=1/4/16, write=1/4/16,"
 	@echo "               dual-port=0/1) to catch memory interface bugs"
 	@echo "  build-rtl  - Build RTL with Verilator"
-	@echo "  lint       - Run all lint passes (lint-full + lint-modules + lint-decl)"
+	@echo "  lint       - Run all lint passes (lint-full + lint-modules + lint-decl + lint-svlint)"
 	@echo "  lint-full  - Full-design Verilator lint (all warnings + -Werror-IMPLICIT)"
 	@echo "  lint-modules - Lint every RTL module as Verilator top (catches MULTIDRIVEN etc.)"
 	@echo "  lint-decl    - Check signal declaration order (use-before-declare, synthesis strict mode)"
+	@echo "  lint-svlint  - svlint structural/intent check (skipped if SVLINT=None or binary absent)"
 	@echo "  build-sim  - Build software simulator (kv32sim)"
 	@echo "  clean      - Remove all build artifacts"
 	@echo "  clean-tests- Remove only test program builds"

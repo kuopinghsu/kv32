@@ -1,0 +1,62 @@
+# svlint configuration for kv32 RV32IMAC SoC
+# Rule set: simsynth (simulation-synthesis consistency) + structural checks.
+#
+# Reference configs from /opt/svlint/bin/:
+#   simsynth.toml       — core sim/synth consistency rules (base of this file)
+#   designintent.toml   — additional design-intent rules (subset enabled below)
+#
+# Run via: make lint-svlint
+# Or directly: svlint <files>      (reads this file automatically from cwd)
+
+# ── Simulation / synthesis consistency ─────────────────────────────────────
+# These rules prevent coding patterns whose simulation and synthesis semantics
+# diverge, which can cause post-synthesis functional mismatches.
+
+# Blocking assignment in always_ff can cause race conditions in simulation
+# even when synthesis infers the correct FF.
+syntaxrules.blocking_assignment_in_always_ff = true
+
+# Blocking assignment in always_latch can cause unexpected event ordering.
+# Use non-blocking (<=) for values captured by a latch.
+syntaxrules.blocking_assignment_in_always_latch = true
+
+# Non-blocking assignment in always_comb is unnecessary and may shadow the
+# driving signal for one time-step before the NBA update queue runs.
+syntaxrules.non_blocking_assignment_in_always_comb = true
+
+# Incomplete case in always_comb / function can infer latches in synthesis
+# while simulation sees X.  Require explicit default arm.
+syntaxrules.case_default = true
+
+# Untyped enums default to int (2-state) in some tools and logic (4-state) in
+# others, causing mismatches.  Require explicit type on every enum.
+syntaxrules.enum_with_type = true
+
+# Functions without 'automatic' storage class share state across calls in
+# non-automatic modules — a common source of hard-to-debug simulation issues.
+syntaxrules.function_with_automatic = true
+
+# priority/unique/unique0 semantics differ between simulators and synthesis
+# tools.  Use plain case instead.
+syntaxrules.keyword_forbidden_priority = true
+syntaxrules.keyword_forbidden_unique   = true
+syntaxrules.keyword_forbidden_unique0  = true
+
+# === operator (case equality including X/Z) does not synthesise to a simple
+# equality comparison.  Use == unless explicitly testing for 4-state values.
+syntaxrules.operator_case_equality = true
+
+# Procedural continuous assignment (assign/deassign inside always) is not
+# synthesisable and behaves differently across simulators.
+syntaxrules.procedural_continuous_assignment = true
+
+# ── Additional structural / design-intent rules ─────────────────────────────
+
+# Side-effects in action blocks of immediate assertions (e.g. $display inside
+# assert) are skipped in synthesis, so they must not drive logic.
+syntaxrules.action_block_with_side_effect = true
+
+# NOTE: default_nettype_none is intentionally NOT enabled here because it
+# requires the directive to be present at the top of every source file.
+# kv32_rvc.sv correctly guards it with `ifndef SYNTHESIS; other files can be
+# migrated incrementally as a separate effort.

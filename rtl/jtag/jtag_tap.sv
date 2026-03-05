@@ -132,6 +132,7 @@ module jtag_tap #(
             EXIT2_IR:         state_next = tms_i ? UPDATE_IR : SHIFT_IR;
             UPDATE_IR:        state_next = tms_i ? SELECT_DR_SCAN : RUN_TEST_IDLE;
 
+            default:          state_next = TEST_LOGIC_RESET;  // unreachable; keeps case_default satisfied
         endcase
     end
 
@@ -302,6 +303,7 @@ module jtag_tap #(
             PAUSE_IR:         state_name = "PAUSE_IR";
             EXIT2_IR:         state_name = "EX2_IR";
             UPDATE_IR:        state_name = "UPD_IR";
+            default:          state_name = "UNKNOWN";  // unreachable; keeps case_default satisfied
         endcase
     end
     `endif // SYNTHESIS

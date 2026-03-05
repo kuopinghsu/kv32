@@ -473,6 +473,8 @@ module kv32_core #(
             DBG_RESUMING: begin
                 dbg_state_next = DBG_RUNNING;
             end
+
+            default: dbg_state_next = dbg_state;  // unreachable; keeps case_default satisfied
         endcase
     end
 
