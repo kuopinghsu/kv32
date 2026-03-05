@@ -29,8 +29,8 @@ import kv32_pkg::*;
 `endif
 
 module kv32_alu #(
-    parameter FAST_MUL = 1, // 1=combinatorial multiply, 0=serial multiplier
-    parameter FAST_DIV = 1  // 1=combinatorial divide, 0=serial divider
+    parameter bit FAST_MUL = 1'b1, // 1=combinatorial multiply, 0=serial multiplier
+    parameter bit FAST_DIV = 1'b1  // 1=combinatorial divide, 0=serial divider
 )(
     input  logic        clk,
     input  logic        rst_n,

@@ -443,6 +443,7 @@ module kv32_core #(
                 DBG_RESUMING: begin
                     dbg_resumeack_r <= 1'b0;  // Clear resume ack after one cycle
                 end
+                default: ; // unreachable
             endcase
         end
     end
@@ -1165,7 +1166,7 @@ module kv32_core #(
     assign if_id_stall = load_use_hazard || downstream_stall || dbg_halt;
 
     // Debug stall signals
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         if (if_id_stall || id_ex_stall || ex_mem_stall || mem_wb_stall) begin
             `DEBUG2(`DBG_GRP_PIPE, ("[STALL] if_id=%b id_ex=%b ex_mem=%b mem_wb=%b | load_use=%b alu_ready=%b ex_valid=%b",
                    if_id_stall, id_ex_stall, ex_mem_stall, mem_wb_stall, load_use_hazard, alu_ready, ex_valid));
@@ -1479,7 +1480,7 @@ module kv32_core #(
     end
 
     // Debug: Log branch decisions
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         if (branch_ex && ex_valid) begin
             `DEBUG2(`DBG_GRP_EX, ("[BRANCH] PC=0x%h: rs1=0x%h rs2=0x%h op=%0d cond=%b taken=%b fwd_a=%0d fwd_b=%0d",
                    pc_ex, rs1_forwarded, rs2_forwarded, branch_op_ex, branch_cond, branch_taken, forward_a, forward_b));
@@ -2050,6 +2051,7 @@ module kv32_core #(
                         2'b01: dmem_req_we = 4'b0010;  // Byte 1
                         2'b10: dmem_req_we = 4'b0100;  // Byte 2
                         2'b11: dmem_req_we = 4'b1000;  // Byte 3
+                        default: ;
                     endcase
                 end
                 MEM_HALF: begin
@@ -2089,6 +2091,7 @@ module kv32_core #(
                         2'b01: store_strb_encoded = 4'b0010;
                         2'b10: store_strb_encoded = 4'b0100;
                         2'b11: store_strb_encoded = 4'b1000;
+                        default: ;
                     endcase
                 end
                 MEM_HALF: begin
@@ -2507,7 +2510,7 @@ module kv32_core #(
     assign icache_cmo_addr  = is_fence_i_mem ? 32'h0 : alu_result_mem;  // cbo: use rs1 address
 
     // Debug mem/wb stall reasons
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         if (mem_wb_stall) begin
             `DEBUG2(`DBG_GRP_MEM, ("[WB_STALL] mem_read=%b mem_write=%b | load_issued=%b dmem_resp=%b sb_ready=%b mem_valid=%b",
                    mem_read_mem, mem_write_mem, load_req_issued, dmem_resp_valid, sb_cpu_ready, mem_valid));
@@ -2635,6 +2638,7 @@ module kv32_core #(
                     2'b01: mem_data_aligned = {{24{load_data_source[15]}}, load_data_source[15:8]};
                     2'b10: mem_data_aligned = {{24{load_data_source[23]}}, load_data_source[23:16]};
                     2'b11: mem_data_aligned = {{24{load_data_source[31]}}, load_data_source[31:24]};
+                    default: ;
                 endcase
             end
             MEM_BYTE_U: begin  // LBU - Load Byte Unsigned (zero-extended)
@@ -2643,6 +2647,7 @@ module kv32_core #(
                     2'b01: mem_data_aligned = {24'd0, load_data_source[15:8]};
                     2'b10: mem_data_aligned = {24'd0, load_data_source[23:16]};
                     2'b11: mem_data_aligned = {24'd0, load_data_source[31:24]};
+                    default: ;
                 endcase
             end
             MEM_HALF: begin  // LH - Load Halfword (sign-extended)

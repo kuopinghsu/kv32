@@ -25,7 +25,7 @@
 // ============================================================================
 
 module kv32_dtm #(
-    parameter IDCODE = 32'h1DEAD3FF
+    parameter bit [31:0] IDCODE = 32'h1DEAD3FF
 ) (
     // JTAG Interface (from TAP controller)
     input  logic       tck_i,        // JTAG clock

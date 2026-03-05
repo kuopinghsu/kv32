@@ -60,9 +60,9 @@
 // ============================================================================
 
 module axi_uart #(
-    parameter CLK_FREQ   = 100_000_000,
-    parameter BAUD_RATE  = 25_000_000,
-    parameter FIFO_DEPTH = 16           // Must be a power of 2
+    parameter int unsigned CLK_FREQ   = 100_000_000,
+    parameter int unsigned BAUD_RATE  = 25_000_000,
+    parameter int unsigned FIFO_DEPTH = 16           // Must be a power of 2
 )(
     input  logic        clk,
     input  logic        rst_n,
@@ -122,7 +122,7 @@ module axi_uart #(
     logic [FIFO_BITS:0]   txf_count;
     logic txf_empty, txf_full;
     assign txf_empty = (txf_count == '0);
-    assign txf_full  = (txf_count == FIFO_DEPTH);
+    assign txf_full  = (txf_count == (FIFO_BITS+1)'(FIFO_DEPTH));
 
     // TX FIFO pop: feed TX state machine when it is ready and FIFO has data
     logic txf_push, txf_pop;
@@ -164,7 +164,7 @@ module axi_uart #(
     logic [FIFO_BITS:0]   rxf_count;
     logic rxf_empty, rxf_full;
     assign rxf_empty = (rxf_count == '0);
-    assign rxf_full  = (rxf_count == FIFO_DEPTH);
+    assign rxf_full  = (rxf_count == (FIFO_BITS+1)'(FIFO_DEPTH));
 
     logic rxf_push, rxf_pop;
 

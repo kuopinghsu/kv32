@@ -64,7 +64,7 @@
 // ============================================================================
 
 module axi_gpio #(
-    parameter NUM_PINS = 4          // Number of GPIO pins (1-128)
+    parameter int unsigned NUM_PINS = 4          // Number of GPIO pins (1-128)
 )(
     input  logic        clk,
     input  logic        rst_n,

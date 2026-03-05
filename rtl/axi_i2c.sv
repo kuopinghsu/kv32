@@ -43,8 +43,8 @@ import kv32_pkg::*;
 `endif
 
 module axi_i2c #(
-    parameter CLK_FREQ   = 100_000_000,  // System clock frequency
-    parameter FIFO_DEPTH = 8             // Must be a power of 2
+    parameter int unsigned CLK_FREQ   = 100_000_000,  // System clock frequency
+    parameter int unsigned FIFO_DEPTH = 8             // Must be a power of 2
 )(
     input  logic        clk,
     input  logic        rst_n,
@@ -130,7 +130,7 @@ module axi_i2c #(
     logic [FIFO_BITS:0]   txf_count;
     logic txf_empty, txf_full;
     assign txf_empty = (txf_count == '0);
-    assign txf_full  = (txf_count == FIFO_DEPTH);
+    assign txf_full  = (txf_count == (FIFO_BITS+1)'(FIFO_DEPTH));
 
     // txf_push: AXI write to TX_OFFSET; txf_pop: state machine pops in IDLE
     logic txf_push, txf_pop;
@@ -160,7 +160,7 @@ module axi_i2c #(
     logic [FIFO_BITS:0]   rxf_count;
     logic rxf_empty, rxf_full;
     assign rxf_empty = (rxf_count == '0);
-    assign rxf_full  = (rxf_count == FIFO_DEPTH);
+    assign rxf_full  = (rxf_count == (FIFO_BITS+1)'(FIFO_DEPTH));
 
     // rxf_push: 1-cycle delayed after READ byte captured; rxf_pop: AXI read of RX_OFFSET
     logic rxf_push, rxf_pop;
@@ -412,6 +412,7 @@ module axi_i2c #(
                                 scl_phase <= 2'b00;
                                 state     <= IDLE;
                             end
+                            default: ;
                         endcase
                     end
                 end
@@ -443,6 +444,7 @@ module axi_i2c #(
                                     state       <= ACK_CHECK;
                                 end
                             end
+                            default: ;
                         endcase
                     end
                 end
@@ -476,6 +478,7 @@ module axi_i2c #(
                                     `DEBUG2(`DBG_GRP_I2C, ("READ byte captured: 0x%02h", shift_reg));
                                 end
                             end
+                            default: ;
                         endcase
                     end
                 end
@@ -505,6 +508,7 @@ module axi_i2c #(
                                 scl_phase <= 2'b00;
                                 state     <= IDLE;
                             end
+                            default: ;
                         endcase
                     end
                 end
@@ -533,6 +537,7 @@ module axi_i2c #(
                                 scl_phase <= 2'b00;
                                 state     <= IDLE;
                             end
+                            default: ;
                         endcase
                     end
                 end

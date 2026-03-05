@@ -547,7 +547,7 @@ module axi_xbar (
     logic w_transaction_active;
     logic [3:0] active_w_dest;
 
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         if (m_axi_arvalid) begin
             `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AR: addr=0x%h sel=%b%b%b%b%b%b%b%b%b%b",
                 m_axi_araddr, sel_s9_ar, sel_s8_ar, sel_s7_ar, sel_s6_ar, sel_s5_ar, sel_s4_ar, sel_s3_ar, sel_s2_ar, sel_s1_ar, sel_s0_ar));
@@ -713,7 +713,7 @@ module axi_xbar (
         end
     end
 
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         if (m_axi_wvalid && m_axi_wready) begin
             `DEBUG2(`DBG_GRP_AXI, ("[XBAR] W handshake: w_sel=%0d active_w_dest=%0d",
                      w_sel, active_w_dest));
