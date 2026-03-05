@@ -9,8 +9,8 @@
 // ============================================================================
 
 module jtag_tap #(
-    parameter IDCODE = 32'h1DEAD3FF,  // JTAG ID code
-    parameter IR_LEN = 5              // Instruction register length
+    parameter bit [31:0]   IDCODE = 32'h1DEAD3FF,  // JTAG ID code
+    parameter int unsigned IR_LEN = 5              // Instruction register length
 )(
     // JTAG interface
     input  logic        tck_i,         // JTAG clock

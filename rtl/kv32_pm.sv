@@ -87,10 +87,11 @@ module kv32_pm (
             clk_en      <= 1'b1;   // clock running after reset
         end else begin
             sleep_req_d <= sleep_req_i;
-            if (irq_any || wakeup_o)
+            if (irq_any || wakeup_o) begin
                 clk_en <= 1'b1;                       // IRQ pending or wakeup in flight: keep clock alive
-            else if (sleep_req_i && !sleep_req_d)
+            end else if (sleep_req_i && !sleep_req_d) begin
                 clk_en <= 1'b0;                       // rising edge of sleep_req (no wakeup pending) → gate clock
+            end
         end
     end
 
@@ -120,13 +121,14 @@ module kv32_pm (
 `endif
 
     always_ff @(posedge clk_i or negedge rst_n) begin
-        if (!rst_n)
+        if (!rst_n) begin
             wakeup_o <= 1'b0;
-        else begin
-            if (!sleep_req_i)
+        end else begin
+            if (!sleep_req_i) begin
                 wakeup_o <= 1'b0;           // pipeline left WFI — clear handshake
-            else if (irq_any)
+            end else if (irq_any) begin
                 wakeup_o <= 1'b1;           // IRQ fired while sleeping — assert and hold
+            end
         end
     end
 
@@ -167,8 +169,9 @@ module kv32_pm (
 
     /* verilator lint_off LATCH */
     always_latch begin
-        if (!clk_i)
+        if (!clk_i) begin
             latch_en = clk_en;  // blocking = is correct in always_latch (clock-gate latch)
+        end
     end
     /* verilator lint_on LATCH */
 

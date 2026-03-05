@@ -64,7 +64,7 @@ module mem_axi_ro #(
     localparam int ID_WIDTH = axi_pkg::AXI_ID_WIDTH;
 
     // Use constant ID to enforce in-order responses (no reorder buffer)
-    localparam logic [ID_WIDTH-1:0] CONST_ID = '0;
+    localparam bit [ID_WIDTH-1:0] CONST_ID = '0;
 
     // ========================================================================
     // AR Channel (Read Address) - Zero-latency combinational pass-through

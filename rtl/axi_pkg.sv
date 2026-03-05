@@ -19,7 +19,7 @@ package axi_pkg;
     } axi_resp_e;
 
     // AXI ID width parameter (supports up to 16 outstanding transactions)
-    parameter int AXI_ID_WIDTH = 4;
+    localparam int AXI_ID_WIDTH = 4;
 
     // Transaction ID type
     typedef logic [AXI_ID_WIDTH-1:0] axi_id_t;

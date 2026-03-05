@@ -659,7 +659,6 @@ module kv32_icache #(
     //     Preferred when the target memory compiler cannot synthesise a large
     //     asynchronous reset fan-out efficiently.
     // =========================================================================
-    generate
         if (FAST_INIT) begin : g_valid_fast
 
             // -----------------------------------------------------------------
@@ -764,7 +763,6 @@ module kv32_icache #(
             end
 
         end
-    endgenerate
 
     // =========================================================================
     // SRAM control – combinational CE / WE / addr / wdata
@@ -810,8 +808,7 @@ module kv32_icache #(
                               (state == S_RESP && fill_active_r))
                             && axi_rvalid && axi_rready && use_cache;
 
-    generate
-        for (genvar w = 0; w < CACHE_WAYS; w++) begin : g_sram_ctrl
+        for (genvar w = 0; w < CACHE_WAYS; w++) begin : l_g_sram_ctrl
 
             // --- Tag SRAM ---
             assign tag_sram_ce   [w] = sram_read_en ||
@@ -836,13 +833,11 @@ module kv32_icache #(
             assign data_sram_wdata[w] = axi_rdata;
 
         end
-    endgenerate
 
     // =========================================================================
     // SRAM macro instances (one tag + one data SRAM per way)
     // =========================================================================
-    generate
-        for (genvar w = 0; w < CACHE_WAYS; w++) begin : g_sram
+        for (genvar w = 0; w < CACHE_WAYS; w++) begin : l_g_sram
 
             sram_1rw #(
                 .DEPTH (NUM_SETS),
@@ -869,7 +864,6 @@ module kv32_icache #(
             );
 
         end
-    endgenerate
 
     // =========================================================================
     // AXI AR channel
@@ -1002,11 +996,13 @@ module kv32_icache #(
                 else                               perf_bypass_cnt <= perf_bypass_cnt + 32'd1;
             end
             // Successful cache-line fill: tag_fill_commit fires in any fill state
-            if (tag_fill_commit)
+            if (tag_fill_commit) begin
                 perf_fill_cnt <= perf_fill_cnt + 32'd1;
+            end
             // CMO operation: S_CMO is exactly one cycle per accepted CMO.
-            if (state == S_CMO)
+            if (state == S_CMO) begin
                 perf_cmo_cnt <= perf_cmo_cnt + 32'd1;
+            end
         end
     end
 `endif // SYNTHESIS

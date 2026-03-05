@@ -87,7 +87,7 @@ module mem_axi #(
     assign is_write_req = mem_req_valid && (mem_req_we != 4'h0);
 
     // Use constant ID to enforce in-order responses (no reorder buffer)
-    localparam logic [ID_WIDTH-1:0] CONST_ID = '0;
+    localparam bit [ID_WIDTH-1:0] CONST_ID = '0;
 
     // Transaction counters to track outstanding requests
     logic [$clog2(OUTSTANDING_DEPTH):0] read_outstanding_count;
@@ -237,7 +237,7 @@ module mem_axi #(
     assign mem_req_ready = !axi_arvalid && !axi_awvalid && !axi_wvalid &&
                            !read_fifo_full && !write_fifo_full;
 
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         if (mem_req_valid && !mem_req_ready) begin
             `DEBUG2(`DBG_GRP_AXI, ("%s: mem_req BLOCKED arvalid=%b awvalid=%b wvalid=%b rd_full=%b wr_full=%b",
                    BRIDGE_NAME, axi_arvalid, axi_awvalid, axi_wvalid, read_fifo_full, write_fifo_full));
