@@ -19,6 +19,15 @@
 
 set -euo pipefail
 
+# ── Portable in-place sed ─────────────────────────────────────────────────────
+# GNU sed (Linux): sed -i -e ...
+# BSD sed (macOS): sed -i '' -e ...
+if sed --version 2>/dev/null | grep -q GNU; then
+    SED_I=(-i)
+else
+    SED_I=(-i '')
+fi
+
 # ── SIGINT handling ───────────────────────────────────────────────────────────
 # Ctrl-C BETWEEN files   → exit immediately (_sigint_outer)
 # Ctrl-C INSIDE trim_file → set flag, finish the write, exit after (_sigint_defer)
@@ -33,7 +42,7 @@ trim_file() {
     [[ -f "$f" ]] || return
 
     # 1. Remove trailing whitespace
-    LC_ALL=C sed -i '' -e 's/[[:space:]]*$//' "$f"
+    LC_ALL=C sed "${SED_I[@]}" -e 's/[[:space:]]*$//' "$f"
 
     # 2. Convert tabs to 4 spaces
     local tmp

@@ -18,7 +18,6 @@ without emitting errors.
 import sys
 import re
 
-
 def transform(content: str) -> str:
     lines = content.splitlines()
     out = []
@@ -100,7 +99,6 @@ def transform(content: str) -> str:
             out.append('// ' + stripped if stripped else '')
 
     return '\n'.join(out)
-
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
