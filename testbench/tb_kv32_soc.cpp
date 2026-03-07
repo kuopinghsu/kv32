@@ -466,6 +466,7 @@ static void dump_instruction_trace(
 
 // Parse command line arguments
 static bool enable_trace = false;
+static bool trace_compare_mode = false;  // --trace-compare: trace + trace_mode for RTL/sim diff
 static bool enable_wave = false;
 static bool enable_wave_vcd = false;
 static bool show_help = false;
@@ -480,7 +481,8 @@ void print_help(const char* prog_name) {
     std::cout << "Options:\n";
     std::cout << "  --help                        Show this help message\n";
     std::cout << "  --wave=[fst|vcd]              Dump fst or vcd waveform\n";
-    std::cout << "  --trace                       Enable Spike-format trace logging (alias for --log-commits)\n";
+    std::cout << "  --trace                       Enable Spike-format trace logging (RISC-V spec CSR cycle/time)\n";
+    std::cout << "  --trace-compare               Enable trace for RTL/sim comparison (CSR cycle = minstret)\n";
     std::cout << "  --log-commits                 Enable Spike-format trace logging\n";
     std::cout << "  --log=<file>                  Specify trace log output file (default: rtl_trace.txt)\n";
     std::cout << "  +signature=<file>             Write signature to file (RISCOF compatibility)\n";
@@ -498,6 +500,9 @@ void parse_args(int argc, char** argv) {
             show_help = true;
         } else if (arg == "--trace" || arg == "--log-commits") {
             enable_trace = true;
+        } else if (arg == "--trace-compare") {
+            enable_trace = true;
+            trace_compare_mode = true;
         } else if (arg.substr(0, 6) == "--log=") {
             trace_log_file = arg.substr(6);
         } else if (arg == "--wave" || arg == "--wave=fst" || arg == "--wave=1") {
@@ -620,11 +625,10 @@ int main(int argc, char** argv) {
     dut->spi_miso = 1;  // SPI MISO idle high
     dut->i2c_scl_i = 1;  // I2C SCL idle high (external pull-up)
     dut->i2c_sda_i = 1;  // I2C SDA idle high (external pull-up)
-    // Trace-compare mode: when +TRACE is active, CSR cycle/time reads in the
-    // core return minstret (instruction count) instead of mcycle (wall-clock
-    // cycles).  This makes cycle-counter reads pipeline-stall-independent so
-    // that the RTL trace and the software-simulator trace are identical.
-    dut->trace_mode = enable_trace ? 1 : 0;
+    // trace_compare_mode (--trace-compare): CSR cycle/time reads return minstret
+    // instead of mcycle so that RTL and software-simulator traces are identical.
+    // Plain --trace uses RISC-V spec behaviour (cycle = wall-clock mcycle).
+    dut->trace_mode = trace_compare_mode ? 1 : 0;
 
     vluint64_t time_counter = 0;
     bool error = false;  // Track if simulation ended with error

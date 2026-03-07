@@ -85,7 +85,13 @@
 **Priority: LOW** — Broad verification; high effort, no prerequisite blockers.
 - [ ] Evaluate and run the Google RISC-V DV random instruction test suite against the kv32 RTL.
 
-### 7. FuseSoC Support
+### ~~7. DDR4 Delay Model Audit~~
+**Priority: MEDIUM** — Required to fix `ICACHE_EN=0` hang in `rtl-wfi`.
+- [x] Check actual latency model in `testbench/ddr4_axi4_slave.sv` (read/write state machine cycles, burst timing).
+- [x] Determine minimum timer period for `MEM_TYPE=ddr4-1866 ICACHE_EN=0` so WFI stall window is long enough.
+- [x] Fix `sw/wfi/wfi.c` TEST 2 (and any other timing-sensitive tests) to use DDR4-adjusted periods when icache is disabled.
+
+### 8. FuseSoC Support
 **Priority: LOW** — Enables standard IP packaging and integration with third-party EDA flows.
 - [ ] Create a top-level `kv32_soc.core` FuseSoC core description file: declare all RTL source files (`rtl/`, `rtl/core/`, `rtl/jtag/`, `rtl/memories/`), testbench files (`testbench/`), and parameters (`CLK_FREQ`, `BAUD_RATE`, `ICACHE_EN`, `ICACHE_SIZE`, etc.).
 - [ ] Add a `fusesoc_libraries.conf` (or `fusesoc.conf`) at the repo root pointing to the local core library.

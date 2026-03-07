@@ -110,9 +110,13 @@ module axi_uart #(
 
     localparam CLKS_PER_BIT = CLK_FREQ / BAUD_RATE;
     localparam FIFO_BITS    = $clog2(FIFO_DEPTH);
-    // Precomputed constants used in narrow-signal comparisons (avoids WIDTHEXPAND)
-    localparam CLKS_PER_BIT_M1 = CLKS_PER_BIT - 1;
-    localparam CLKS_HALF_M1    = (CLKS_PER_BIT - 1) / 2;
+
+    // Runtime baud-rate divisor register (write to offset 0x10, default = CLKS_PER_BIT-1)
+    // baud_div_r  = CLKS_PER_BIT - 1  →  bit period = baud_div_r + 1 clocks
+    // baud_half_r = baud_div_r >> 1   →  mid-bit sample point
+    logic [15:0] baud_div_r;   // forward declaration (used in TX/RX state machines)
+    logic [15:0] baud_half_r;
+    assign baud_half_r = baud_div_r >> 1;
 
     // Capability register
     localparam logic [15:0] UART_VERSION = 16'h0001;
@@ -221,7 +225,7 @@ module axi_uart #(
     } tx_state_e;
 
     tx_state_e tx_state;
-    logic [$clog2(CLKS_PER_BIT)-1:0] tx_clk_count;
+    logic [15:0] tx_clk_count;
     logic [2:0] tx_bit_index;
     logic [7:0] tx_data_reg;
 
@@ -251,7 +255,7 @@ module axi_uart #(
                 TX_START_BIT: begin
                     uart_tx <= 1'b0;
 
-                    if (int'(tx_clk_count) < CLKS_PER_BIT_M1) begin
+                    if (tx_clk_count < baud_div_r) begin
                         tx_clk_count <= tx_clk_count + 1;
                     end else begin
                         tx_clk_count <= '0;
@@ -262,7 +266,7 @@ module axi_uart #(
                 TX_DATA_BITS: begin
                     uart_tx <= tx_data_reg[tx_bit_index];
 
-                    if (int'(tx_clk_count) < CLKS_PER_BIT_M1) begin
+                    if (tx_clk_count < baud_div_r) begin
                         tx_clk_count <= tx_clk_count + 1;
                     end else begin
                         tx_clk_count <= '0;
@@ -278,7 +282,7 @@ module axi_uart #(
 
                 TX_STOP_BIT: begin
                     uart_tx <= 1'b1;
-                    if (int'(tx_clk_count) < CLKS_PER_BIT_M1)
+                    if (tx_clk_count < baud_div_r)
                         tx_clk_count <= tx_clk_count + 1;
                     else begin
                         tx_ready <= 1'b1;
@@ -302,7 +306,7 @@ module axi_uart #(
     } rx_state_e;
 
     rx_state_e rx_state;
-    logic [$clog2(CLKS_PER_BIT)-1:0] rx_clk_count;
+    logic [15:0] rx_clk_count;
     logic [2:0] rx_bit_index;
     logic [7:0] rx_data_buf;
 
@@ -344,7 +348,7 @@ module axi_uart #(
                 end
 
                 RX_START_BIT: begin
-                    if (int'(rx_clk_count) < CLKS_HALF_M1) begin
+                    if (rx_clk_count < baud_half_r) begin
                         rx_clk_count <= rx_clk_count + 1;
                     end else begin
                         if (uart_rx_sync2 == 1'b0) begin
@@ -357,7 +361,7 @@ module axi_uart #(
                 end
 
                 RX_DATA_BITS: begin
-                    if (int'(rx_clk_count) < CLKS_PER_BIT_M1) begin
+                    if (rx_clk_count < baud_div_r) begin
                         rx_clk_count <= rx_clk_count + 1;
                     end else begin
                         rx_clk_count <= '0;
@@ -373,7 +377,7 @@ module axi_uart #(
                 end
 
                 RX_STOP_BIT: begin
-                    if (int'(rx_clk_count) < CLKS_PER_BIT_M1)
+                    if (rx_clk_count < baud_div_r)
                         rx_clk_count <= rx_clk_count + 1;
                     else begin
                         rx_data  <= rx_data_buf;
@@ -413,6 +417,7 @@ module axi_uart #(
             axi_bresp   <= 2'b00;
             ie_r        <= 2'b00;
             loopback_en <= 1'b0;
+            baud_div_r  <= 16'(CLKS_PER_BIT - 1);
         end else begin
             if (axi_bvalid && axi_bready)
                 axi_bvalid <= 1'b0;
@@ -420,6 +425,7 @@ module axi_uart #(
             if (axi_awvalid && axi_wvalid && axi_awready && axi_wready) begin
                 case (axi_awaddr[7:0])
                     8'h08: if (axi_wstrb[0]) ie_r        <= axi_wdata[1:0];
+                    8'h10: baud_div_r <= axi_wdata[15:0];  // baud-rate divisor: CLKS_PER_BIT-1
                     8'h14: if (axi_wstrb[0]) loopback_en <= axi_wdata[0];
                     default: ;
                 endcase

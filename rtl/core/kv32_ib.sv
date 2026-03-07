@@ -62,7 +62,16 @@ module kv32_ib #(
     input  logic                  flush,         // Flush signal
 
     // Status
-    output logic [$clog2(DEPTH+1)-1:0] outstanding_count
+    output logic [$clog2(DEPTH+1)-1:0] outstanding_count,
+    output logic                        discard_pending,   // discard_cnt > 0: post-flush drain in progress
+
+    // First genuine (non-discard) outstanding entry PC.
+    // resp_addr (= pc_fifo[rd_ptr]) may point to a stale discard entry that was
+    // in-flight before a branch/flush.  first_active_pc skips past all discard
+    // entries to the first entry that belongs to the NEW (post-flush) path.
+    // Used by kv32_core interrupt_pc to avoid saving a stale pre-flush address
+    // as mepc when ib_resp_discard=1 at interrupt time.
+    output logic [ADDR_WIDTH-1:0] first_active_pc  // PC of first non-discard entry
 );
 `ifndef SYNTHESIS
     import kv32_pkg::*;
@@ -96,6 +105,7 @@ module kv32_ib #(
     // ========================================================================
 
     assign outstanding_count = outstanding;
+    assign discard_pending   = (discard_cnt > 0);
 
     // can_accept: Buffer can accept a new request when FIFO has space.
     //
@@ -137,6 +147,20 @@ module kv32_ib #(
     // resp_discard: Indicates this response should be discarded (not consumed)
     // Set when there are unprocessed flushed requests
     assign resp_discard = (discard_cnt > 0);
+
+    // first_active_pc: PC of first non-discard (genuine) outstanding entry.
+    // Computed as pc_fifo[(rd_ptr + discard_cnt) % DEPTH] via PTR_WIDTH wrap.
+    // When discard_cnt=0 this equals resp_addr (no discard entries, head is genuine).
+    // When discard_cnt>0 the head entries are stale; this peeks past them.
+    generate
+        if (PTR_WIDTH > 0) begin : g_first_active_ptr
+            logic [PTR_WIDTH-1:0] first_active_idx;
+            assign first_active_idx = rd_ptr + PTR_WIDTH'(discard_cnt);
+            assign first_active_pc = pc_fifo[first_active_idx];
+        end else begin : g_first_active_single
+            assign first_active_pc = pc_fifo[0];  // DEPTH=1: only one slot
+        end
+    endgenerate
 
     // ========================================================================
     // Request and Response Event Detection
@@ -243,7 +267,16 @@ module kv32_ib #(
                 //
                 // Case C: no response consumed.
                 //   discard_cnt += outstanding
-                if (resp_consumed_valid || (resp_consumed && discard_cnt > 0)) begin
+                //
+                // Case D (Verilator eval-order guard): resp_valid=1 at flush time,
+                //   but resp_consumed has not yet propagated (kv32_rvc always_comb
+                //   flush path sets rvc_mem_ready=imem_resp_valid=1, but the IB
+                //   always_ff may evaluate before that combinational update settles).
+                //   Since flush forces rvc_mem_ready=imem_resp_valid, any cycle where
+                //   flush=1 AND resp_valid=1 WILL drain the FIFO head (resp_pop fires).
+                //   Treat as Case A: discard_cnt += outstanding - 1
+                if (resp_consumed_valid || (resp_consumed && discard_cnt > 0) ||
+                    (resp_valid && flush)) begin
                     if ((discard_cnt + outstanding - 1'b1) > CNT_WIDTH'(DEPTH))
                         discard_cnt <= CNT_WIDTH'(DEPTH);
                     else
@@ -264,10 +297,28 @@ module kv32_ib #(
                     `DEBUG2(`DBG_GRP_FETCH, ("Flush+early-fetch: outstanding starts at 1 for addr=0x%h",
                            req_addr));
             end else begin
-                // Priority 2: Decrement discard counter when response is consumed
-                // CRITICAL: Must use resp_consumed (not resp_valid) to stay synchronized
-                // with mem_axi_ro FIFO which only pops on resp_consumed
-                if (resp_consumed && discard_cnt > 0) begin
+                // Priority 2: Decrement discard counter when a response arrives for a
+                // discardable slot.
+                //
+                // Eval-order guard (Verilator):  kv32_rvc is an always_comb block whose
+                // mem_ready output feeds resp_consume here.  In Verilator's C++ evaluation
+                // order, kv32_ib's always_ff fires before kv32_rvc's always_comb re-
+                // evaluates with the new axi_rvalid/bypass signal.  This means resp_consume
+                // can appear as 0 at IB evaluation time even though it WILL be 1 after
+                // kv32_rvc settles — causing IB to miss the discard consume and leaving
+                // discard_cnt and rd_ptr one step behind mem_axi_ro.
+                //
+                // The invariant that makes resp_valid sufficient here:
+                //   After every flush, kv32_rvc clears both hold_valid and pend_valid.
+                //   discard_cnt > 0 only exists in the post-flush recovery window, so
+                //   hold_valid=0 and pend_valid=0 are guaranteed.  With no hold/pend,
+                //   kv32_rvc's always_comb always takes the IDLE discard branch and sets
+                //   mem_ready=1 whenever imem_resp_valid && ib_resp_discard.  Therefore
+                //   resp_valid=1 with discard_cnt>0 is a safe proxy for resp_consumed.
+                //
+                // This mirrors the flush guard (resp_valid && flush) added for the same
+                // eval-order issue in the flush handling block above.
+                if (resp_valid && discard_cnt > 0) begin
                     discard_cnt <= discard_cnt - 1'b1;
                     `DEBUG2(`DBG_GRP_FETCH, ("Discarding response, discard_cnt=%0d->%0d", discard_cnt, discard_cnt - 1'b1));
                 end
@@ -335,10 +386,14 @@ module kv32_ib #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             rd_ptr <= '0;
-        end else if (resp_consumed && discard_cnt > 0) begin
-            // Case 1: Discarding - response consumed for flushed request
-            // CRITICAL: Must use resp_consumed (not resp_valid) to stay synchronized
-            // with mem_axi_ro FIFO rd_ptr which advances on resp_consumed
+        end else if (resp_valid && discard_cnt > 0) begin
+            // Case 1: Discarding - response arrived for a flushed slot.
+            // Use resp_valid (not resp_consumed) as the discard trigger.
+            // Rationale: see the Eval-order guard comment above in discard_cnt
+            // handling.  After a flush, hold_valid=0 and pend_valid=0, so kv32_rvc
+            // unconditionally sets mem_ready=1 (IDLE discard branch) whenever
+            // imem_resp_valid && ib_resp_discard.  resp_valid=1 is therefore a
+            // safe proxy for resp_consumed when discard_cnt>0.
             if (PTR_WIDTH > 0) begin
                 rd_ptr <= rd_ptr + 1'b1;
             end

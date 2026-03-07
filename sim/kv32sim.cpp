@@ -2038,12 +2038,13 @@ void print_usage(const char *prog) {
     std::cerr << "                       Supported: rv32ima, rv32imac, rv32ima_zicsr, rv32imac_zicsr"
               << std::endl;
     std::cerr
-        << "  --trace              Enable Spike-format trace logging (alias "
-           "for --log-commits)"
+        << "  --trace              Enable Spike-format trace logging (RISC-V spec CSR cycle/time)"
         << std::endl;
     std::cerr << "  --log-commits        Enable Spike-format trace logging"
               << std::endl;
-    std::cerr << "  --rtl-trace          Enable RTL-format trace logging"
+    std::cerr << "  --trace-compare      Enable RTL-format trace for RTL/sim comparison (CSR cycle = minstret)"
+              << std::endl;
+    std::cerr << "  --rtl-trace          Enable RTL-format trace logging (alias for --trace-compare)"
               << std::endl;
     std::cerr
         << "  --log=<file>         Specify trace log output file (default: "
@@ -2123,7 +2124,8 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--log-commits") == 0 ||
                    strcmp(argv[i], "--trace") == 0) {
             trace_enabled = true;
-        } else if (strcmp(argv[i], "--rtl-trace") == 0) {
+        } else if (strcmp(argv[i], "--rtl-trace") == 0 ||
+                   strcmp(argv[i], "--trace-compare") == 0) {
             trace_enabled = true;
             rtl_trace_format = true;
         } else if (strncmp(argv[i], "--log=", 6) == 0) {

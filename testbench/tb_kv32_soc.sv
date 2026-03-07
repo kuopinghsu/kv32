@@ -352,13 +352,15 @@ module tb_kv32_soc #(
     // ========================================================================
 
     // UART Loopback - Echoes back received characters
-    uart_loopback #(
-        .CLKS_PER_BIT(4)  // Match UART baud rate
-    ) uart_target (
+    // clks_per_bit tracks the DUT's runtime baud divisor so the loopback
+    // adapts automatically when software changes the baud rate (e.g. baud_div=4
+    // gives CLKS_PER_BIT=5; baud_div=31 gives CLKS_PER_BIT=32).
+    uart_loopback uart_target (
         .clk(clk),
         .rst_n(rst_n),
-        .rx(uart_tx_internal),  // Connect to SoC TX output
-        .tx(uart_rx)            // Connect directly to SoC RX input
+        .rx(uart_tx_internal),   // Connect to SoC TX output
+        .tx(uart_rx),            // Connect directly to SoC RX input
+        .clks_per_bit(16'(dut.uart.baud_div_r) + 16'd1)
     );
 
     // Drive testbench output port from SoC internal signal

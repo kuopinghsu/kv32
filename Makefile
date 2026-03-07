@@ -350,12 +350,15 @@ verify-mem:
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=1 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=1 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=1 ICACHE_EN=0 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=4 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=0 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=0 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=0 ICACHE_EN=0 compare-all rtl-all
 	@make -f Makefile MEM_TYPE=ddr4-1866 compare-all rtl-all
+	@make -f Makefile MEM_TYPE=ddr4-1866 ICACHE_EN=0 compare-all rtl-all
 	@make -f Makefile MEM_TYPE=ddr4-3200 compare-all rtl-all
 
 # Build RTL with Verilator
@@ -576,13 +579,13 @@ ifdef DEBUG
 endif
 	@echo "=========================================="
 	@cd $(BUILD_DIR) && ./kv32soc \
-		$(if $(TRACE),--trace) \
+		$(if $(TRACE_COMPARE),--trace-compare,$(if $(TRACE),--trace)) \
 		$(if $(filter 1 fst,$(WAVE)),--wave=fst) \
 		$(if $(filter vcd,$(WAVE)),--wave=vcd) \
 		$(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
 		$*.elf
 	@echo ""
-	@if [ "$(TRACE)" = "1" ]; then \
+	@if [ "$(TRACE_COMPARE)" = "1" ] || [ "$(TRACE)" = "1" ]; then \
 		echo "Trace saved to: $(BUILD_DIR)/rtl_trace.txt"; \
 	fi
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
@@ -604,12 +607,12 @@ SPIKE_EXTLIBS_LOCAL = $(patsubst $(BUILD_DIR)/%,--extlib=./%,$(SPIKE_PLUGINS))
 ifeq ($(SIM),spike)
 _SIM_PREREQ = build-spike-plugins
 define _SIM_RUN
-cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $(1).elf 2>&1 || true
+cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)$(TRACE_COMPARE)),--log-commits --log=sim_trace.txt) $(1).elf 2>&1 || true
 endef
 else
 _SIM_PREREQ =
 define _SIM_RUN
-cd $(BUILD_DIR) && ./$(SIM) $(if $(filter 1,$(TRACE)),--rtl-trace --log=sim_trace.txt) $(1).elf
+cd $(BUILD_DIR) && ./$(SIM) $(if $(filter 1,$(TRACE_COMPARE)),--trace-compare --log=sim_trace.txt,$(if $(filter 1,$(TRACE)),--rtl-trace --log=sim_trace.txt)) $(1).elf
 endef
 endif
 
@@ -667,11 +670,11 @@ compare-%:
 		echo "         Proceeding anyway — mismatch is expected."; \
 		echo "=========================================="; \
 	fi
-	@echo "Step 1: Running RTL simulator with trace..."
-	@-$(MAKE) rtl-$* TRACE=1
+	@echo "Step 1: Running RTL simulator with trace-compare..."
+	@-$(MAKE) rtl-$* TRACE_COMPARE=1
 	@echo ""
-	@echo "Step 2: Running software simulator with trace..."
-	@-$(MAKE) sim-$* TRACE=1
+	@echo "Step 2: Running software simulator with trace-compare..."
+	@-$(MAKE) sim-$* TRACE_COMPARE=1
 	@echo ""
 	@echo "Step 3: Comparing traces..."
 	@echo "=========================================="
@@ -726,7 +729,7 @@ endif
 	@echo "=========================================="
 	@echo "Tests to run: $(TEST_NAMES)"
 	@echo ""
-	@passed=0; failed=0; \
+	@passed=0; failed=0; failed_tests=""; \
 	for test in $(TEST_NAMES); do \
 		echo "==========================================";\
 		echo "Running RTL test: $$test";\
@@ -743,6 +746,7 @@ endif
 		else \
 			echo "✗ $$test FAILED"; \
 			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		fi; \
 		echo ""; \
 	done; \
@@ -752,6 +756,7 @@ endif
 	echo "Total:  $$((passed + failed))";\
 	echo "Passed: $$passed";\
 	echo "Failed: $$failed";\
+	if [ $$failed -gt 0 ]; then echo "Failed tests:$$failed_tests"; fi;\
 	echo "==========================================";\
 	if [ $$failed -gt 0 ]; then exit 1; fi
 
@@ -763,7 +768,7 @@ sim-all: build-sim $(_SIM_PREREQ)
 	@echo "Tests to run: $(SIM_ALL_TESTS)"
 	$(if $(filter spike,$(SIM)),@echo "Excluded (spike): $(SPIKE_EXCLUDE)",)
 	@echo ""
-	@passed=0; failed=0; \
+	@passed=0; failed=0; failed_tests=""; \
 	for test in $(SIM_ALL_TESTS); do \
 		if $(MAKE) -s _SIM_PREREQ= sim-$$test; then \
 			echo "✓ $$test PASSED"; \
@@ -771,6 +776,7 @@ sim-all: build-sim $(_SIM_PREREQ)
 		else \
 			echo "✗ $$test FAILED"; \
 			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		fi; \
 		echo ""; \
 	done; \
@@ -780,6 +786,7 @@ sim-all: build-sim $(_SIM_PREREQ)
 	echo "Total:  $$((passed + failed))";\
 	echo "Passed: $$passed";\
 	echo "Failed: $$failed";\
+	if [ $$failed -gt 0 ]; then echo "Failed tests:$$failed_tests"; fi;\
 	echo "==========================================";\
 	if [ $$failed -gt 0 ]; then exit 1; fi
 
@@ -823,30 +830,32 @@ compare-all:
 		echo "Error: scripts/trace_compare.py not found"; \
 		exit 1; \
 	fi
-	@passed=0; failed=0; \
+	@passed=0; failed=0; failed_tests=""; \
 	for test in $(COMPARE_ALL_TESTS); do \
 		echo "==========================================";\
 		echo "Comparing test: $$test";\
 		echo "==========================================";\
 		echo "Step 1: Running RTL simulator with trace...";\
-		if $(MAKE) -s rtl-$$test TRACE=1 > /tmp/rtl_$$test.log 2>&1; then \
+		if $(MAKE) -s rtl-$$test TRACE_COMPARE=1 > /tmp/rtl_$$test.log 2>&1; then \
 			echo "  RTL completed"; \
 		else \
 			echo "✗ $$test RTL FAILED (exit code $$?)"; \
 			echo "  See /tmp/rtl_$$test.log for details"; \
 			tail -20 /tmp/rtl_$$test.log | sed 's/^/  /'; \
 			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 			echo ""; \
 			continue; \
 		fi; \
 		echo "Step 2: Running software simulator with trace..."; \
-		if $(MAKE) -s sim-$$test TRACE=1 > /tmp/sim_$$test.log 2>&1; then \
+		if $(MAKE) -s sim-$$test TRACE_COMPARE=1 > /tmp/sim_$$test.log 2>&1; then \
 			echo "  SIM completed"; \
 		else \
 			echo "✗ $$test SIM FAILED (exit code $$?)"; \
 			echo "  See /tmp/sim_$$test.log for details"; \
 			tail -20 /tmp/sim_$$test.log | sed 's/^/  /'; \
 			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 			echo ""; \
 			continue; \
 		fi; \
@@ -854,9 +863,11 @@ compare-all:
 		if [ ! -f $(BUILD_DIR)/rtl_trace.txt ]; then \
 			echo "✗ $$test - RTL trace not found"; \
 			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		elif [ ! -f $(BUILD_DIR)/sim_trace.txt ]; then \
 			echo "✗ $$test - SIM trace not found"; \
 			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		elif python3 scripts/trace_compare.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt > /tmp/cmp_$$test.log 2>&1; then \
 			echo "✓ $$test TRACES MATCH"; \
 			passed=$$((passed + 1)); \
@@ -865,6 +876,7 @@ compare-all:
 			echo "  Comparison output:"; \
 			tail -10 /tmp/cmp_$$test.log | sed 's/^/  /'; \
 			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		fi; \
 		echo ""; \
 	done; \
@@ -874,6 +886,7 @@ compare-all:
 	echo "Total:  $$((passed + failed))";\
 	echo "Passed: $$passed";\
 	echo "Failed: $$failed";\
+	if [ $$failed -gt 0 ]; then echo "Failed tests:$$failed_tests"; fi;\
 	echo "==========================================";\
 	if [ $$failed -gt 0 ]; then exit 1; fi
 

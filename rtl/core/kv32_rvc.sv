@@ -91,7 +91,23 @@ module kv32_rvc (
     // -------------------------------------------------------------------------
     // Memory handshake control
     // -------------------------------------------------------------------------
-    output logic        mem_ready           // drives imem_resp_ready in kv32_core
+    output logic        mem_ready,          // drives imem_resp_ready in kv32_core
+
+    // -------------------------------------------------------------------------
+    // Hold-state visibility (used by kv32_core interrupt_pc fix)
+    // hold_valid_o: 1 when the expander has buffered the lower half of a
+    //   spanning 32-bit instruction and is waiting for the next fetch word.
+    //   In this state the in-flight ib_resp_pc points to the SECOND fetch word,
+    //   but the actual instruction PC is hold_pc_o (halfword-aligned).
+    // init_offset_o: 1 when next fetch word should be entered at bit[16].
+    //   Set after a branch to a halfword-aligned target (target_pc[1]=1).
+    //   The first instruction in the next fetch word is at fetch_addr+2, not
+    //   fetch_addr.  kv32_core uses this to adjust interrupt_pc when a timer
+    //   interrupt fires between the branch and the first instruction response.
+    // -------------------------------------------------------------------------
+    output logic        hold_valid_o,       // expander is in case_d state
+    output logic [31:0] hold_pc_o,          // PC of the buffered lower half
+    output logic        init_offset_o       // fetch word starts at upper hw
 );
 
     // =========================================================================
@@ -516,6 +532,17 @@ module kv32_rvc (
             end
         end
     end
+
+    // =========================================================================
+    // Hold-state outputs for interrupt_pc in kv32_core
+    // =========================================================================
+    // case_d: hold has the lower half of a spanning 32-bit instruction and the
+    // expander is waiting for the next fetch word.  The real instruction PC is
+    // hold_pc, not ib_resp_pc (which is the 4-byte aligned address of the
+    // second fetch word).
+    assign hold_valid_o  = case_d;
+    assign hold_pc_o     = hold_pc;
+    assign init_offset_o = init_offset;
 
     // =========================================================================
     // Sequential state update

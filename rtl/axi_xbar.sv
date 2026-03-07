@@ -511,12 +511,12 @@ module axi_xbar (
                 r_id_fifo[r_id_wr_ptr[$clog2(ID_FIFO_DEPTH)-1:0]] <= m_axi_arid;
                 r_sel_fifo[r_id_wr_ptr[$clog2(ID_FIFO_DEPTH)-1:0]] <= r_sel_next;
                 r_id_wr_ptr <= r_id_wr_ptr + 1;
-                `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AR FIFO push id=%0d sel=%0d fifo_count=%0d->%0d", m_axi_arid, r_sel_next, r_id_wr_ptr - r_id_rd_ptr, r_id_wr_ptr + 1 - r_id_rd_ptr));
+                `DEBUG2(`DBG_GRP_AXI, ("[XBAR][%0t] AR FIFO push id=%0d sel=%0d addr=0x%h fifo_count=%0d->%0d", $time, m_axi_arid, r_sel_next, m_axi_araddr, r_id_wr_ptr - r_id_rd_ptr, r_id_wr_ptr + 1 - r_id_rd_ptr));
             end
             // Pop ID when R handshake occurs
             if (m_axi_rvalid && m_axi_rready) begin
                 r_id_rd_ptr <= r_id_rd_ptr + 1;
-                `DEBUG2(`DBG_GRP_AXI, ("[XBAR] R FIFO pop id=%0d fifo_count=%0d->%0d", m_axi_rid, r_id_wr_ptr - r_id_rd_ptr, r_id_wr_ptr - (r_id_rd_ptr + 1)));
+                `DEBUG2(`DBG_GRP_AXI, ("[XBAR][%0t] R FIFO pop id=%0d fifo_count=%0d->%0d", $time, m_axi_rid, r_id_wr_ptr - r_id_rd_ptr, r_id_wr_ptr - (r_id_rd_ptr + 1)));
             end
         end
     end
@@ -559,8 +559,8 @@ module axi_xbar (
 
     always_ff @(posedge clk) begin
         if (m_axi_arvalid) begin
-            `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AR: addr=0x%h sel=%b%b%b%b%b%b%b%b%b%b",
-                m_axi_araddr, sel_s9_ar, sel_s8_ar, sel_s7_ar, sel_s6_ar, sel_s5_ar, sel_s4_ar, sel_s3_ar, sel_s2_ar, sel_s1_ar, sel_s0_ar));
+            `DEBUG2(`DBG_GRP_AXI, ("[XBAR][%0t] AR: addr=0x%h arready=%b sel=%b%b%b%b%b%b%b%b%b%b",
+                $time, m_axi_araddr, m_axi_arready, sel_s9_ar, sel_s8_ar, sel_s7_ar, sel_s6_ar, sel_s5_ar, sel_s4_ar, sel_s3_ar, sel_s2_ar, sel_s1_ar, sel_s0_ar));
         end
         if (m_axi_awvalid) begin
             `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AW: addr=0x%h sel=%b%b%b%b%b%b%b%b%b%b awready=%b w_transaction_active=%b",

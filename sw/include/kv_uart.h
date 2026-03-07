@@ -28,10 +28,12 @@
 /* ─── init ────────────────────────────────────────────────────────── */
 
 /** @brief Set the baud-rate divisor and disable interrupts.
- * @param baud_div Pre-computed divisor: `sys_clk_hz / (baud_rate * 8) - 1`. */
+ * @param baud_div Pre-computed divisor: `sys_clk_hz / baud_rate - 1` = CLKS_PER_BIT - 1.
+ *                 Examples at 100 MHz: baud_div=3 → 25 Mbaud, baud_div=7 → 12.5 Mbaud,
+ *                 baud_div=31 → 3.125 Mbaud, baud_div=867 → 115200 baud. */
 static inline void kv_uart_init(uint32_t baud_div)
 {
-    KV_UART_LEVEL = baud_div;
+    KV_UART_LEVEL = baud_div;    /* write to 0x10 sets runtime baud-rate divisor */
     KV_UART_IE    = 0u;          /* interrupts off by default */
 }
 

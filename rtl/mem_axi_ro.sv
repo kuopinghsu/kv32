@@ -113,9 +113,9 @@ module mem_axi_ro #(
             ar_buf_valid <= ar_buf_valid_next;
             ar_buf_addr  <= ar_buf_addr_next;
             if (ar_buf_valid_next && !ar_buf_valid)
-                `DEBUG2(`DBG_GRP_AXI, ("%s: AR buffered addr=0x%h", BRIDGE_NAME, ar_buf_addr_next));
+                `DEBUG2(`DBG_GRP_AXI, ("%s[%0t]: AR buffered addr=0x%h", BRIDGE_NAME, $time, ar_buf_addr_next));
             if (ar_buf_valid && !ar_buf_valid_next)
-                `DEBUG2(`DBG_GRP_AXI, ("%s: AR buffer drained", BRIDGE_NAME));
+                `DEBUG2(`DBG_GRP_AXI, ("%s[%0t]: AR buffer drained", BRIDGE_NAME, $time));
         end
     end
 
@@ -186,8 +186,9 @@ module mem_axi_ro #(
     // Bypass condition: FIFO empty AND core can consume immediately
     assign resp_bypass = axi_rvalid && resp_fifo_empty && mem_resp_ready;
     // Push to FIFO when response arrives but cannot bypass (FIFO not empty or core stalled)
-    assign resp_push   = axi_rvalid && !resp_bypass;
-    assign axi_rready  = !resp_fifo_full;  // Always ready unless FIFO full
+    assign resp_push   = axi_rvalid && axi_rready && !resp_bypass;
+
+    assign axi_rready  = !resp_fifo_full;
 
     // Core-facing response: bypass has priority over FIFO
     assign mem_resp_valid = axi_rvalid && resp_fifo_empty ? 1'b1 :  // bypass path
@@ -219,6 +220,12 @@ module mem_axi_ro #(
             end
             if (resp_bypass)
                 `DEBUG2(`DBG_GRP_AXI, ("%s: mem_resp BYPASS data=0x%h", BRIDGE_NAME, axi_rdata));
+
+            // R-channel stall detection: if outstanding>0 but rvalid=0 for many cycles
+            if (read_outstanding_count > 0)
+                `DEBUG2(`DBG_GRP_AXI, ("%s: R-chan[%0t]: rvalid=%b rready=%b bypass=%b push=%b count=%0d outstanding=%0d empty=%b full=%b",
+                    BRIDGE_NAME, $time, axi_rvalid, axi_rready, resp_bypass, resp_push, resp_count,
+                    read_outstanding_count, resp_fifo_empty, resp_fifo_full));
 
             case ({resp_push, resp_pop})
                 2'b10: resp_count <= resp_count + 1'b1;

@@ -136,8 +136,9 @@ static void t8_flush_uart(void)
     /* 1. Spin until TX FIFO is empty (LEVEL[13:9] == 0) */
     uint32_t lvl;
     do { lvl = KV_UART_LEVEL; } while ((lvl >> 9) & 0x1Fu);
-    /* 2. Extra wait: ~1000 cycles covers last-byte serialisation + one
-     *    full loopback round-trip (10 bits * 4 clks * 2 directions = 80 clks) */
+    /* 2. Extra wait: enough cycles for last-byte serialisation + loopback
+     *    round-trip. At slowest baud (baud_div=31, 320 cyc/byte): 640 cyc.
+     *    1000 nops × 6.86 CPI (DDR4) = 6860 cyc >> 640 cyc. */
     for (volatile int i = 0; i < 1000; i++) asm volatile("nop");
     /* 3. Drain everything the loopback echoed back so far */
     while (kv_uart_rx_ready())
@@ -149,7 +150,11 @@ static void t8_flush_uart(void)
 }
 
 static int test8_fifo_irq_transfer(void)
-{
+{    /* Use a lower baud rate so the ISR can drain the RX FIFO fast enough
+     * even when instructions are fetched from slow DDR4 (ICACHE_EN=0).
+     * baud_div=31 → CLKS_PER_BIT=32 → ~3.125 Mbaud @ 100 MHz
+     * byte period = 320 cycles, ISR loop ≈ 70 cycles/byte → safe margin. */
+    kv_uart_init(31);
     print("[TEST 8] FIFO Burst TX + IRQ-driven RX\n");
     print("  Transfer : 512 bytes loopback echo\n");
     print("  TX method: 16-byte FIFO bursts (polls TX_BUSY)\n");
@@ -227,13 +232,15 @@ static int test8_fifo_irq_transfer(void)
 
 int main(void)
 {
-    /* Initialise UART – baud_div=4 gives 12.5 Mbaud at 100 MHz */
+    /* Initialise UART – baud_div=4 gives 20 Mbaud at 100 MHz (CLKS_PER_BIT=5).
+     * Test 8 overrides to baud_div=31 (3.125 Mbaud) for DDR4/high-latency ISR
+     * compatibility; other tests use the magic console for output, not UART. */
     kv_uart_init(4);
 
     print("\n========================================\n");
     print("  UART Hardware Test (TX + RX)\n");
     print("  Base Address: "); print_hex(KV_UART_BASE); print("\n");
-    print("  Baud Rate: 12.5 Mbaud (BAUD_DIV=4)\n");
+    print("  Baud Rate: 20 Mbaud (BAUD_DIV=4, CLKS_PER_BIT=5)\n");
     print("========================================\n\n");
 
     /* Test 0: Capability register (informational) */

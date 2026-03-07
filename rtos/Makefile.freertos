@@ -58,10 +58,11 @@ freertos-help:
 	@echo "  make freertos-<test>         - Build FreeRTOS test sample"
 	@echo "  make freertos-rtl-<test>     - Run FreeRTOS test in RTL simulation"
 	@echo "  make freertos-sim-<test>     - Run FreeRTOS test in ISS simulator"
-	@echo "  make freertos-compare-<test> - Compare FreeRTOS RTL vs Spike traces"
+	@echo "  make freertos-compare-<test> - Compare FreeRTOS RTL vs kv32sim traces"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make freertos-rtl-simple TRACE=1 MAX_CYCLES=0"
+	@echo "  make freertos-rtl-simple TRACE_COMPARE=1"
 	@echo "  make freertos-sim-simple"
 	@echo "  make freertos-compare-simple"
 	@echo ""
@@ -101,13 +102,13 @@ else
 endif
 	@$(MAKE) freertos-$*
 	@cd $(BUILD_DIR) && ./kv32soc \
-		$(if $(TRACE),--trace) \
+		$(if $(TRACE_COMPARE),--trace-compare,$(if $(TRACE),--trace)) \
 		$(if $(filter 1 fst,$(WAVE)),--wave=fst) \
 		$(if $(filter vcd,$(WAVE)),--wave=vcd) \
 		$(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
 		freertos-$*.elf
 	@echo ""
-	@if [ "$(TRACE)" = "1" ]; then \
+	@if [ "$(TRACE_COMPARE)" = "1" ] || [ "$(TRACE)" = "1" ]; then \
 		echo "Trace saved to: $(BUILD_DIR)/rtl_trace.txt"; \
 	fi
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
@@ -115,8 +116,8 @@ endif
 	elif [ "$(WAVE)" = "vcd" ]; then \
 		echo "Waveform saved to: $(BUILD_DIR)/kv32soc.vcd"; \
 	fi
-	@if [ "$(TRACE)" != "1" ] && [ "$(WAVE)" = "" ]; then \
-		echo "Use TRACE=1 for instruction trace, WAVE=fst or WAVE=vcd for waveform dump"; \
+	@if [ "$(TRACE_COMPARE)" != "1" ] && [ "$(TRACE)" != "1" ] && [ "$(WAVE)" = "" ]; then \
+		echo "Use TRACE=1 for instruction trace, TRACE_COMPARE=1 for RTL/sim comparison, WAVE=fst or WAVE=vcd for waveform dump"; \
 	fi
 	@echo "=== FreeRTOS test complete ==="
 
@@ -138,20 +139,20 @@ freertos-sim-%:
 	@if [ "$(SIM)" = "spike" ]; then \
 		cd $(BUILD_DIR) && spike \
 			--isa=rv32ima -m0x80000000:0x200000 \
-			$(if $(TRACE),--log-commits --log=sim_trace.txt) \
+			$(if $(filter 1,$(TRACE)$(TRACE_COMPARE)),--log-commits --log=sim_trace.txt) \
 			$(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
 			freertos-$*.elf; \
 	else \
 		cd $(BUILD_DIR) && ./$(SIM) \
 			--isa=rv32ima -m0x80000000:0x200000 \
-			$(if $(TRACE),--rtl-trace --log=sim_trace.txt) \
+			$(if $(filter 1,$(TRACE_COMPARE)),--trace-compare --log=sim_trace.txt,$(if $(filter 1,$(TRACE)),--rtl-trace --log=sim_trace.txt)) \
 			$(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
 			freertos-$*.elf; \
 	fi
-	@if [ "$(TRACE)" = "1" ]; then \
+	@if [ "$(TRACE_COMPARE)" = "1" ] || [ "$(TRACE)" = "1" ]; then \
 		echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"; \
 	else \
-		echo "Use TRACE=1 to enable instruction trace"; \
+		echo "Use TRACE=1 for instruction trace, TRACE_COMPARE=1 for RTL/sim comparison"; \
 	fi
 
 # ============================================================================
@@ -170,9 +171,9 @@ freertos-compare-%:
 	@$(MAKE) -C $(PROJECT_ROOT) build-sim
 	@$(MAKE) freertos-$*
 	@echo "Step 1: Running RTL simulator with trace..."
-	@-$(MAKE) freertos-rtl-$* TRACE=1
+	@-$(MAKE) freertos-rtl-$* TRACE_COMPARE=1
 	@echo "Step 2: Running software simulator with trace..."
-	@-$(MAKE) freertos-sim-$* TRACE=1
+	@-$(MAKE) freertos-sim-$* TRACE_COMPARE=1
 	@echo "Step 3: Comparing traces..."
 	@if [ ! -f $(TRACE_COMPARE) ]; then \
 		echo "Error: $(TRACE_COMPARE) not found"; \

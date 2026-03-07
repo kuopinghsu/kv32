@@ -512,6 +512,7 @@ module kv32_core #(
     // instruction fetches in flight, improving throughput.
     logic [31:0] ib_resp_pc;             // PC associated with current response
     logic [$clog2(IB_DEPTH+1)-1:0]  ib_outstanding;  // Number of outstanding fetch requests
+    logic                            ib_discard_pending; // IB has post-flush discards in flight
     logic        ib_can_accept;          // Buffer can accept new fetch request
     logic        ib_resp_discard;        // Response should be discarded (stale)
 
@@ -628,9 +629,16 @@ module kv32_core #(
                                 dedup_consuming                   ? pc_next :
                                                                    pc_if;
 
-    // Dedup: suppress if we already issued for this exact address.
+    // Dedup: suppress if we already issued for the same 4-byte-aligned word.
+    // Compare at word granularity ([31:2]) because:
+    //   - AXI AR always fetches a 4-byte aligned word.
+    //   - After a branch to an RVC-unaligned target (e.g. branch_target=0x8000018a
+    //     sets last_issued_fetch_pc=0x80000188 via the aligned early-fetch address),
+    //     pc_if advances to 0x8000018a.  A byte-exact compare would miss this case
+    //     and issue a second AR for the same physical word, sending two responses
+    //     back-to-back and corrupting the IB outstanding/discard accounting.
     assign fetch_issued_for_effective_pc = last_issued_valid &&
-                                           (imem_req_addr == last_issued_fetch_pc);
+                                           (imem_req_addr[31:2] == last_issued_fetch_pc[31:2]);
 
     // Gate: always allow on branch cycle (early target fetch); block only on
     // exception/irq/mret flushes, dedup, and when the memory bus is not ready.
@@ -733,10 +741,20 @@ module kv32_core #(
             last_issued_valid    <= 1'b1;
             `DEBUG2(`DBG_GRP_FETCH, ("[PC] Issued for pc=0x%h (branch_early=%b)",
                    imem_req_addr, branch_taken && !branch_flushed));
-        end else if (if_flush || (ib_outstanding == '0 && !imem_resp_valid)) begin
+        end else if (if_flush || (ib_outstanding == '0 && !imem_resp_valid &&
+                                   imem_req_addr != last_issued_fetch_pc)) begin
             // Flush without a simultaneous new issue: allow re-fetch.
-            // Also clear when IB is empty and no response is arriving — nothing
-            // is in-flight, so last_issued_valid would permanently block fetches.
+            // Also clear when IB is empty, no response arriving, AND the current
+            // fetch address has changed from what we last issued — nothing is
+            // in-flight and the PC has advanced, so the dedup entry is stale.
+            //
+            // Do NOT clear when imem_req_addr == last_issued_fetch_pc: that means
+            // pc_if is still sitting at the same address we already fetched (e.g.,
+            // after a bypass-consumed response when the pipeline hasn't yet decoded
+            // the word and advanced pc_if).  Clearing in that case causes an
+            // immediate spurious re-issue for the same address, which can fill the
+            // resp_fifo and deadlock the memory bus when DDR4 returns data with
+            // rready=0 (resp_fifo_full).
             last_issued_valid <= 1'b0;
             `DEBUG2(`DBG_GRP_FETCH, ("[PC] Flush/empty: clearing issue-tracking, pc=0x%h flush=%b out=%0d",
                    pc_if, if_flush, ib_outstanding));
@@ -746,6 +764,7 @@ module kv32_core #(
 
     // Instruction Buffer Instance
     // Configurable depth allows multiple outstanding instruction fetch requests
+    logic [31:0] ib_first_active_pc;  // PC of first non-discard outstanding IB entry
     kv32_ib #(
         .DEPTH(IB_DEPTH),
         .ADDR_WIDTH(32)
@@ -761,12 +780,18 @@ module kv32_core #(
         .resp_discard(ib_resp_discard),
         .resp_consume(imem_resp_valid && imem_resp_ready),
         .flush(if_flush),
-        .outstanding_count(ib_outstanding)
+        .outstanding_count(ib_outstanding),
+        .discard_pending(ib_discard_pending),
+        .first_active_pc(ib_first_active_pc)
     );
 
     // -------------------------------------------------------------------------
     // RVC expander instantiation
     // -------------------------------------------------------------------------
+    logic rvc_hold_valid;   // expander is in case_d (spanning-instr split state)
+    logic [31:0] rvc_hold_pc; // PC of the buffered lower half (halfword-aligned)
+    logic rvc_init_offset;  // expander will skip lower hw of next fetch word
+
     kv32_rvc rvc_expander (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -782,7 +807,10 @@ module kv32_core #(
         .orig_instr       (rvc_orig_instr),
         .instr_pc         (rvc_instr_pc),
         .is_compressed    (rvc_is_compressed),
-        .mem_ready        (rvc_mem_ready)
+        .mem_ready        (rvc_mem_ready),
+        .hold_valid_o     (rvc_hold_valid),
+        .hold_pc_o        (rvc_hold_pc),
+        .init_offset_o    (rvc_init_offset)
     );
 
     // Program Counter (PC) Update Logic
@@ -1595,7 +1623,14 @@ module kv32_core #(
     // Prevents WFI from sleeping when an interrupt fired and was fully handled
     // (mtimecmp disarmed) before WFI reached the EX stage — a race that occurs
     // with short timer periods (e.g. 50-cycle) where the interrupt fires during
-    // the pre-WFI code rather than during the WFI stall/sleep window.
+    // the WFI stall/sleep window (WFI is in ID or EX, pending stores, etc.).
+    //
+    // Design note: only set irq_was_pending when WFI is in or near EX (is_wfi_id
+    // or wfi_active).  Setting it on any arbitrary interrupt rising-edge causes
+    // a stale flag that persists across unrelated ISRs and makes the *next* WFI
+    // treat itself as a NOP even when the interrupt it was waiting for has not
+    // yet fired (test-6 regression: test-5's last MSIP set the flag thousands of
+    // cycles before test-6's WFI, causing the check to read g_timer_count=0).
     logic irq_pending_prev;
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -1603,9 +1638,22 @@ module kv32_core #(
             irq_was_pending  <= 1'b0;
         end else begin
             irq_pending_prev <= irq_pending;
-            if (irq_pending && !irq_pending_prev && !wfi_sleeping) // rising edge while running (not sleeping)
-                irq_was_pending <= 1'b1;  // interrupt fired before WFI reached EX: record the race
-            else if (wfi_sleeping && (irq_pending || wakeup_i))   // normal WFI wakeup path
+            // Rising edge of irq_pending while not sleeping AND WFI is in ID or EX.
+            // This is the narrow window where the interrupt races with WFI execution:
+            //   - is_wfi_id: WFI decoded but not yet in EX; pipeline flush will
+            //                discard it; re-executed WFI needs the NOP shortcut.
+            //   - wfi_active: WFI is in EX (possibly stalling on sb_store_pending);
+            //                 interrupt will flush it; same re-execution scenario.
+            // Interrupts that fire far from WFI (wfi_active=0, is_wfi_id=0) are
+            // fully handled by the regular pipeline interrupt mechanism and do not
+            // need this flag — setting it there only causes premature WFI NOPs.
+            if (irq_pending && !irq_pending_prev && !wfi_sleeping
+                    && (is_wfi_id || wfi_active)) begin
+                irq_was_pending <= 1'b1;  // interrupt fired while WFI is in ID/EX
+                `DEBUG2(`DBG_GRP_WFI, ("[WFI] irq_was_pending SET: irq_pending=%b wfi_active=%b sb_pending=%b pc_ex=0x%h mtime=%0d mtimecmp=%0d",
+                         irq_pending, wfi_active, sb_store_pending, pc_ex,
+                         $root.tb_kv32_soc.dut.clint.mtime, $root.tb_kv32_soc.dut.clint.mtimecmp));
+            end else if (wfi_sleeping && (irq_pending || wakeup_i))   // normal WFI wakeup path
                 irq_was_pending <= 1'b0;  // clear: this interrupt legitimately woke the core
             else if (wfi_active && irq_was_pending)               // WFI in EX consumes the race flag
                 irq_was_pending <= 1'b0;
@@ -1616,8 +1664,9 @@ module kv32_core #(
     // Guards:
     //   !sb_store_pending  — wait for preceding stores (e.g. mtimecmp write) to
     //                        commit before evaluating irq_pending (implicit FENCE).
-    //   !irq_was_pending   — if an interrupt fired and cleared before WFI reached
-    //                        EX, treat WFI as NOP (RISC-V spec permits this).
+    //   !irq_was_pending   — if an interrupt fired while WFI was in ID/EX and was
+    //                        already handled before WFI re-reached EX, treat WFI
+    //                        as NOP (RISC-V spec permits this).
     //   !wfi_sleeping      — one-shot guard.
     assign wfi_branch = wfi_active && !wfi_sleeping && !sb_store_pending &&
                         !irq_pending && !irq_was_pending && !exception && !ex_flush;
@@ -1757,13 +1806,44 @@ module kv32_core #(
         end else if (id_valid) begin
             // For WFI in ID: treat same as EX — mepc = WFI+4 so MRET resumes past WFI.
             interrupt_pc = is_wfi_id ? (pc_id + 32'd4) : pc_id;
-        end else if (ib_outstanding > 0 || imem_resp_valid) begin
-            // A fetch is in-flight inside the IB / icache but has not entered any
-            // pipeline stage yet (e.g. during a cache miss when the pipeline drained).
-            // pc_if has already advanced to AFTER the in-flight instruction, so using
-            // it here would cause mret to skip that instruction entirely.
-            // ib_resp_pc tracks the oldest outstanding fetch (IB rd_ptr), which is
-            // the correct next-instruction-to-execute address.
+        end else if (rvc_instr_valid) begin
+            // IF stage has a fully assembled instruction that has not yet been
+            // latched into the ID register (id_valid=0).  The RVC expander's
+            // instr_pc is the exact halfword-aligned PC — use it directly.
+            // (This is preferred over ib_resp_pc which is always 4-byte aligned
+            // and cannot represent an instruction at an odd-word offset.)
+            interrupt_pc = rvc_instr_pc;
+        end else if (ib_outstanding > 0) begin
+            // Genuine in-flight fetches exist inside the IB.  Use the PC of the
+            // FIRST NON-DISCARD outstanding entry (ib_first_active_pc), not
+            // ib_resp_pc (= pc_fifo[rd_ptr]) which may be a stale pre-flush entry.
+            //
+            // Scenario: fetch unit prefetched past a branch target; the branch
+            // was taken, flushing the IB.  The old responses are draining
+            // (discard_cnt > 0) but ib_resp_pc still points to the stale head
+            // (e.g., 0x80000754 — 2 bytes into a 4-byte instruction).  A timer
+            // interrupt fires at this exact moment.  Using ib_resp_pc saves the
+            // wrong mepc; after mret the core fetches a garbled word → Illegal
+            // Instruction.  ib_first_active_pc skips discard entries to the first
+            // genuine (new-path) outstanding entry.
+            //
+            // hold-state refinement: if the RVC expander is in case_d (spanning
+            // 32-bit instruction, lower half in hold, upper half being fetched),
+            // the instruction's PC is hold_pc — ib_first_active_pc would be the
+            // 4-byte aligned address of the SECOND fetch word, which is 2 bytes
+            // too high.  rvc_hold_pc overrides in this case.
+            //
+            // init_offset refinement: when a branch was taken to a halfword-
+            // aligned target (target[1]=1), pc_if is set to the 4-byte aligned
+            // address and init_offset is set so the RVC expander skips the lower
+            // halfword of the first returned word.  The actual first instruction
+            // in that word is at fetch_addr+2.  Add 2 when init_offset=1.
+            interrupt_pc = rvc_hold_valid  ? rvc_hold_pc :
+                           rvc_init_offset ? (ib_first_active_pc + 32'd2) :
+                                             ib_first_active_pc;
+        end else if (imem_resp_valid && !ib_resp_discard) begin
+            // A response is arriving right now for the last outstanding (genuine)
+            // fetch.  ib_resp_pc is correct (not a discard entry).
             interrupt_pc = ib_resp_pc;
         end else begin
             // Pipeline truly empty — pc_if is the next PC to fetch.
@@ -3483,8 +3563,17 @@ module kv32_core #(
     // pipeline has fully drained (IB empty, store buffer empty, icache idle).
     // wfi_sleeping is used instead of the old wfi_stall so that core_sleep_o
     // reflects the post-branch quiescent state, not a mid-EX stall.
+    //
+    // IMPORTANT: ib_discard_pending must also be clear before sleeping.
+    // After a flush (e.g. WFI branch), outstanding drops to 0 while
+    // discard_cnt>0 (responses still in flight for pre-flush fetches).
+    // mem_axi_ro runs on the ungated clock; if core_sleep_o asserts while
+    // discard_cnt>0, the bypass path in mem_axi_ro can fire and consume a
+    // response that kv32_ib (on the gated clock) never sees, causing a
+    // permanent 1-slot desync between the IB pc_fifo and the response stream.
     assign core_sleep_o = wfi_sleeping &&
-                          (ib_outstanding == '0) && !imem_resp_valid &&
+                          (ib_outstanding == '0) && !ib_discard_pending &&
+                          !imem_resp_valid &&
                           !sb_store_pending &&
                           icache_idle_i;
 

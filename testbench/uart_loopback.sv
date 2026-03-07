@@ -7,13 +7,12 @@
 // Useful for testing UART transmit and receive functionality.
 // ============================================================================
 
-module uart_loopback #(
-    parameter CLKS_PER_BIT = 4  // Should match UART baud rate
-)(
-    input  logic clk,
-    input  logic rst_n,
-    input  logic rx,
-    output logic tx
+module uart_loopback (
+    input  logic        clk,
+    input  logic        rst_n,
+    input  logic        rx,
+    output logic        tx,
+    input  logic [15:0] clks_per_bit  // Runtime: CLK_FREQ/BAUD_RATE (e.g. baud_div_r+1)
 );
 
     // RX state
@@ -64,7 +63,7 @@ module uart_loopback #(
                 end
 
                 RX_START: begin
-                    if (rx_clk_count < (CLKS_PER_BIT - 1) / 2) begin
+                    if (rx_clk_count < (clks_per_bit - 1) / 2) begin
                         rx_clk_count <= rx_clk_count + 1;
                     end else begin
                         rx_clk_count <= 16'h0;
@@ -73,7 +72,7 @@ module uart_loopback #(
                 end
 
                 RX_DATA: begin
-                    if (rx_clk_count < (CLKS_PER_BIT - 1)) begin
+                    if (rx_clk_count < (clks_per_bit - 1)) begin
                         rx_clk_count <= rx_clk_count + 1;
                     end else begin
                         rx_clk_count <= 16'h0;
@@ -88,7 +87,7 @@ module uart_loopback #(
                 end
 
                 RX_STOP: begin
-                    if (rx_clk_count < (CLKS_PER_BIT - 1)) begin
+                    if (rx_clk_count < (clks_per_bit - 1)) begin
                         rx_clk_count <= rx_clk_count + 1;
                     end else begin
                         rx_clk_count <= 16'h0;
@@ -129,7 +128,7 @@ module uart_loopback #(
 
                 TX_START: begin
                     tx <= 1'b0;  // Start bit
-                    if (tx_clk_count < (CLKS_PER_BIT - 1)) begin
+                    if (tx_clk_count < (clks_per_bit - 1)) begin
                         tx_clk_count <= tx_clk_count + 1;
                     end else begin
                         tx_clk_count <= 16'h0;
@@ -139,7 +138,7 @@ module uart_loopback #(
 
                 TX_DATA: begin
                     tx <= tx_data[tx_bit_idx];
-                    if (tx_clk_count < (CLKS_PER_BIT - 1)) begin
+                    if (tx_clk_count < (clks_per_bit - 1)) begin
                         tx_clk_count <= tx_clk_count + 1;
                     end else begin
                         tx_clk_count <= 16'h0;
@@ -154,7 +153,7 @@ module uart_loopback #(
 
                 TX_STOP: begin
                     tx <= 1'b1;  // Stop bit
-                    if (tx_clk_count < (CLKS_PER_BIT - 1)) begin
+                    if (tx_clk_count < (clks_per_bit - 1)) begin
                         tx_clk_count <= tx_clk_count + 1;
                     end else begin
                         tx_clk_count <= 16'h0;
