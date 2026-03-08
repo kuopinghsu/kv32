@@ -148,7 +148,22 @@ module axi_arbiter #(
             w_grant  <= W_IDLE_M1;
             w_active <= 1'b0;
         end else begin
-            if (!w_active) begin
+            if (s_axi_bvalid && s_axi_bready) begin
+                // B complete: transition directly to a new transaction if one
+                // is being accepted in the same cycle, otherwise go idle.
+                // This mirrors the axi_xbar B+AW simultaneous handling and
+                // prevents w_active_is_m1 from briefly de-asserting (which
+                // would drop s_axi_wvalid) when B and the next AW coincide.
+                if (w_grant_m1_next && s_axi_awready) begin
+                    w_grant  <= W_IDLE_M1;
+                    w_active <= 1'b1;
+                end else if (w_grant_m2_next && s_axi_awready) begin
+                    w_grant  <= W_IDLE_M2;
+                    w_active <= 1'b1;
+                end else begin
+                    w_active <= 1'b0;
+                end
+            end else if (!w_active) begin
                 if (w_grant_m1_next && s_axi_awready) begin
                     w_grant  <= W_IDLE_M1;
                     w_active <= 1'b1;
@@ -157,8 +172,6 @@ module axi_arbiter #(
                     w_active <= 1'b1;
                 end
             end
-            if (s_axi_bvalid && s_axi_bready)
-                w_active <= 1'b0;
         end
     end
 

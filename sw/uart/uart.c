@@ -133,12 +133,13 @@ static void t8_mei_handler(uint32_t cause)
  * output (which the loopback echoes back) doesn't corrupt the RX buffer. */
 static void t8_flush_uart(void)
 {
-    /* 1. Spin until TX FIFO is empty (LEVEL[13:9] == 0) */
+    /* 1. Spin until TX FIFO is empty (LEVEL[31:16] == 0).
+     *    LEVEL register format: [31:16]=txf_count, [15:0]=rxf_count. */
     uint32_t lvl;
-    do { lvl = KV_UART_LEVEL; } while ((lvl >> 9) & 0x1Fu);
+    do { lvl = KV_UART_LEVEL; } while ((lvl >> 16) != 0u);
     /* 2. Extra wait: enough cycles for last-byte serialisation + loopback
-     *    round-trip. At slowest baud (baud_div=31, 320 cyc/byte): 640 cyc.
-     *    1000 nops × 6.86 CPI (DDR4) = 6860 cyc >> 640 cyc. */
+     *    round-trip. At slowest baud (baud_div=255, 2560 cyc/byte): 5120 cyc.
+     *    1000 nops × ~80 cyc/iter (MEM_READ_LATENCY=16) = 80 000 cyc >> 5120 cyc. */
     for (volatile int i = 0; i < 1000; i++) asm volatile("nop");
     /* 3. Drain everything the loopback echoed back so far */
     while (kv_uart_rx_ready())
@@ -150,11 +151,14 @@ static void t8_flush_uart(void)
 }
 
 static int test8_fifo_irq_transfer(void)
-{    /* Use a lower baud rate so the ISR can drain the RX FIFO fast enough
-     * even when instructions are fetched from slow DDR4 (ICACHE_EN=0).
-     * baud_div=31 → CLKS_PER_BIT=32 → ~3.125 Mbaud @ 100 MHz
-     * byte period = 320 cycles, ISR loop ≈ 70 cycles/byte → safe margin. */
-    kv_uart_init(31);
+{
+    /* Use a very low baud rate so the ISR can drain the RX FIFO fast enough
+     * even at worst-case MEM_READ_LATENCY=16 with ICACHE_EN=0.
+     * At 16-cycle fetch latency, the ISR loop is ~16× slower than at 1-cycle
+     * latency: ~1120 cycles/byte vs the original ~70 cycles/byte estimate.
+     * baud_div=255 → CLKS_PER_BIT=256 → ~391 kbaud @ 100 MHz
+     * byte period = 2560 cycles ≫ 1120 cycles/byte ISR → safe margin. */
+    kv_uart_init(255);
     print("[TEST 8] FIFO Burst TX + IRQ-driven RX\n");
     print("  Transfer : 512 bytes loopback echo\n");
     print("  TX method: 16-byte FIFO bursts (polls TX_BUSY)\n");
@@ -211,10 +215,10 @@ static int test8_fifo_irq_transfer(void)
             errors++;
     }
 
-    /* LEVEL register: bits[13:9]=txf_count, bits[4:0]=rxf_count */
+    /* LEVEL register: bits[31:16]=txf_count, bits[15:0]=rxf_count */
     uint32_t lvl = KV_UART_LEVEL;
-    uint32_t txf = (lvl >> 9) & 0x1Fu;
-    uint32_t rxf =  lvl        & 0x1Fu;
+    uint32_t txf = (uint32_t)(lvl >> 16);
+    uint32_t rxf = (uint32_t)(lvl & 0xFFFFu);
 
     print("  TX bursts sent : "); print_dec(tx_bursts);       print("\n");
     print("  RX received    : "); print_dec(t8_rx_count);     print("\n");
@@ -233,8 +237,9 @@ static int test8_fifo_irq_transfer(void)
 int main(void)
 {
     /* Initialise UART – baud_div=4 gives 20 Mbaud at 100 MHz (CLKS_PER_BIT=5).
-     * Test 8 overrides to baud_div=31 (3.125 Mbaud) for DDR4/high-latency ISR
-     * compatibility; other tests use the magic console for output, not UART. */
+     * Test 8 overrides to baud_div=255 (~391 kbaud) for worst-case latency ISR
+     * compatibility (MEM_READ_LATENCY=16, ICACHE_EN=0); other tests use the
+     * magic console for output, not UART. */
     kv_uart_init(4);
 
     print("\n========================================\n");

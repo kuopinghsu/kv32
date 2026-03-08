@@ -1655,7 +1655,13 @@ module kv32_core #(
                          $root.tb_kv32_soc.dut.clint.mtime, $root.tb_kv32_soc.dut.clint.mtimecmp));
             end else if (wfi_sleeping && (irq_pending || wakeup_i))   // normal WFI wakeup path
                 irq_was_pending <= 1'b0;  // clear: this interrupt legitimately woke the core
-            else if (wfi_active && irq_was_pending)               // WFI in EX consumes the race flag
+            // Consume the race flag only when WFI has reached the actual decision point —
+            // all other wfi_branch guards are satisfied and the flag is the sole reason
+            // WFI completes as NOP rather than sleeping.  Consuming it earlier (while
+            // sb_store_pending=1 stalls WFI) leaves the core unprotected: the flag is gone
+            // but wfi_branch hasn't fired yet, so the next cycle it fires without the guard.
+            else if (wfi_active && irq_was_pending && !irq_pending &&
+                     !sb_store_pending && !exception && !ex_flush)
                 irq_was_pending <= 1'b0;
         end
     end

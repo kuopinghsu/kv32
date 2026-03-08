@@ -15,7 +15,7 @@
 //                  [2]=tx_empty, [3]=rx_full
 //   0x08: IE     - Interrupt Enable: [0]=rx_not_empty_ie, [1]=tx_empty_ie
 //   0x0C: IS     - Interrupt Status (read-only, level): [0]=rx_not_empty, [1]=tx_empty
-//   0x10: LEVEL  - [3:0]=rx_count, [11:8]=tx_count
+//   0x10: LEVEL  - [15:0]=rx_count, [31:16]=tx_count
 //   0x14: CTRL   - [0]=loopback_en (1=internal TX->RX loopback for hardware testing)
 //
 // Interrupt (irq): asserted when (IE & IS) != 0

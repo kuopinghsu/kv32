@@ -237,7 +237,7 @@ static void test3_timer_repeat(void)
  * adds 40–80 cycles; ±50 % covers SRAM, DDR4-1600 and slower variants.
  * ========================================================================= */
 #define T4_PERIOD  2000ULL
-#define T4_MARGIN  1000ULL   /* 50 % of T4_PERIOD – covers DDR4 cache-miss overhead */
+#define T4_MARGIN  1500ULL   /* 75% of T4_PERIOD – covers ISR overhead at MEM_LATENCY=16, single-port, no-icache (~1009 cyc) */
 
 static void test4_timer_timing(void)
 {
@@ -501,7 +501,7 @@ static void test9_post_mret_rewfi(void)
  * (elapsed ≈ 10000 cycles, no spurious wakeups) and handler fires once.
  * ========================================================================= */
 #define T10_PERIOD  10000ULL
-#define T10_MARGIN   1000ULL  /* ~10% margin for PM wakeup latency */
+#define T10_MARGIN   1500ULL  /* 15% margin – covers ISR wakeup overhead at MEM_LATENCY=16, single-port, no-icache (~1009 cyc) */
 
 static void test10_long_sleep(void)
 {
