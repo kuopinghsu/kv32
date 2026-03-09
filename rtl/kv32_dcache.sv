@@ -113,7 +113,14 @@ module kv32_dcache #(
     // Control / Status
     // -------------------------------------------------------------------------
     input  logic        dcache_enable_i,  // 1 = cache enabled
-    output logic        dcache_idle_o     // FSM in S_IDLE (no AXI in-flight)
+    output logic        dcache_idle_o,    // FSM in S_IDLE (no AXI in-flight)
+
+    // PMA (Physical Memory Attributes) from core CSRs
+    // pmacfg byte: [7]=L(lock) [6:5]=rsvd [4:3]=A(match mode) [2]=X(I-cacheable) [1]=C(D-cacheable) [0]=B(bufferable)
+    // pmaaddr: physaddr >> 2, NAPOT-encoded (same as RISC-V PMP convention)
+    // Fallback when no region matches: legacy bit[31]=1 rule
+    input  logic [1:0][31:0] pma_cfg_i,    // pmacfg0 (regions 0-3), pmacfg1 (regions 4-7)
+    input  logic [7:0][31:0] pma_addr_i    // pmaaddr0-7
 
 `ifndef SYNTHESIS
     ,
@@ -213,10 +220,67 @@ module kv32_dcache #(
     logic [31:0]  req_addr_r;
     logic [3:0]   req_we_r;
     logic [31:0]  req_wdata_r;
-    logic         pma_cacheable;
-    logic         use_dcache;
+    logic         pma_cacheable; // PMA: per-request D-cacheable decision
+    logic         use_dcache;     // per-request decision = dcache_enable & pma_cacheable
 
-    assign pma_cacheable = req_addr_r[31];  // bit[31]=1 → RAM 0x8000_0000+
+    // -------------------------------------------------------------------------
+    // PMA checker: 8-region runtime-configurable Physical Memory Attributes
+    // Priority: region 0 > 1 > ... > 7.  Fallback when no hit: bit[31] rule.
+    // -------------------------------------------------------------------------
+    localparam int unsigned KV_PMA_N = kv32_pkg::KV_PMA_NUM;
+
+    logic [7:0]  pma_rcfg    [KV_PMA_N]; // per-region config byte
+    logic [31:0] pma_tor_lo  [KV_PMA_N]; // TOR lower bound
+    logic [31:0] pma_napot_m [KV_PMA_N]; // NAPOT mask = pmaaddr|(pmaaddr+1)
+    logic        pma_rmatch  [KV_PMA_N]; // per-region match
+
+    for (genvar ii = 0; ii < KV_PMA_N; ii++) begin : l_g_pma_cfg
+        if (ii < 4) begin : g_cfg_lo
+            assign pma_rcfg[ii] = pma_cfg_i[0][(ii*8) +: 8];
+        end else begin : g_cfg_hi
+            assign pma_rcfg[ii] = pma_cfg_i[1][((ii-4)*8) +: 8];
+        end
+    end
+
+    for (genvar ii = 0; ii < KV_PMA_N; ii++) begin : l_g_pma_tor
+        if (ii == 0) begin : g_tor_r0
+            assign pma_tor_lo[0] = 32'h0;
+        end else begin : g_tor_rn
+            assign pma_tor_lo[ii] = {pma_addr_i[ii-1][29:0], 2'b00};
+        end
+    end
+
+    for (genvar ii = 0; ii < KV_PMA_N; ii++) begin : l_g_pma_napot
+        assign pma_napot_m[ii] = pma_addr_i[ii] | (pma_addr_i[ii] + 32'd1);
+    end
+
+    for (genvar ii = 0; ii < KV_PMA_N; ii++) begin : l_g_pma_match
+        always_comb begin
+            case (pma_rcfg[ii][4:3])
+                2'b00:   pma_rmatch[ii] = 1'b0; // disabled
+                2'b01:   pma_rmatch[ii] = (req_addr_r >= pma_tor_lo[ii]) &&
+                                           (req_addr_r < {pma_addr_i[ii][29:0], 2'b00}); // TOR
+                2'b10:   pma_rmatch[ii] = ({2'b00, req_addr_r[31:2]} == pma_addr_i[ii]); // NA4
+                default: pma_rmatch[ii] = (({2'b00, req_addr_r[31:2]} & ~pma_napot_m[ii]) ==
+                                           (pma_addr_i[ii] & ~pma_napot_m[ii])); // NAPOT
+            endcase
+        end
+    end
+
+    logic pma_hit;
+    logic pma_attr_c; // D-cacheable attribute from matching region (cfg[1])
+    always_comb begin
+        pma_hit    = 1'b0;
+        pma_attr_c = 1'b0;
+        for (int jj = KV_PMA_N-1; jj >= 0; jj--) begin
+            if (pma_rmatch[jj]) begin
+                pma_hit    = 1'b1;
+                pma_attr_c = pma_rcfg[jj][1]; // C bit
+            end
+        end
+    end
+
+    assign pma_cacheable = pma_hit ? pma_attr_c : req_addr_r[31];
     assign use_dcache    = dcache_enable_i & pma_cacheable;
 
     // Address decomposition from registered address

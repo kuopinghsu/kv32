@@ -109,7 +109,14 @@ module kv32_icache #(
     // ICache idle status: no AXI transaction in-flight.
     // Asserted when the state machine is in S_IDLE (no miss-fill burst active).
     // Used by kv32_core to extend core_sleep_o for safe WFI clock gating.
-    output logic        icache_idle
+    output logic        icache_idle,
+
+    // PMA (Physical Memory Attributes) from core CSRs
+    // pmacfg byte: [7]=L(lock) [6:5]=rsvd [4:3]=A(match mode) [2]=X(I-cacheable) [1]=C(D-cacheable) [0]=B(bufferable)
+    // pmaaddr: physaddr >> 2, NAPOT-encoded (same as RISC-V PMP convention)
+    // Fallback when no region matches: legacy bit[31]=1 rule
+    input  logic [1:0][31:0] pma_cfg_i,    // pmacfg0 (regions 0-3), pmacfg1 (regions 4-7)
+    input  logic [7:0][31:0] pma_addr_i    // pmaaddr0-7
 
 `ifndef SYNTHESIS
     ,
@@ -200,8 +207,9 @@ module kv32_icache #(
     logic [31:0] resp_data_r;
     logic        resp_error_r;
     logic        cache_enable; // 1 = normal, 0 = bypass (CMO-controlled global flag)
-    logic        pma_cacheable; // PMA: req_addr_r[31]=1 → cacheable (RAM), 0 → non-cacheable
+    logic        pma_cacheable; // PMA: per-request I-cacheable decision
     logic        use_cache;     // per-request decision = cache_enable & pma_cacheable
+    logic        use_cache_r;   // latched at S_MISS_AR entry; stable for entire burst
 
     // =========================================================================
     // Address decomposition (from registered request)
@@ -214,11 +222,64 @@ module kv32_icache #(
     assign req_index    = req_addr_r[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS];
     assign req_word_off = req_addr_r[BYTE_OFFSET_BITS-1 : 2];
 
-    // PMA: bit[31]=1 → cacheable (RAM at 0x8000_0000+), 0 → non-cacheable (I/O, NCM)
-    // This implements the Physical Memory Attribute check for the I-cache.
-    // Non-cacheable regions (e.g. NCM at 0x4000_1000) always bypass the cache,
-    // regardless of the CMO-controlled cache_enable flag.
-    assign pma_cacheable = req_addr_r[31];
+    // =========================================================================
+    // PMA checker: 8 programmable regions, priority 0 > 7
+    // pmacfg byte [4:3]=A (00=off,01=TOR,10=NA4,11=NAPOT) [2]=X (I-cacheable)
+    // Falls back to legacy bit[31]=1 rule when no region hits.
+    // =========================================================================
+    localparam int unsigned KV_PMA_N = kv32_pkg::KV_PMA_NUM;
+    logic [7:0]  pma_rcfg    [KV_PMA_N];  // per-region 8-bit cfg byte
+    logic [31:0] pma_tor_lo  [KV_PMA_N];  // TOR lower bound (prev region addr * 4)
+    logic [31:0] pma_napot_m [KV_PMA_N];  // NAPOT: pmaaddr | (pmaaddr + 1)
+    logic        pma_rmatch  [KV_PMA_N];  // address match per region
+    // Extract per-region 8-bit cfg byte from packed CSR words
+    for (genvar ii = 0; ii < KV_PMA_N; ii++) begin : l_g_pma_cfg
+        if (ii < 4) begin : g_cfg_lo
+            assign pma_rcfg[ii] = pma_cfg_i[0][(ii*8) +: 8];
+        end else begin : g_cfg_hi
+            assign pma_rcfg[ii] = pma_cfg_i[1][((ii-4)*8) +: 8];
+        end
+    end
+    // TOR lower bound: previous region address × 4 (or 0 for region 0)
+    for (genvar ii = 0; ii < KV_PMA_N; ii++) begin : l_g_pma_tor
+        if (ii == 0) begin : g_tor_r0
+            assign pma_tor_lo[0] = 32'h0;
+        end else begin : g_tor_rn
+            assign pma_tor_lo[ii] = {pma_addr_i[ii-1][29:0], 2'b00};
+        end
+    end
+    // Pre-compute NAPOT mask per region
+    for (genvar ii = 0; ii < KV_PMA_N; ii++) begin : l_g_pma_napot
+        assign pma_napot_m[ii] = pma_addr_i[ii] | (pma_addr_i[ii] + 32'd1);
+    end
+    // Address match using registered request address
+    for (genvar ii = 0; ii < KV_PMA_N; ii++) begin : l_g_pma_match
+        always_comb begin
+            case (pma_rcfg[ii][4:3])
+                2'b00:   pma_rmatch[ii] = 1'b0;                                    // disabled
+                2'b01:   pma_rmatch[ii] = (req_addr_r >= pma_tor_lo[ii]) &&        // TOR
+                                           (req_addr_r < {pma_addr_i[ii][29:0], 2'b00});
+                2'b10:   pma_rmatch[ii] = ({2'b00, req_addr_r[31:2]} == pma_addr_i[ii]); // NA4
+                default: pma_rmatch[ii] = (({2'b00, req_addr_r[31:2]} & ~pma_napot_m[ii]) ==
+                                           (pma_addr_i[ii] & ~pma_napot_m[ii])); // NAPOT
+            endcase
+        end
+    end
+    // Priority mux: region 0 has highest priority; store winning X (I-cacheable) bit
+    logic pma_hit;
+    logic pma_attr_x;  // X bit from winning region
+    always_comb begin
+        pma_hit    = 1'b0;
+        pma_attr_x = 1'b0;
+        for (int jj = KV_PMA_N-1; jj >= 0; jj--) begin
+            if (pma_rmatch[jj]) begin
+                pma_hit    = 1'b1;
+                pma_attr_x = pma_rcfg[jj][2];  // X bit
+            end
+        end
+    end
+    // I-Cacheable: PMA X bit when a region matches; fallback to legacy bit[31] rule
+    assign pma_cacheable = pma_hit ? pma_attr_x : req_addr_r[31];
     assign use_cache     = cache_enable & pma_cacheable;
 
     // Decomposition directly from the unregistered incoming request address.
@@ -310,7 +371,7 @@ module kv32_icache #(
 
     // Incoming address targets the same cache line currently being filled.
     logic fill_same_line;
-    assign fill_same_line = use_cache && fill_active_r &&
+    assign fill_same_line = use_cache_r && fill_active_r &&
         (imem_req_addr_fill[31:BYTE_OFFSET_BITS] == req_addr_r[31:BYTE_OFFSET_BITS]);
 
     // The AXI beat for the incoming (not-yet-accepted) request is on the bus now.
@@ -401,7 +462,7 @@ module kv32_icache #(
                     // drained in S_FILL_REST / S_RESP after the CPU is unblocked.
                     // Also catches: bypass (axi_rlast on only beat) and the
                     // degenerate single-word-per-line case.
-                    if (axi_rlast || (fill_word_cnt == '0 && use_cache))
+                    if (axi_rlast || (fill_word_cnt == '0 && use_cache_r))
                         next_state = S_RESP;
                 end
             end
@@ -556,6 +617,23 @@ module kv32_icache #(
     end
 
     // =========================================================================
+    // Latch use_cache at AR issue time
+    //   use_cache is combinational (depends on live pma_cfg_i from CSR).  A CSR
+    //   write executing in the core pipeline can change pma_cfg_i mid-burst,
+    //   flipping use_cache while the AXI fill is still in progress.  use_cache_r
+    //   captures the value once — when the state transitions to S_MISS_AR — and
+    //   holds it stable for the entire AR / R phase.  All burst-phase logic
+    //   (axi_arlen/arburst, fill-write enables, state-machine decisions, and the
+    //   p_rlast_on_final_beat assertion) must use use_cache_r, not use_cache.
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            use_cache_r <= 1'b1;
+        else if (state == S_LOOKUP && next_state == S_MISS_AR)
+            use_cache_r <= use_cache;
+    end
+
+    // =========================================================================
     // Fill-pending state registers
     //   Manages a single in-flight same-line hit request accepted while a burst
     //   fill is active.  Data is captured directly from the AXI bus (no SRAM
@@ -633,7 +711,7 @@ module kv32_icache #(
                 resp_error_r <= 1'b0;
             end
             if (state == S_MISS_R && axi_rvalid && axi_rready) begin
-                if (!use_cache) begin
+                if (!use_cache_r) begin
                     // Bypass: single beat (PMA non-cacheable or CMO DISABLE) – capture unconditionally
                     resp_data_r  <= axi_rdata;
                     resp_error_r <= (axi_rresp != 2'b00);
@@ -644,7 +722,7 @@ module kv32_icache #(
                     resp_error_r <= (axi_rresp != 2'b00) | fill_error;
                 end
                 // Always propagate accumulated fill errors on last beat
-                if (axi_rlast && use_cache && fill_error)
+                if (axi_rlast && use_cache_r && fill_error)
                     resp_error_r <= 1'b1;
             end
         end
@@ -810,14 +888,14 @@ module kv32_icache #(
     assign tag_fill_commit = (state == S_MISS_R || state == S_FILL_REST ||
                               (state == S_RESP && fill_active_r))
                              && axi_rvalid && axi_rready
-                             && axi_rlast && use_cache && !fill_error
+                             && axi_rlast && use_cache_r && !fill_error
                              && (axi_rresp == 2'b00);
 
     // Data fill write strobe (every received beat, all fill states)
     logic data_fill_we_s;
     assign data_fill_we_s = (state == S_MISS_R || state == S_FILL_REST ||
                               (state == S_RESP && fill_active_r))
-                            && axi_rvalid && axi_rready && use_cache;
+                            && axi_rvalid && axi_rready && use_cache_r;
 
         for (genvar w = 0; w < CACHE_WAYS; w++) begin : l_g_sram_ctrl
 
@@ -894,10 +972,10 @@ module kv32_icache #(
 
     assign axi_arvalid = (state == S_MISS_AR);
     assign icache_idle = (state == S_IDLE);
-    assign axi_araddr  = use_cache ? ar_addr_cache : ar_addr_bypass;
-    assign axi_arlen   = use_cache ? 8'(WORDS_PER_LINE - 1) : 8'h00;
+    assign axi_araddr  = use_cache_r ? ar_addr_cache : ar_addr_bypass;
+    assign axi_arlen   = use_cache_r ? 8'(WORDS_PER_LINE - 1) : 8'h00;
     assign axi_arsize  = 3'b010;   // 4 bytes per beat
-    assign axi_arburst = use_cache ? AXI_BURST_WRAP : AXI_BURST_INCR;
+    assign axi_arburst = use_cache_r ? AXI_BURST_WRAP : AXI_BURST_INCR;
     // axi_arcache/arprot: constant AXI4 hints; not forwarded by the arbiter.
 
     // Accept beats in S_MISS_R (before early restart) and S_FILL_REST /
@@ -1060,7 +1138,7 @@ module kv32_icache #(
     property p_rlast_on_final_beat;
         @(posedge clk) disable iff (!rst_n)
         (state == S_MISS_R && axi_rvalid && axi_rready && axi_rlast) |->
-            (use_cache
+            (use_cache_r
                 ? (fill_word_cnt == WORD_OFFSET_BITS'(WORDS_PER_LINE - 1))
                 : (fill_word_cnt == '0));
     endproperty

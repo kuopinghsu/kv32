@@ -570,60 +570,51 @@ module axi_xbar (
     end
 
     // Write address channel routing
-    logic [3:0] new_w_dest;              // Computed destination for incoming AW
-    logic block_aw_different_dest;       // Block AW if W pending to different dest
+    logic block_aw_active;               // Block AW while any write transaction is outstanding
 
     always_comb begin
+        // Block new AW while any write transaction is outstanding (single w_id_reg can only
+        // hold one ID at a time).  Allow simultaneous B-complete + new-AW in the same cycle
+        // so the xbar can transition directly without wasting a bubble cycle.
+        // IMPORTANT: gate sN_axi_awvalid with !block_aw_active so the slave does not
+        // accept the new write before it is supposed to.  Without this, a held awvalid
+        // would cause the slave to accept the transaction every cycle awready is high.
+        block_aw_active = w_transaction_active && !(m_axi_bvalid && m_axi_bready);
+
         s0_axi_awaddr  = m_axi_awaddr;
         s0_axi_awlen   = m_axi_awlen;
         s0_axi_awsize  = m_axi_awsize;
         s0_axi_awburst = m_axi_awburst;
-        s0_axi_awvalid = m_axi_awvalid && sel_s0_aw;
+        s0_axi_awvalid = m_axi_awvalid && sel_s0_aw && !block_aw_active;
 
         s1_axi_awaddr  = m_axi_awaddr;
-        s1_axi_awvalid = m_axi_awvalid && sel_s1_aw;
+        s1_axi_awvalid = m_axi_awvalid && sel_s1_aw && !block_aw_active;
 
         s2_axi_awaddr  = m_axi_awaddr;
-        s2_axi_awvalid = m_axi_awvalid && sel_s2_aw;
+        s2_axi_awvalid = m_axi_awvalid && sel_s2_aw && !block_aw_active;
 
         s3_axi_awaddr  = m_axi_awaddr;
-        s3_axi_awvalid = m_axi_awvalid && sel_s3_aw;
+        s3_axi_awvalid = m_axi_awvalid && sel_s3_aw && !block_aw_active;
 
         s4_axi_awaddr  = m_axi_awaddr;
-        s4_axi_awvalid = m_axi_awvalid && sel_s4_aw;
+        s4_axi_awvalid = m_axi_awvalid && sel_s4_aw && !block_aw_active;
 
         s5_axi_awaddr  = m_axi_awaddr;
-        s5_axi_awvalid = m_axi_awvalid && sel_s5_aw;
+        s5_axi_awvalid = m_axi_awvalid && sel_s5_aw && !block_aw_active;
 
         s6_axi_awaddr  = m_axi_awaddr;
-        s6_axi_awvalid = m_axi_awvalid && sel_s6_aw;
+        s6_axi_awvalid = m_axi_awvalid && sel_s6_aw && !block_aw_active;
 
         s7_axi_awaddr  = m_axi_awaddr;
-        s7_axi_awvalid = m_axi_awvalid && sel_s7_aw;
+        s7_axi_awvalid = m_axi_awvalid && sel_s7_aw && !block_aw_active;
 
         s8_axi_awaddr  = m_axi_awaddr;
-        s8_axi_awvalid = m_axi_awvalid && sel_s8_aw;
+        s8_axi_awvalid = m_axi_awvalid && sel_s8_aw && !block_aw_active;
 
         s9_axi_awaddr  = m_axi_awaddr;
-        s9_axi_awvalid = m_axi_awvalid && sel_s9_aw;
+        s9_axi_awvalid = m_axi_awvalid && sel_s9_aw && !block_aw_active;
 
-        // Compute new destination for this AW
-        if (sel_s0_aw) new_w_dest = 4'd0;
-        else if (sel_s1_aw) new_w_dest = 4'd1;
-        else if (sel_s2_aw) new_w_dest = 4'd2;
-        else if (sel_s3_aw) new_w_dest = 4'd3;
-        else if (sel_s4_aw) new_w_dest = 4'd4;
-        else if (sel_s5_aw) new_w_dest = 4'd5;
-        else if (sel_s6_aw) new_w_dest = 4'd6;
-        else if (sel_s7_aw) new_w_dest = 4'd7;
-        else if (sel_s8_aw) new_w_dest = 4'd8;
-        else if (sel_s9_aw) new_w_dest = 4'd9;
-        else new_w_dest = 4'd10;
-
-        // Block new AW if W is pending to a DIFFERENT destination AND transaction is active
-        block_aw_different_dest = w_transaction_active && (m_axi_wvalid && !m_axi_wready) && (new_w_dest != w_sel);
-
-        if (block_aw_different_dest) begin
+        if (block_aw_active) begin
             m_axi_awready = 1'b0;
         end else if (sel_s0_aw)
             m_axi_awready = s0_axi_awready;
@@ -683,9 +674,9 @@ module axi_xbar (
                 if (w_sel == 4'd10) begin
                     write_decode_err_w_done <= 1'b0;
                 end
-                if (m_axi_awvalid) begin
-                    // Simultaneous: B completes AND new AW arrives —
-                    // transition directly to new transaction (stay active).
+                if (m_axi_awvalid && m_axi_awready) begin
+                    // Simultaneous: B completes AND new AW arrives — handshake
+                    // must complete (awready high) before locking in transaction.
                     w_sel <= w_sel_next;
                     w_transaction_active <= 1'b1;
                     `DEBUG2(`DBG_GRP_AXI, ("[XBAR] B+AW simultaneous: w_sel=%0d addr=0x%h", w_sel_next, m_axi_awaddr));
@@ -696,8 +687,8 @@ module axi_xbar (
                     w_transaction_active <= 1'b0;
                     `DEBUG2(`DBG_GRP_AXI, ("[XBAR] B complete, w_transaction_active cleared"));
                 end
-            end else if (m_axi_awvalid && !w_transaction_active) begin
-                // New AW with no competing B this cycle
+            end else if (m_axi_awvalid && m_axi_awready && !w_transaction_active) begin
+                // New AW handshake completed (both valid and ready), capture destination
                 w_sel <= w_sel_next;
                 w_transaction_active <= 1'b1;
                 `DEBUG2(`DBG_GRP_AXI, ("[XBAR] Captured w_sel=%0d from AW addr=0x%h", w_sel_next, m_axi_awaddr));

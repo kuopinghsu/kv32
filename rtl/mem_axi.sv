@@ -55,7 +55,9 @@ module mem_axi #(
     input  logic                     axi_wready,
 
     input  logic [1:0]               axi_bresp,
+    /* verilator lint_off UNUSEDSIGNAL */  // Upper bits unused: bridge uses low ID_BITS as slot index
     input  logic [axi_pkg::AXI_ID_WIDTH-1:0] axi_bid,
+    /* verilator lint_on UNUSEDSIGNAL */
     input  logic                     axi_bvalid,
     output logic                     axi_bready,
 
@@ -66,7 +68,10 @@ module mem_axi #(
 
     input  logic [31:0]              axi_rdata,
     input  logic [1:0]               axi_rresp,
+    /* verilator lint_off UNUSEDSIGNAL */  // Upper bits unused: bridge uses low ID_BITS as slot index
     input  logic [axi_pkg::AXI_ID_WIDTH-1:0] axi_rid,
+    /* verilator lint_on UNUSEDSIGNAL */
+    input  logic                     axi_rlast,   // Always 1 for single-beat; checked by assertion
     input  logic                     axi_rvalid,
     output logic                     axi_rready
 );
@@ -79,6 +84,7 @@ module mem_axi #(
     // Transaction tracking
     // ========================================================================
     localparam int ID_WIDTH = axi_pkg::AXI_ID_WIDTH;
+    localparam int ID_BITS  = $clog2(OUTSTANDING_DEPTH);  // Bits needed to index slots
 
     logic is_read_req;
     logic is_write_req;
@@ -86,38 +92,77 @@ module mem_axi #(
     assign is_read_req  = mem_req_valid && (mem_req_we == 4'h0);
     assign is_write_req = mem_req_valid && (mem_req_we != 4'h0);
 
-    // Use constant ID to enforce in-order responses (no reorder buffer)
-    localparam bit [ID_WIDTH-1:0] CONST_ID = '0;
+    // Per-transaction IDs — each outstanding read/write gets a unique ID
+    // (low ID_BITS bits of a wrapping counter, used as slot index)
+    logic [ID_BITS-1:0] rd_issue_id;   // ARID assigned to next issued read
+    logic [ID_BITS-1:0] wr_issue_id;   // AWID assigned to next issued write
 
-    // Transaction counters to track outstanding requests
+    // Transaction counters (used for outstanding-bounds assertions only)
     logic [$clog2(OUTSTANDING_DEPTH):0] read_outstanding_count;
     logic [$clog2(OUTSTANDING_DEPTH):0] write_outstanding_count;
 
+    // ========================================================================
+    // Read response slots — indexed by ARID
+    // ========================================================================
+    logic [31:0] rd_slot_data [0:OUTSTANDING_DEPTH-1];
+    logic        rd_slot_error[0:OUTSTANDING_DEPTH-1];
+    logic        rd_slot_valid[0:OUTSTANDING_DEPTH-1];  // Response arrived for this slot
+
+    // ========================================================================
+    // Write response slots — indexed by AWID
+    // ========================================================================
+    logic        wr_slot_error[0:OUTSTANDING_DEPTH-1];
+    logic        wr_slot_valid[0:OUTSTANDING_DEPTH-1];  // B response arrived
+
+    // ========================================================================
+    // Order FIFO — records issue order (read vs write + ID) for in-order delivery
+    // ========================================================================
+    localparam int ORDER_DEPTH = OUTSTANDING_DEPTH * 2;
+
+    logic                  order_is_write[0:ORDER_DEPTH-1];
+    logic [ID_BITS-1:0]    order_id      [0:ORDER_DEPTH-1];
+    logic [$clog2(ORDER_DEPTH):0] order_wr_ptr;
+    logic [$clog2(ORDER_DEPTH):0] order_rd_ptr;
+    logic [$clog2(ORDER_DEPTH):0] order_count;
+    logic order_fifo_full;
+
+    assign order_fifo_full = (int'(order_count) >= ORDER_DEPTH);
+
+    // Head-of-order-FIFO signals (combinational)
+    logic                order_head_is_write;
+    logic [ID_BITS-1:0]  order_head_id;
+
+    assign order_head_is_write = order_is_write[order_rd_ptr[$clog2(ORDER_DEPTH)-1:0]];
+    assign order_head_id       = order_id      [order_rd_ptr[$clog2(ORDER_DEPTH)-1:0]];
+
+    // Slots are "full" when the next-to-issue slot still holds an unconsumed response
     logic read_fifo_full;
     logic write_fifo_full;
 
-    assign read_fifo_full  = (int'(read_outstanding_count) >= OUTSTANDING_DEPTH);
-    assign write_fifo_full = (int'(write_outstanding_count) >= OUTSTANDING_DEPTH);
+    assign read_fifo_full  = rd_slot_valid[rd_issue_id];
+    assign write_fifo_full = wr_slot_valid[wr_issue_id];
 
     // ========================================================================
-    // AR Channel (Read Address) - Use constant ID for in-order responses
+    // AR Channel (Read Address) - Use per-transaction rd_issue_id
     // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             axi_arvalid <= 1'b0;
             axi_araddr  <= 32'h0;
-            axi_arid    <= CONST_ID;
+            axi_arid    <= '0;
+            rd_issue_id <= '0;
         end else begin
             if (is_read_req && mem_req_ready && !axi_arvalid) begin
-                // Launch read request on AR channel with constant ID
+                // Launch read request on AR channel with current slot ID
                 axi_arvalid <= 1'b1;
                 axi_araddr  <= mem_req_addr;
-                axi_arid    <= CONST_ID;
-                `DEBUG2(`DBG_GRP_AXI, ("%s: AR launch addr=0x%h id=%0d", BRIDGE_NAME, mem_req_addr, CONST_ID));
+                axi_arid    <= ID_WIDTH'(rd_issue_id);
+                `DEBUG2(`DBG_GRP_AXI, ("%s: AR launch addr=0x%h id=%0d", BRIDGE_NAME, mem_req_addr, rd_issue_id));
             end else if (axi_arvalid && axi_arready) begin
-                // AR handshake complete
+                // AR handshake complete — advance to next slot ID
                 axi_arvalid <= 1'b0;
-                `DEBUG2(`DBG_GRP_AXI, ("%s: AR accepted", BRIDGE_NAME));
+                rd_issue_id <= rd_issue_id + 1'd1;
+                `DEBUG2(`DBG_GRP_AXI, ("%s: AR accepted id=%0d", BRIDGE_NAME, rd_issue_id));
             end
         end
     end
@@ -136,49 +181,32 @@ module mem_axi #(
     end
 
     // ========================================================================
-    // R Channel (Read Data) - Independent reception
-    // Since slaves are AXI4-Lite (in-order), responses arrive in reqorder
+    // R Channel (Read Data) - Receives responses indexed by RID
     // ========================================================================
-    // Response FIFO - Buffer responses to prevent deadlock
-    // ========================================================================
-    // Response FIFO as flat arrays (synthesis-compatible)
-    logic [31:0] fifo_data    [0:OUTSTANDING_DEPTH-1];
-    logic        fifo_error   [0:OUTSTANDING_DEPTH-1];
-    logic        fifo_is_write[0:OUTSTANDING_DEPTH-1];
-    logic [$clog2(OUTSTANDING_DEPTH):0] resp_wr_ptr;
-    logic [$clog2(OUTSTANDING_DEPTH):0] resp_rd_ptr;
-    logic [$clog2(OUTSTANDING_DEPTH):0] resp_count;
-    logic resp_fifo_full;
-
-    logic resp_push_r;
-    logic resp_push_b;
-    logic resp_pop;
-
-    assign resp_push_r = axi_rvalid && axi_rready;
-    assign resp_push_b = (!resp_push_r) && axi_bvalid && axi_bready;
-    assign resp_pop = mem_resp_valid && mem_resp_ready;
-    assign resp_fifo_full = (int'(resp_count) >= OUTSTANDING_DEPTH);
-    assign axi_rready = !resp_fifo_full;  // Accept responses unless FIFO full
+    // axi_rready: ready when the slot for the incoming RID is free
+    assign axi_rready = !rd_slot_valid[axi_rid[ID_BITS-1:0]];
 
     // ========================================================================
-    // AW Channel (Write Address) - Use constant ID for in-order responses
+    // AW Channel (Write Address) - Use per-transaction wr_issue_id
     // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             axi_awvalid <= 1'b0;
             axi_awaddr  <= 32'h0;
-            axi_awid    <= CONST_ID;
+            axi_awid    <= '0;
+            wr_issue_id <= '0;
         end else begin
             if (is_write_req && mem_req_ready && !axi_awvalid) begin
-                // Launch write address on AW channel with constant ID
+                // Launch write address on AW channel with current slot ID
                 axi_awvalid <= 1'b1;
                 axi_awaddr  <= mem_req_addr;
-                axi_awid    <= CONST_ID;
-                `DEBUG2(`DBG_GRP_AXI, ("%s: AW launch addr=0x%h id=%0d", BRIDGE_NAME, mem_req_addr, CONST_ID));
+                axi_awid    <= ID_WIDTH'(wr_issue_id);
+                `DEBUG2(`DBG_GRP_AXI, ("%s: AW launch addr=0x%h id=%0d", BRIDGE_NAME, mem_req_addr, wr_issue_id));
             end else if (axi_awvalid && axi_awready) begin
-                // AW handshake complete
+                // AW handshake complete — advance to next slot ID
                 axi_awvalid <= 1'b0;
-                `DEBUG2(`DBG_GRP_AXI, ("%s: AW accepted", BRIDGE_NAME));
+                wr_issue_id <= wr_issue_id + 1'd1;
+                `DEBUG2(`DBG_GRP_AXI, ("%s: AW accepted id=%0d", BRIDGE_NAME, wr_issue_id));
             end
         end
     end
@@ -222,70 +250,122 @@ module mem_axi #(
         end
     end
 
-    // Accept B response only when the FIFO has space AND the R channel is not
-    // also consuming a read response in this cycle.  The response FIFO has a
-    // single write port; allowing R and B to fire simultaneously would silently
-    // drop the B entry.  Gating axi_bready prevents that double-fire.
-    assign axi_bready = !resp_fifo_full && !axi_rvalid;
+    // axi_bready: ready when the write slot for the incoming BID is free.
+    // R and B now use independent slot arrays so they can be accepted simultaneously.
+    assign axi_bready = !wr_slot_valid[axi_bid[ID_BITS-1:0]];
 
     // ========================================================================
-    // mem_req_ready: Can accept new request when channels and FIFOs have space
+    // mem_req_ready: Can accept new request when channels and slots have space
     // ========================================================================
-    // For pipelined operation with multiple outstanding transactions:
-    // - Allow new read if AR channel is idle and read FIFO has space
-    // - Allow new write if AW+W channels are idle and write FIFO has space
     assign mem_req_ready = !axi_arvalid && !axi_awvalid && !axi_wvalid &&
-                           !read_fifo_full && !write_fifo_full;
+                           !read_fifo_full && !write_fifo_full && !order_fifo_full;
 
     always_ff @(posedge clk) begin
         if (mem_req_valid && !mem_req_ready) begin
-            `DEBUG2(`DBG_GRP_AXI, ("%s: mem_req BLOCKED arvalid=%b awvalid=%b wvalid=%b rd_full=%b wr_full=%b",
-                   BRIDGE_NAME, axi_arvalid, axi_awvalid, axi_wvalid, read_fifo_full, write_fifo_full));
+            `DEBUG2(`DBG_GRP_AXI, ("%s: mem_req BLOCKED arvalid=%b awvalid=%b wvalid=%b rd_full=%b wr_full=%b ord_full=%b",
+                   BRIDGE_NAME, axi_arvalid, axi_awvalid, axi_wvalid, read_fifo_full, write_fifo_full, order_fifo_full));
         end
     end
 
     // ========================================================================
-    // mem_resp: Feed from response FIFO
+    // mem_resp: Deliver in issue order using the order FIFO head
     // ========================================================================
-    assign mem_resp_valid    = (resp_count > 0);
-    assign mem_resp_data     = (resp_count > 0) ? fifo_data    [resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] : '0;
-    assign mem_resp_error    = (resp_count > 0) ? fifo_error   [resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] : 1'b0;
-    assign mem_resp_is_write = (resp_count > 0) ? fifo_is_write[resp_rd_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] : 1'b0;
+    logic head_resp_ready;
+    assign head_resp_ready = (order_count > 0) &&
+                             (order_head_is_write ? wr_slot_valid[order_head_id]
+                                                  : rd_slot_valid[order_head_id]);
 
-    // FIFO management
+    assign mem_resp_valid    = head_resp_ready;
+    assign mem_resp_data     = head_resp_ready && !order_head_is_write
+                               ? rd_slot_data [order_head_id] : '0;
+    assign mem_resp_error    = head_resp_ready
+                               ? (order_head_is_write ? wr_slot_error[order_head_id]
+                                                      : rd_slot_error[order_head_id])
+                               : 1'b0;
+    assign mem_resp_is_write = head_resp_ready && order_head_is_write;
+
+    // ========================================================================
+    // Read response slot management
+    // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            resp_wr_ptr <= '0;
-            resp_rd_ptr <= '0;
-            resp_count <= '0;
+            for (int i = 0; i < OUTSTANDING_DEPTH; i++) begin
+                rd_slot_valid[i] <= 1'b0;
+                rd_slot_data[i]  <= '0;
+                rd_slot_error[i] <= 1'b0;
+            end
         end else begin
-            // Push: AXI R channel response (read)
-            if (resp_push_r) begin
-                fifo_data    [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= axi_rdata;
-                fifo_error   [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= (axi_rresp != 2'b00);
-                fifo_is_write[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= 1'b0;
-                resp_wr_ptr <= resp_wr_ptr + 1'b1;
-                `DEBUG2(`DBG_GRP_AXI, ("%s: R response FIFO push data=0x%h resp=%0d count=%0d", BRIDGE_NAME, axi_rdata, axi_rresp, resp_count + 1));
+            // Receive: store R response at slot indexed by RID
+            if (axi_rvalid && axi_rready) begin
+                rd_slot_data [axi_rid[ID_BITS-1:0]] <= axi_rdata;
+                rd_slot_error[axi_rid[ID_BITS-1:0]] <= (axi_rresp != 2'b00);
+                rd_slot_valid[axi_rid[ID_BITS-1:0]] <= 1'b1;
+                `DEBUG2(`DBG_GRP_AXI, ("%s: R slot[%0d] filled data=0x%h resp=%0d", BRIDGE_NAME, axi_rid[ID_BITS-1:0], axi_rdata, axi_rresp));
             end
-            // Push: AXI B channel response (write)
-            else if (resp_push_b) begin
-                fifo_data    [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= 32'h0;  // Write has no data
-                fifo_error   [resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= (axi_bresp != 2'b00);
-                fifo_is_write[resp_wr_ptr[$clog2(OUTSTANDING_DEPTH)-1:0]] <= 1'b1;
-                resp_wr_ptr <= resp_wr_ptr + 1'b1;
-                `DEBUG2(`DBG_GRP_AXI, ("%s: B response FIFO push bresp=%0d count=%0d", BRIDGE_NAME, axi_bresp, resp_count + 1));
+            // Consume: clear slot when delivered to core
+            if (mem_resp_valid && mem_resp_ready && !order_head_is_write) begin
+                rd_slot_valid[order_head_id] <= 1'b0;
+                `DEBUG2(`DBG_GRP_AXI, ("%s: R slot[%0d] consumed", BRIDGE_NAME, order_head_id));
+            end
+        end
+    end
+
+    // ========================================================================
+    // Write response slot management
+    // ========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < OUTSTANDING_DEPTH; i++) begin
+                wr_slot_valid[i] <= 1'b0;
+                wr_slot_error[i] <= 1'b0;
+            end
+        end else begin
+            // Receive: store B response at slot indexed by BID
+            if (axi_bvalid && axi_bready) begin
+                wr_slot_error[axi_bid[ID_BITS-1:0]] <= (axi_bresp != 2'b00);
+                wr_slot_valid[axi_bid[ID_BITS-1:0]] <= 1'b1;
+                `DEBUG2(`DBG_GRP_AXI, ("%s: B slot[%0d] filled bresp=%0d", BRIDGE_NAME, axi_bid[ID_BITS-1:0], axi_bresp));
+            end
+            // Consume: clear slot when delivered to core
+            if (mem_resp_valid && mem_resp_ready && order_head_is_write) begin
+                wr_slot_valid[order_head_id] <= 1'b0;
+                `DEBUG2(`DBG_GRP_AXI, ("%s: B slot[%0d] consumed", BRIDGE_NAME, order_head_id));
+            end
+        end
+    end
+
+    // ========================================================================
+    // Order FIFO management (tracks mixed read/write issue order)
+    // ========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            order_wr_ptr <= '0;
+            order_rd_ptr <= '0;
+            order_count  <= '0;
+        end else begin
+            // Push: record issued transaction (mem_req_ready implies !axi_ar/awvalid)
+            if (is_read_req && mem_req_ready) begin
+                order_is_write[order_wr_ptr[$clog2(ORDER_DEPTH)-1:0]] <= 1'b0;
+                order_id      [order_wr_ptr[$clog2(ORDER_DEPTH)-1:0]] <= rd_issue_id;
+                order_wr_ptr <= order_wr_ptr + 1'b1;
+                `DEBUG2(`DBG_GRP_AXI, ("%s: order push READ  id=%0d", BRIDGE_NAME, rd_issue_id));
+            end else if (is_write_req && mem_req_ready) begin
+                order_is_write[order_wr_ptr[$clog2(ORDER_DEPTH)-1:0]] <= 1'b1;
+                order_id      [order_wr_ptr[$clog2(ORDER_DEPTH)-1:0]] <= wr_issue_id;
+                order_wr_ptr <= order_wr_ptr + 1'b1;
+                `DEBUG2(`DBG_GRP_AXI, ("%s: order push WRITE id=%0d", BRIDGE_NAME, wr_issue_id));
             end
 
-            // Pop: Core consumes response
-            if (resp_pop) begin
-                resp_rd_ptr <= resp_rd_ptr + 1'b1;
-                `DEBUG2(`DBG_GRP_AXI, ("%s: mem_resp consumed count=%0d", BRIDGE_NAME, resp_count - 1));
+            // Pop: advance head when core consumes response
+            if (mem_resp_valid && mem_resp_ready) begin
+                order_rd_ptr <= order_rd_ptr + 1'b1;
+                `DEBUG2(`DBG_GRP_AXI, ("%s: order pop  %s id=%0d", BRIDGE_NAME, order_head_is_write ? "WRITE" : "READ ", order_head_id));
             end
 
-            case ({resp_push_r || resp_push_b, resp_pop})
-                2'b10: resp_count <= resp_count + 1'b1;
-                2'b01: resp_count <= resp_count - 1'b1;
-                default: resp_count <= resp_count;
+            case ({(is_read_req || is_write_req) && mem_req_ready, mem_resp_valid && mem_resp_ready})
+                2'b10: order_count <= order_count + 1'b1;
+                2'b01: order_count <= order_count - 1'b1;
+                default: ;
             endcase
         end
     end
@@ -324,12 +404,12 @@ module mem_axi #(
     assert property (p_arid_stable)
         else $error("[%s] ARID must remain stable while ARVALID is high", BRIDGE_NAME);
 
-    property p_arid_constant;
+    property p_arid_in_range;
         @(posedge clk) disable iff (!rst_n)
-        axi_arvalid |-> (axi_arid == CONST_ID);
+        axi_arvalid |-> (int'(axi_arid) < OUTSTANDING_DEPTH);
     endproperty
-    assert property (p_arid_constant)
-        else $error("[%s] ARID must be constant (0x%h)", BRIDGE_NAME, CONST_ID);
+    assert property (p_arid_in_range)
+        else $error("[%s] ARID 0x%h out of range (max %0d)", BRIDGE_NAME, axi_arid, OUTSTANDING_DEPTH-1);
 
     // AW Channel (Write Address)
     property p_awvalid_stable;
@@ -353,12 +433,12 @@ module mem_axi #(
     assert property (p_awid_stable)
         else $error("[%s] AWID must remain stable while AWVALID is high", BRIDGE_NAME);
 
-    property p_awid_constant;
+    property p_awid_in_range;
         @(posedge clk) disable iff (!rst_n)
-        axi_awvalid |-> (axi_awid == CONST_ID);
+        axi_awvalid |-> (int'(axi_awid) < OUTSTANDING_DEPTH);
     endproperty
-    assert property (p_awid_constant)
-        else $error("[%s] AWID must be constant (0x%h)", BRIDGE_NAME, CONST_ID);
+    assert property (p_awid_in_range)
+        else $error("[%s] AWID 0x%h out of range (max %0d)", BRIDGE_NAME, axi_awid, OUTSTANDING_DEPTH-1);
 
     // W Channel (Write Data)
     property p_wvalid_stable;
@@ -422,28 +502,36 @@ module mem_axi #(
         else $error("%s: Write outstanding count exceeded: %0d > %0d",
                     BRIDGE_NAME, write_outstanding_count, OUTSTANDING_DEPTH);
 
-    // Response FIFO Integrity
-    property p_resp_fifo_no_overflow;
+    property p_resp_slot_no_overflow_r;
         @(posedge clk) disable iff (!rst_n)
-        ((axi_rvalid && axi_rready) || (axi_bvalid && axi_bready)) |-> !resp_fifo_full;
+        (axi_rvalid && axi_rready) |-> !rd_slot_valid[axi_rid[ID_BITS-1:0]];
     endproperty
-    assert property (p_resp_fifo_no_overflow)
-        else $error("[%s] Response FIFO overflow detected", BRIDGE_NAME);
+    assert property (p_resp_slot_no_overflow_r)
+        else $error("[%s] R slot[%0d] overflow: response arrived before slot was cleared",
+                    BRIDGE_NAME, axi_rid[ID_BITS-1:0]);
 
-    property p_resp_fifo_no_underflow;
+    property p_resp_slot_no_overflow_b;
         @(posedge clk) disable iff (!rst_n)
-        (mem_resp_valid && mem_resp_ready) |-> (resp_count > 0);
+        (axi_bvalid && axi_bready) |-> !wr_slot_valid[axi_bid[ID_BITS-1:0]];
     endproperty
-    assert property (p_resp_fifo_no_underflow)
-        else $error("[%s] Response FIFO underflow detected", BRIDGE_NAME);
+    assert property (p_resp_slot_no_overflow_b)
+        else $error("[%s] B slot[%0d] overflow: response arrived before slot was cleared",
+                    BRIDGE_NAME, axi_bid[ID_BITS-1:0]);
 
-    property p_resp_count_bounds;
+    property p_resp_order_no_underflow;
         @(posedge clk) disable iff (!rst_n)
-        int'(resp_count) <= OUTSTANDING_DEPTH;
+        (mem_resp_valid && mem_resp_ready) |-> (order_count > 0);
     endproperty
-    assert property (p_resp_count_bounds)
-        else $error("[%s] Response FIFO count exceeded: %0d > %0d",
-                    BRIDGE_NAME, resp_count, OUTSTANDING_DEPTH);
+    assert property (p_resp_order_no_underflow)
+        else $error("[%s] Order FIFO underflow detected", BRIDGE_NAME);
+
+    property p_resp_order_count_bounds;
+        @(posedge clk) disable iff (!rst_n)
+        int'(order_count) <= ORDER_DEPTH;
+    endproperty
+    assert property (p_resp_order_count_bounds)
+        else $error("[%s] Order FIFO count exceeded: %0d > %0d",
+                    BRIDGE_NAME, order_count, ORDER_DEPTH);
 
     // Mutual Exclusivity
     property p_read_write_mutex;
@@ -455,10 +543,11 @@ module mem_axi #(
 
     property p_rb_mutex;
         @(posedge clk) disable iff (!rst_n)
-        !(axi_rvalid && axi_bvalid && axi_rready && axi_bready);
+        !(axi_rvalid && axi_bvalid && axi_rready && axi_bready &&
+          (axi_rid[ID_BITS-1:0] == axi_bid[ID_BITS-1:0]));
     endproperty
     assert property (p_rb_mutex)
-        else $warning("[%s] R and B responses both accepted in same cycle", BRIDGE_NAME);
+        else $warning("[%s] R and B responses accepted simultaneously with same slot index", BRIDGE_NAME);
 
     // X/Z Detection
     property p_no_x_mem_req_valid;
@@ -532,12 +621,13 @@ module mem_axi #(
     assert property (p_mem_resp_stable)
         else $error("[%s] mem_resp signals must remain stable until mem_resp_ready", BRIDGE_NAME);
 
-`ifndef SYNTHESIS
-    // Lint sink (debug only): AXI BID/RID required by protocol but not used
-    // by this point-to-point memory bridge.
-    logic _unused_ok;
-    assign _unused_ok = &{1'b0, axi_bid, axi_rid};
-`endif // SYNTHESIS
+    // Single-beat bridge: every read response must be the last (and only) beat.
+    property p_rlast_single_beat;
+        @(posedge clk) disable iff (!rst_n)
+        axi_rvalid |-> axi_rlast;
+    endproperty
+    assert property (p_rlast_single_beat)
+        else $error("[%s] axi_rlast must be 1 for single-beat read response", BRIDGE_NAME);
 
 `endif // ASSERTION
 

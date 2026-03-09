@@ -329,6 +329,183 @@ def normalize_rtl_trace(traces):
         normalized.append(entry)
     return normalized
 
+def _parse_rtl_entry(line):
+    """
+    Full parse of one raw RTL trace line into an entry dict.
+    Used by compare_rtl_rtl_streaming for mismatching lines only.
+    Returns None if the line does not match the RTL trace format.
+    """
+    m = _RTL_LINE_RE.match(line)
+    if not m:
+        return None
+    cycle_s, pc_s, instr_s, reg_name, reg_val_s, mem_addr_s, mem_val_s = m.groups()
+    instr_val = int(instr_s, 16)
+    opcode    = instr_val & 0x7f
+    is_load  = opcode == 0x03
+    is_store = opcode == 0x23
+    is_amo   = opcode == 0x2f
+    if opcode == 0x73:
+        funct3        = (instr_val >> 12) & 0x7
+        csr_addr_bits = (instr_val >> 20) & 0xfff
+        is_cycle_csr  = funct3 != 0 and csr_addr_bits in _CYCLE_CSRS
+        is_csr_rw     = funct3 in _CSR_RW_FUNCT3
+    else:
+        is_cycle_csr = False
+        is_csr_rw    = False
+    reg_write = (reg_name, int(reg_val_s, 16)) if reg_name is not None else None
+    if mem_addr_s is not None:
+        addr = int(mem_addr_s, 16)
+        val  = int(mem_val_s, 16) if mem_val_s is not None else 0
+        mem_access = (addr, val,
+                      'write' if is_store else 'read' if is_load else 'unknown')
+    else:
+        mem_access = None
+    semi   = line.find('; ')
+    disasm = line[semi + 2:].rstrip() if semi != -1 else None
+    csr_access = None
+    if 'csr' in line:
+        cm = _CSR_FIELD_RE.search(line)
+        if cm:
+            csr_access = (cm.group(1), int(cm.group(2), 16), 'access')
+    return {
+        'cycle':        int(cycle_s),
+        'pc':           int(pc_s, 16),
+        'instr':        instr_val,
+        'opcode':       opcode,
+        'is_load':      is_load,
+        'is_store':     is_store,
+        'is_amo':       is_amo,
+        'is_cycle_csr': is_cycle_csr,
+        'is_csr_rw':    is_csr_rw,
+        'trace_type':   'rtl',
+        'line':         line.rstrip(),
+        'disasm':       disasm,
+        'reg_write':    reg_write,
+        'mem_access':   mem_access,
+        'csr_access':   csr_access,
+    }
+
+def compare_rtl_rtl_streaming(fname1, fname2):
+    """
+    Streaming comparison of two RTL-format trace files.
+
+    For the common case where entries match, only two cheap string operations
+    are needed per line:
+      1. Strip the leading cycle counter  (line.index + slice)
+      2. Compare bodies                   (single C-level string equality)
+    No regex, no dict, no int parsing for the matching ~99%+ of entries.
+    Full parse is deferred to the rare mismatching lines (cycle-CSR value
+    differences, or real correctness bugs).
+
+    Consecutive duplicate (PC, INSTR) entries from RTL pipeline stalls are
+    collapsed inline (same semantics as normalize_rtl_trace).
+    """
+    _KEY_LEN = 24  # fixed length of "0x80000000 (0x30401073)"
+
+    def _iter(filename):
+        """Yield (body_stripped, raw_line) for each unique RTL trace entry."""
+        prev_key = None
+        with open(filename, 'r', buffering=4 << 20) as f:
+            for line in f:
+                fc = line[0] if line else ''
+                if fc < '0' or fc > '9':
+                    continue
+                sp   = line.index(' ')
+                off  = sp + 1
+                key  = line[off : off + _KEY_LEN]
+                if key == prev_key:
+                    continue
+                prev_key = key
+                yield line[off:].rstrip(), line
+
+    print("Detected formats: rtl (REF) vs rtl (TGT)\n")
+
+    iter1 = _iter(fname1)
+    iter2 = _iter(fname2)
+    mismatches = 0
+    entry_num  = 0
+    n1 = n2    = 0
+
+    try:
+        while True:
+            b1, l1 = next(iter1);  n1 += 1
+            b2, l2 = next(iter2);  n2 += 1
+            entry_num += 1
+
+            # ── Ultra-fast path: single string comparison, zero allocations ─
+            if b1 == b2:
+                continue
+
+            # ── Slow path: full parse for cycle-CSR tolerance + reporting ───
+            t1 = _parse_rtl_entry(l1)
+            t2 = _parse_rtl_entry(l2)
+            if t1 is None or t2 is None:
+                continue
+
+            pc_match    = t1['pc']    == t2['pc']
+            instr_match = t1['instr'] == t2['instr']
+            reg_match, _ = _reg_match_result(t1, t2)
+            mem_match     = t1['mem_access'] == t2['mem_access']
+            csr1, csr2    = t1.get('csr_access'), t2.get('csr_access')
+            if csr1 and csr2:
+                csr_match = (normalize_csr_name(csr1[0]) == normalize_csr_name(csr2[0])
+                             and csr1[1] == csr2[1])
+            else:
+                csr_match = csr1 == csr2
+
+            if pc_match and instr_match and reg_match and mem_match and csr_match:
+                continue  # e.g. cycle-CSR with same written value
+
+            disasm1 = f" ; {t1['disasm']}" if t1.get('disasm') else ""
+            disasm2 = f" ; {t2['disasm']}" if t2.get('disasm') else ""
+            print(f"\nMismatch at entry {entry_num}:")
+            print(f"  REF: PC=0x{t1['pc']:08x} INSTR=0x{t1['instr']:08x}{disasm1}")
+            print(f"  TGT: PC=0x{t2['pc']:08x} INSTR=0x{t2['instr']:08x}{disasm2}")
+            if not pc_match or not instr_match:
+                print("  >>> PC/Instruction mismatch <<<")
+            if not reg_match:
+                r1, r2 = t1.get('reg_write'), t2.get('reg_write')
+                print(f"  REF reg: {r1[0]}=0x{r1[1]:08x}" if r1 else "  REF reg: none")
+                print(f"  TGT reg: {r2[0]}=0x{r2[1]:08x}" if r2 else "  TGT reg: none")
+            if not mem_match:
+                m1, m2 = t1.get('mem_access'), t2.get('mem_access')
+                print(f"  REF mem: {m1[2]} addr=0x{m1[0]:08x} data=0x{m1[1]:08x}" if m1 else "  REF mem: none")
+                print(f"  TGT mem: {m2[2]} addr=0x{m2[0]:08x} data=0x{m2[1]:08x}" if m2 else "  TGT mem: none")
+            if not csr_match:
+                print(f"  REF csr: {csr1[0]}=0x{csr1[1]:08x}" if csr1 else "  REF csr: none")
+                print(f"  TGT csr: {csr2[0]}=0x{csr2[1]:08x}" if csr2 else "  TGT csr: none")
+            mismatches += 1
+            if mismatches >= 10:
+                print("\n... stopping after 10 mismatches")
+                break
+    except StopIteration:
+        pass
+
+    # Drain the longer stream for accurate length reporting
+    for _ in iter1:
+        n1 += 1
+    for _ in iter2:
+        n2 += 1
+
+    print(f"REF (RTL) entries: {n1}")
+    print(f"TGT (RTL) entries: {n2}")
+    if mismatches == 0:
+        if n1 == n2:
+            print("\n[PASS] Traces match perfectly!")
+            return 0
+        elif n1 < n2:
+            print(f"\n[PASS] All {n1} REF instructions match TGT")
+            print(f"  (TGT continued for {n2 - n1} more instructions)")
+            return 0
+        else:
+            print(f"\n[PASS] All TGT instructions matched, but REF has {n1 - n2} extra entries")
+            return 0
+    else:
+        print(f"\n[FAIL] Found {mismatches} mismatches")
+        if n1 != n2:
+            print(f"  Length mismatch: REF={n1} TGT={n2}")
+        return 1
+
 def _reg_match_result(t1, t2):
     """
     Compare the reg_write fields of two trace entries and return
@@ -752,6 +929,14 @@ Examples:
             # Auto-detect trace formats
             type1 = detect_trace_type(args.trace1)
             type2 = detect_trace_type(args.trace2)
+
+            # RTL-vs-RTL: use the streaming fast path.  This avoids running the
+            # full regex + dict allocation for the ~99%+ of lines that match;
+            # only mismatching lines are fully parsed.  Also handles in-line
+            # dedup of consecutive (PC, INSTR) stall-duplicate entries.
+            if type1 == 'rtl' and type2 == 'rtl':
+                result = compare_rtl_rtl_streaming(args.trace1, args.trace2)
+                sys.exit(result)
 
             print(f"Detected formats: {type1} (REF) vs {type2} (TGT)\n")
 

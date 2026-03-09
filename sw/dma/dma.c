@@ -15,6 +15,7 @@
 #include "kv_cap.h"
 #include "kv_plic.h"
 #include "kv_irq.h"
+#include "kv_cache.h"
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
@@ -124,11 +125,15 @@ static void test2_1d_poll(void)
     volatile uint8_t *s = (volatile uint8_t *)buf_src0;
     volatile uint8_t *d = (volatile uint8_t *)buf_dst0;
     for (int i = 0; i < 64; i++) { s[i] = (uint8_t)(0xAA ^ i); d[i] = 0; }
+    kv_dcache_flush_range(buf_src0, 64);   /* writeback src so DMA sees fresh data  */
+    kv_dcache_inval_range(buf_dst0, 64);   /* discard stale dst lines before DMA    */
     __asm__ volatile("fence" ::: "memory");
 
     int r = kv_dma_1d_copy(0, (uint32_t)(uintptr_t)buf_src0,
                                (uint32_t)(uintptr_t)buf_dst0, 64);
     kv_dma_ch_reset(0);
+
+    kv_dcache_inval_range(buf_dst0, 64);   /* invalidate dst so CPU reads DMA result */
 
     if (r != 0) {
         TEST_FAIL(2, "AXI error");
@@ -146,6 +151,8 @@ static void test3_1d_irq(void)
     volatile uint8_t *s = (volatile uint8_t *)buf_src1;
     volatile uint8_t *d = (volatile uint8_t *)buf_dst1;
     for (int i = 0; i < 128; i++) { s[i] = (uint8_t)(0x5A + i); d[i] = 0; }
+    kv_dcache_flush_range(buf_src1, 128);  /* writeback src so DMA sees fresh data  */
+    kv_dcache_inval_range(buf_dst1, 128);  /* discard stale dst lines before DMA    */
     __asm__ volatile("fence" ::: "memory");
 
     g_irq_fired = 0;
@@ -183,6 +190,8 @@ static void test3_1d_irq(void)
     kv_dma_ch_reset(1);
     kv_dma_disable_irq(1);
 
+    kv_dcache_inval_range(buf_dst1, 128);  /* invalidate dst so CPU reads DMA result */
+
     int e = dma_verify(buf_src1, buf_dst1, 128, "1D-irq");
     if (e == 0) TEST_PASS(3); else TEST_FAIL(3, "data mismatch");
 }
@@ -202,6 +211,8 @@ static void test4_2d(void)
     volatile uint8_t *d = (volatile uint8_t *)buf_dst2;
     for (int i = 0; i < 128; i++) { s[i] = (uint8_t)(0x10 + i); }
     for (int i = 0; i < 64;  i++) { d[i] = 0; }
+    kv_dcache_flush_range(buf_src2, 128);  /* writeback src so DMA sees fresh data  */
+    kv_dcache_inval_range(buf_dst2, 64);   /* discard stale dst lines before DMA    */
     __asm__ volatile("fence" ::: "memory");
 
     /* 4 rows × 16 bytes/row; src_stride=32, dst_stride=16 */
@@ -210,6 +221,8 @@ static void test4_2d(void)
                 (uint32_t)(uintptr_t)buf_dst2,
                 16, 4, 32, 16);
     kv_dma_ch_reset(2);
+
+    kv_dcache_inval_range(buf_dst2, 64);   /* invalidate dst so CPU reads DMA result */
 
     if (r != 0) {
         TEST_FAIL(4, "AXI error");
@@ -251,6 +264,8 @@ static void test5_3d(void)
     volatile uint8_t *d = (volatile uint8_t *)buf_dst3;
     for (int i = 0; i < 128; i++) { s[i] = (uint8_t)(0x20 + i); }
     for (int i = 0; i < 32;  i++) { d[i] = 0; }
+    kv_dcache_flush_range(buf_src3, 128);  /* writeback src so DMA sees fresh data  */
+    kv_dcache_inval_range(buf_dst3, 32);   /* discard stale dst lines before DMA    */
     __asm__ volatile("fence" ::: "memory");
 
     /* 2 planes × 2 rows × 8 bytes; src_stride=16 dst_stride=8 src_pstride=64 dst_pstride=16 */
@@ -259,6 +274,8 @@ static void test5_3d(void)
                 (uint32_t)(uintptr_t)buf_dst3,
                 8, 2, 2, 16, 8, 64, 16);
     kv_dma_ch_reset(3);
+
+    kv_dcache_inval_range(buf_dst3, 32);   /* invalidate dst so CPU reads DMA result */
 
     if (r != 0) {
         TEST_FAIL(5, "AXI error");
@@ -315,10 +332,15 @@ static void test6_sg(void)
     sg_descs[2].dst_addr  = (uint32_t)(uintptr_t)(buf_sg_dst + 48);
     sg_descs[2].xfer_cnt  = 16;
     sg_descs[2].mode_ctrl = 0x0Cu;
+    kv_dcache_flush_range(buf_sg_src, 64);   /* writeback src so DMA sees fresh data  */
+    kv_dcache_flush_range(sg_descs, sizeof(sg_descs)); /* writeback descriptor table */
+    kv_dcache_inval_range(buf_sg_dst, 64);   /* discard stale dst lines before DMA    */
     __asm__ volatile("fence" ::: "memory");
 
     int r = kv_dma_sg_copy(0, (uint32_t)(uintptr_t)sg_descs, 3);
     kv_dma_ch_reset(0);
+
+    kv_dcache_inval_range(buf_sg_dst, 64);   /* invalidate dst so CPU reads DMA result */
 
     if (r != 0) {
         TEST_FAIL(6, "AXI error");
@@ -390,6 +412,10 @@ static void test8_multi_ch(void)
 
     for (int i = 0; i < 64; i++) { s0[i] = (uint8_t)(0xC0 + i); d0[i] = 0; }
     for (int i = 0; i < 64; i++) { s1[i] = (uint8_t)(0x80 + i); d1[i] = 0; }
+    kv_dcache_flush_range(buf_src4, 64);   /* writeback src0 so DMA sees fresh data */
+    kv_dcache_flush_range(buf_src5, 64);   /* writeback src1 so DMA sees fresh data */
+    kv_dcache_inval_range(buf_dst4, 64);   /* discard stale dst0 lines before DMA  */
+    kv_dcache_inval_range(buf_dst5, 64);   /* discard stale dst1 lines before DMA  */
     __asm__ volatile("fence" ::: "memory");
 
     kv_dma_ch_reset(0);
@@ -416,6 +442,9 @@ static void test8_multi_ch(void)
     int r1 = kv_dma_ch_wait(1);
     kv_dma_ch_reset(0);
     kv_dma_ch_reset(1);
+
+    kv_dcache_inval_range(buf_dst4, 64);   /* invalidate dst0 so CPU reads DMA result */
+    kv_dcache_inval_range(buf_dst5, 64);   /* invalidate dst1 so CPU reads DMA result */
 
     if (r0 != 0 || r1 != 0) {
         printf("  ch0_result=%d ch1_result=%d\n", r0, r1);
@@ -446,6 +475,8 @@ static void test9_perf(void)
     KV_DMA_CH_REG(0, KV_DMA_CH_XFER_OFF) = XFER_BYTES;
     KV_DMA_CH_REG(0, KV_DMA_CH_CTRL_OFF) = KV_DMA_CTRL_EN | KV_DMA_CTRL_SRC_INC |
                                             KV_DMA_CTRL_DST_INC | KV_DMA_CTRL_MODE_1D;
+    kv_dcache_flush_range(perf_src, XFER_BYTES);  /* writeback src so DMA sees fresh data  */
+    kv_dcache_inval_range(perf_dst, XFER_BYTES);  /* discard stale dst lines before DMA    */
     __asm__ volatile("fence" ::: "memory");
 
     /* ----- Reset + enable performance counters, then start transfer ----- */
@@ -460,6 +491,8 @@ static void test9_perf(void)
     uint32_t wr_bytes = kv_dma_perf_get_wr_bytes();
     uint32_t total    = rd_bytes + wr_bytes;
     kv_dma_ch_reset(0);
+
+    kv_dcache_inval_range(perf_dst, XFER_BYTES);  /* invalidate dst so CPU reads DMA result */
 
     /* ----- Compute throughput in MB/s (use uint64 to avoid overflow) ----- */
     /* throughput = total_bytes * SYS_CLK_HZ / (cycles * 1048576) */

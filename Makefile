@@ -67,7 +67,7 @@ TEST_DIRS = $(shell find $(SW_DIR) -mindepth 1 -maxdepth 1 -type d ! -name commo
 TEST_NAMES = $(notdir $(TEST_DIRS))
 
 # Tests to compare (exclude I/O-dependent tests that require external peripherals)
-COMPARE_EXCLUDE = full i2c uart spi dma gpio timer wfi
+COMPARE_EXCLUDE = full i2c uart spi dma dcache gpio timer wfi rtos
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
 # Tests to run under Spike (excludes tests not supported by Spike; override with SPIKE_TESTS=<list>)
@@ -231,13 +231,22 @@ ifneq ($(STRETCH),0)
 endif
 
 # I-cache defaults (set before ifdef blocks so ?= assignments take effect)
-ICACHE_EN    ?= 1
-ICACHE_SIZE  ?= 4096
-ICACHE_LINE_SIZE ?= 32
-ICACHE_WAYS  ?= 2
+ICACHE_EN           ?= 1
+ICACHE_SIZE         ?= 4096
+ICACHE_LINE_SIZE    ?= 32
+ICACHE_WAYS         ?= 2
+
+# D-cache defaults
+DCACHE_EN           ?= 0
+DCACHE_SIZE         ?= 4096
+DCACHE_LINE_SIZE    ?= 32
+DCACHE_WAYS         ?= 2
+DCACHE_WRITE_BACK   ?= 1
+DCACHE_WRITE_ALLOC  ?= 1
 
 # Pass I-cache enable to SW compiler so tests can skip when cache is absent
 CFLAGS += -DICACHE_EN=$(ICACHE_EN)
+CFLAGS += -DDCACHE_EN=$(DCACHE_EN)
 
 # I-cache: ICACHE_EN=0 disables the cache (uses mem_axi_ro bypass), default=1
 ifdef ICACHE_EN
@@ -253,6 +262,26 @@ ifdef ICACHE_WAYS
   VERILATOR_FLAGS += -pvalue+ICACHE_WAYS=$(ICACHE_WAYS)
 endif
 
+# D-cache: DCACHE_EN=0 disables the cache (uses mem_axi bridge), default=1
+ifdef DCACHE_EN
+  VERILATOR_FLAGS += -pvalue+DCACHE_EN=$(DCACHE_EN)
+endif
+ifdef DCACHE_SIZE
+  VERILATOR_FLAGS += -pvalue+DCACHE_SIZE=$(DCACHE_SIZE)
+endif
+ifdef DCACHE_LINE_SIZE
+  VERILATOR_FLAGS += -pvalue+DCACHE_LINE_SIZE=$(DCACHE_LINE_SIZE)
+endif
+ifdef DCACHE_WAYS
+  VERILATOR_FLAGS += -pvalue+DCACHE_WAYS=$(DCACHE_WAYS)
+endif
+ifdef DCACHE_WRITE_BACK
+  VERILATOR_FLAGS += -pvalue+DCACHE_WRITE_BACK=$(DCACHE_WRITE_BACK)
+endif
+ifdef DCACHE_WRITE_ALLOC
+  VERILATOR_FLAGS += -pvalue+DCACHE_WRITE_ALLOC=$(DCACHE_WRITE_ALLOC)
+endif
+
 # Stamp file to detect compile-time parameter changes and force rebuild of kv32soc.
 # Each variable that is passed to Verilator at elaboration time must be listed here.
 # When any value differs from the previous build the stamp file is updated, which
@@ -262,14 +291,14 @@ FAST_DIV     ?= 1
 COVERAGE     ?= 0
 DEBUG        ?=
 DEBUG_GROUP  ?=
-# Pass I-cache parameters to C++ testbench for stats reporting
-VERILATOR_FLAGS += -CFLAGS "-DICACHE_EN=$(ICACHE_EN) -DICACHE_SIZE=$(ICACHE_SIZE) -DICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) -DICACHE_WAYS=$(ICACHE_WAYS)"
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) ASSERT=$(ASSERT) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP) COVERAGE=$(COVERAGE) MEM_READ_LATENCY=$(MEM_READ_LATENCY) MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY) MEM_DUAL_PORT=$(MEM_DUAL_PORT) MEM_TYPE=$(MEM_TYPE) STRETCH=$(STRETCH)
+# Pass I-cache and D-cache parameters to C++ testbench for stats reporting
+VERILATOR_FLAGS += -CFLAGS "-DICACHE_EN=$(ICACHE_EN) -DICACHE_SIZE=$(ICACHE_SIZE) -DICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) -DICACHE_WAYS=$(ICACHE_WAYS) -DDCACHE_EN=$(DCACHE_EN) -DDCACHE_SIZE=$(DCACHE_SIZE) -DDCACHE_LINE_SIZE=$(DCACHE_LINE_SIZE) -DDCACHE_WAYS=$(DCACHE_WAYS) -DDCACHE_WRITE_BACK=$(DCACHE_WRITE_BACK)"
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) ICACHE_EN=$(ICACHE_EN) ICACHE_SIZE=$(ICACHE_SIZE) ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) ICACHE_WAYS=$(ICACHE_WAYS) DCACHE_EN=$(DCACHE_EN) DCACHE_SIZE=$(DCACHE_SIZE) DCACHE_LINE_SIZE=$(DCACHE_LINE_SIZE) DCACHE_WAYS=$(DCACHE_WAYS) DCACHE_WRITE_BACK=$(DCACHE_WRITE_BACK) DCACHE_WRITE_ALLOC=$(DCACHE_WRITE_ALLOC) ASSERT=$(ASSERT) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP) COVERAGE=$(COVERAGE) MEM_READ_LATENCY=$(MEM_READ_LATENCY) MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY) MEM_DUAL_PORT=$(MEM_DUAL_PORT) MEM_TYPE=$(MEM_TYPE) STRETCH=$(STRETCH)
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
 
 # SW params stamp: tracks CFLAGS defines passed to the RISC-V compiler.
-# When ICACHE_EN (or any future -D flag) changes, all .elf files are rebuilt.
-SW_BUILD_PARAMS  = ICACHE_EN=$(ICACHE_EN)
+# When ICACHE_EN/DCACHE_EN (or any future -D flag) changes, all .elf files are rebuilt.
+SW_BUILD_PARAMS  = ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN)
 SW_PARAMS_STAMP  = $(BUILD_DIR)/.sw_build_params
 
 # Verilator lint-only flags (all warnings enabled, -Werror-IMPLICIT, no simulation output)
@@ -284,11 +313,15 @@ VERILATOR_LINT_FLAGS += --assert
 VERILATOR_LINT_FLAGS += -pvalue+FAST_MUL=$(FAST_MUL) -pvalue+FAST_DIV=$(FAST_DIV)
 VERILATOR_LINT_FLAGS += -pvalue+ICACHE_EN=$(ICACHE_EN) -pvalue+ICACHE_SIZE=$(ICACHE_SIZE)
 VERILATOR_LINT_FLAGS += -pvalue+ICACHE_LINE_SIZE=$(ICACHE_LINE_SIZE) -pvalue+ICACHE_WAYS=$(ICACHE_WAYS)
+VERILATOR_LINT_FLAGS += -pvalue+DCACHE_EN=$(DCACHE_EN) -pvalue+DCACHE_SIZE=$(DCACHE_SIZE)
+VERILATOR_LINT_FLAGS += -pvalue+DCACHE_LINE_SIZE=$(DCACHE_LINE_SIZE) -pvalue+DCACHE_WAYS=$(DCACHE_WAYS)
+VERILATOR_LINT_FLAGS += -pvalue+DCACHE_WRITE_BACK=$(DCACHE_WRITE_BACK) -pvalue+DCACHE_WRITE_ALLOC=$(DCACHE_WRITE_ALLOC)
 VERILATOR_LINT_FLAGS += -pvalue+MEM_READ_LATENCY=$(MEM_READ_LATENCY)
 VERILATOR_LINT_FLAGS += -pvalue+MEM_WRITE_LATENCY=$(MEM_WRITE_LATENCY)
 VERILATOR_LINT_FLAGS += -pvalue+MEM_DUAL_PORT=$(MEM_DUAL_PORT)
-ifeq ($(MEM_TYPE),ddr4)
+ifneq ($(filter ddr4-%,$(MEM_TYPE)),)
   VERILATOR_LINT_FLAGS += +define+MEM_TYPE_DDR4
+  VERILATOR_LINT_FLAGS += -pvalue+DDR4_SPEED_GRADE=$(DDR4_SPEED_GRADE)
 endif
 
 # RTL-only sources (no testbench) used for per-module lint
@@ -306,7 +339,7 @@ LINT_MODULE_LIST = $(filter-out %_pkg.sv, $(RTL_ONLY_SRCS))
 LINT_MOD_FLAGS  = --lint-only -Wall -Wno-UNSIGNED -sv --timing
 LINT_MOD_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM -Wno-SYNCASYNCNET -Werror-IMPLICIT
 LINT_MOD_FLAGS += -I$(MEM_DIR) -I$(CORE_DIR) -I$(RTL_DIR)
-ifeq ($(MEM_TYPE),ddr4)
+ifneq ($(filter ddr4-%,$(MEM_TYPE)),)
   LINT_MOD_FLAGS += +define+MEM_TYPE_DDR4
 endif
 

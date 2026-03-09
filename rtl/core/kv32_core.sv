@@ -106,9 +106,20 @@ module kv32_core #(
     input  logic        icache_cmo_ready,   // Icache ready to accept CMO
     input  logic        icache_idle_i,      // ICache has no AXI transaction in-flight (S_IDLE)
 
+    // D-Cache CMO interface (driven from MEM stage for FENCE.I, cbo.flush, cbo.inval)
+    output logic        dcache_cmo_valid,   // CMO request to dcache
+    output logic [1:0]  dcache_cmo_op,      // CMO operation
+    output logic [31:0] dcache_cmo_addr,    // CMO target address
+    input  logic        dcache_cmo_ready,   // Dcache ready to accept CMO
+    input  logic        dcache_idle_i,      // DCache has no AXI transaction in-flight (S_IDLE)
+
     // WFI / Power Management
     output logic        core_sleep_o,       // WFI stalling with all outstanding requests drained
     input  logic        wakeup_i,           // Wakeup from kv32_pm: IRQ detected while gated
+
+    // PMA CSR outputs – forwarded to I-Cache and D-Cache for address-attribute lookup
+    output logic [1:0][31:0] pma_cfg_o,    // pmacfg0, pmacfg1
+    output logic [7:0][31:0] pma_addr_o,   // pmaaddr0-7
 
     // Debug Interface
     input  logic        dbg_halt_req_i,      // Debug halt request
@@ -319,8 +330,9 @@ module kv32_core #(
     logic        cbo_committing;     // CBO retiring from MEM this cycle
     logic        fence_i_drain_stall; // Stall FENCE.I waiting for store buffer to drain
     logic        fence_i_cmo_stall;   // Stall FENCE.I in MEM until icache CMO accepted
-    logic        cbo_cmo_stall;       // Stall CBO in MEM until icache CMO accepted
+    logic        cbo_cmo_stall;       // Stall CBO in MEM until dcache CMO accepted
     logic        cmo_sent_r;          // Registered: icache CMO accepted this MEM stage
+    logic        dcache_cmo_sent_r;   // Registered: dcache CMO accepted this MEM stage
     logic        mem_valid;
     logic        mem_wb_stall;
     logic        mem_flush;
@@ -1691,8 +1703,8 @@ module kv32_core #(
         if (wfi_active || wfi_sleeping) begin
             `DEBUG2(`DBG_GRP_WFI, ("wfi_active=%b wfi_branch=%b wfi_sleeping=%b irq_pending=%b exception=%b wakeup_i=%b",
                      wfi_active, wfi_branch, wfi_sleeping, irq_pending, exception, wakeup_i));
-            `DEBUG2(`DBG_GRP_WFI, ("  ib_outstanding=%0d imem_resp_valid=%b sb_store_pending=%b icache_idle_i=%b",
-                     ib_outstanding, imem_resp_valid, sb_store_pending, icache_idle_i));
+            `DEBUG2(`DBG_GRP_WFI, ("  ib_outstanding=%0d imem_resp_valid=%b sb_store_pending=%b icache_idle_i=%b dcache_idle_i=%b",
+                     ib_outstanding, imem_resp_valid, sb_store_pending, icache_idle_i, dcache_idle_i));
             `DEBUG2(`DBG_GRP_WFI, ("  => core_sleep_o=%b", core_sleep_o));
         end
     end
@@ -2571,16 +2583,27 @@ module kv32_core #(
             cmo_sent_r <= 1'b1;  // latch when icache accepts
     end
 
+    // dcache_cmo_sent_r: same logic for dcache CMO acceptance.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            dcache_cmo_sent_r <= 1'b0;
+        else if (!mem_valid || (!is_fence_i_mem && !is_cbo_mem))
+            dcache_cmo_sent_r <= 1'b0;
+        else if (dcache_cmo_valid && dcache_cmo_ready)
+            dcache_cmo_sent_r <= 1'b1;
+    end
+
     // fence_i_drain_stall: wait for store buffer to drain before issuing FENCE.I CMO.
     // (fence_stall covers only FENCE, not FENCE.I, so we need this separately.)
     assign fence_i_drain_stall = is_fence_i_mem && mem_valid && sb_store_pending;
 
-    // fence_i_cmo_stall: wait until icache accepts the FENCE.I CMO.
-    // Uses cmo_sent_r (registered) to avoid combinational loop through icache.cmo_ready.
-    assign fence_i_cmo_stall = is_fence_i_mem && mem_valid && !sb_store_pending && !cmo_sent_r;
+    // fence_i_cmo_stall: wait until both icache AND dcache CMOs accepted.
+    assign fence_i_cmo_stall = is_fence_i_mem && mem_valid && !sb_store_pending &&
+                               (!cmo_sent_r || !dcache_cmo_sent_r);
 
-    // cbo_cmo_stall: stall CBO in MEM until icache CMO accepted.
-    assign cbo_cmo_stall = is_cbo_mem && mem_valid && !cmo_sent_r;
+    // cbo_cmo_stall: stall CBO in MEM until dcache CMO accepted.
+    // CBO instructions target the dcache only (icache doesn't cache data).
+    assign cbo_cmo_stall = is_cbo_mem && mem_valid && !dcache_cmo_sent_r;
 
     assign mem_wb_stall = load_stall || store_stall || (is_amo_mem && amo_in_progress) || fence_stall ||
                           fence_i_drain_stall || fence_i_cmo_stall || cbo_cmo_stall;
@@ -2604,10 +2627,27 @@ module kv32_core #(
 
     // Drive CMO request when FENCE.I has drained stores and CMO not yet sent, or CBO reaches MEM.
     // icache_cmo_valid deasserts once cmo_sent_r=1, so the icache sees exactly one pulse.
-    assign icache_cmo_valid = (is_fence_i_mem && mem_valid && !sb_store_pending && !cmo_sent_r) ||
-                              (is_cbo_mem     && mem_valid && !cmo_sent_r);
-    assign icache_cmo_op    = is_fence_i_mem ? ICACHE_CMO_FLUSH_ALL : ICACHE_CMO_INVAL;
-    assign icache_cmo_addr  = is_fence_i_mem ? 32'h0 : alu_result_mem;  // cbo: use rs1 address
+    assign icache_cmo_valid = (is_fence_i_mem && mem_valid && !sb_store_pending && !cmo_sent_r);
+    assign icache_cmo_op    = ICACHE_CMO_FLUSH_ALL;
+    assign icache_cmo_addr  = 32'h0;
+
+    // ====== D-Cache CMO Outputs ======
+    // CMO opcodes (must match localparams in kv32_dcache.sv)
+    localparam logic [1:0] DCACHE_CMO_INVAL     = 2'b00;  // Invalidate cache line
+    localparam logic [1:0] DCACHE_CMO_FLUSH     = 2'b01;  // Write-back dirty + invalidate
+    localparam logic [1:0] DCACHE_CMO_FLUSH_ALL = 2'b11;  // Flush entire cache (FENCE.I)
+
+    // FENCE.I → dcache FLUSH_ALL; CBO → dcache FLUSH/INVAL per instruction encoding
+    // cbo.flush  (rs1) → DCACHE_CMO_FLUSH  (WB + inval)
+    // cbo.inval  (rs1) → DCACHE_CMO_INVAL  (inval only)
+    // Note: cbo.clean is encoded as funct3=001; cbo.flush as funct3=010; cbo.inval as funct3=000
+    // instr_mem[14:12] is the funct3 field (same encoding as the original instruction)
+    assign dcache_cmo_valid = (is_fence_i_mem && mem_valid && !sb_store_pending && !dcache_cmo_sent_r) ||
+                              (is_cbo_mem     && mem_valid && !dcache_cmo_sent_r);
+    assign dcache_cmo_op    = is_fence_i_mem ? DCACHE_CMO_FLUSH_ALL :
+                              (instr_mem[14:12] == 3'b010) ? DCACHE_CMO_FLUSH :  // cbo.flush
+                              DCACHE_CMO_INVAL;                                   // cbo.inval (default)
+    assign dcache_cmo_addr  = is_fence_i_mem ? 32'h0 : alu_result_mem;
 
     // Debug mem/wb stall reasons
     always_ff @(posedge clk) begin
@@ -2772,8 +2812,8 @@ module kv32_core #(
 
     always_ff @(posedge clk) begin
         if (mem_valid && is_amo_mem) begin
-            `DEBUG2(`DBG_GRP_MEM, ("[AMO_WB] PC=0x%h is_amo_mem=%b amo_result=0x%h mem_data_wb_next=0x%h amo_state=%0d",
-                   pc_mem, is_amo_mem, amo_result, mem_data_wb_next, amo_state));
+            `DEBUG2(`DBG_GRP_MEM, ("[AMO_WB] PC=0x%h amo_state=%0d req_issued=%b amo_mem_req=%b dmem_req_ready=%b sc_success=%b",
+                   pc_mem, amo_state, amo_req_issued, amo_mem_req, dmem_req_ready, sc_success));
             // Show when AMO completes and data will be latched
             if (amo_state == AMO_IDLE || (amo_state == AMO_WRITE && dmem_resp_valid)) begin
                 `DEBUG2(`DBG_GRP_MEM, ("[AMO_FINAL] PC=0x%h amo_complete: amo_read_data=0x%h amo_result=0x%h mem_data_wb_next=0x%h",
@@ -3047,6 +3087,10 @@ module kv32_core #(
 
         // Performance monitoring
         .retire_instr(retire_instr)
+
+        // PMA CSR outputs
+        ,.pma_cfg_o  (pma_cfg_o)
+        ,.pma_addr_o (pma_addr_o)
 
 `ifndef SYNTHESIS
         ,.trace_mode(trace_mode)
@@ -3586,7 +3630,8 @@ module kv32_core #(
                           (ib_outstanding == '0) && !ib_discard_pending &&
                           !imem_resp_valid &&
                           !sb_store_pending &&
-                          icache_idle_i;
+                          icache_idle_i &&
+                          dcache_idle_i;
 
     // Signals assigned by CSR/pipeline but not subsequently consumed in this module.
 `ifndef SYNTHESIS

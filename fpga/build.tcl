@@ -70,6 +70,7 @@ add_files -norecurse $proj_root/rtl/mem_axi_ro.sv
 
 # I-cache
 add_files -norecurse $proj_root/rtl/kv32_icache.sv
+add_files -norecurse $proj_root/rtl/kv32_dcache.sv
 
 # Power manager
 add_files -norecurse $proj_root/rtl/kv32_pm.sv

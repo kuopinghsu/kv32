@@ -54,6 +54,7 @@ package kv32_pkg;
     `define DBG_GRP_SB     15   // Store buffer
     `define DBG_GRP_AXIMEM 16   // AXI memory slave (testbench)
     `define DBG_GRP_DTM    17   // DTM debug module (DM registers, commands, SBA)
+    `define DBG_GRP_DCACHE 18   // D-Cache state machine
 
 `ifndef SYNTHESIS
     // ── Display name strings (6-char fixed width for aligned output) ─────────
@@ -79,6 +80,7 @@ package kv32_pkg;
             `DBG_GRP_SB:     return "SB    ";
             `DBG_GRP_AXIMEM: return "AXIMEM";
             `DBG_GRP_DTM:    return "DTM   ";
+            `DBG_GRP_DCACHE: return "DCACHE";
             default:         return "?     ";
         endcase
     endfunction
@@ -226,8 +228,24 @@ package kv32_pkg;
         CSR_MVENDORID  = 12'hF11,
         CSR_MARCHID    = 12'hF12,
         CSR_MIMPID     = 12'hF13,
-        CSR_MHARTID    = 12'hF14
+        CSR_MHARTID    = 12'hF14,
+        // Custom machine-mode CSRs: Physical Memory Attributes (PMA)
+        // Address space 0x7C0-0x7FF (machine-mode custom R/W per RISC-V spec)
+        // pmacfg byte: [7]=L(lock) [6:5]=rsvd [4:3]=A(match) [2]=X(I$) [1]=C(D$) [0]=B(buf)
+        CSR_PMACFG0   = 12'h7C0,   // PMA cfg regions 0-3, 8 bits per region
+        CSR_PMACFG1   = 12'h7C1,   // PMA cfg regions 4-7
+        CSR_PMAADDR0  = 12'h7C4,   // PMA NAPOT/TOR addr region 0 (physaddr >> 2)
+        CSR_PMAADDR1  = 12'h7C5,   // PMA NAPOT/TOR addr region 1
+        CSR_PMAADDR2  = 12'h7C6,   // PMA NAPOT/TOR addr region 2
+        CSR_PMAADDR3  = 12'h7C7,   // PMA NAPOT/TOR addr region 3
+        CSR_PMAADDR4  = 12'h7C8,   // PMA NAPOT/TOR addr region 4
+        CSR_PMAADDR5  = 12'h7C9,   // PMA NAPOT/TOR addr region 5
+        CSR_PMAADDR6  = 12'h7CA,   // PMA NAPOT/TOR addr region 6
+        CSR_PMAADDR7  = 12'h7CB    // PMA NAPOT/TOR addr region 7
     } csr_addr_e;
+
+    // Number of programmable PMA region slots
+    localparam int unsigned KV_PMA_NUM = 8;
 
 endpackage
 

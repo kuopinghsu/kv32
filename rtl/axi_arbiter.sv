@@ -45,10 +45,14 @@ module axi_arbiter #(
     // Master 1 (Data memory - Read/Write)
     input  logic [31:0]              m1_axi_awaddr,
     input  logic [axi_pkg::AXI_ID_WIDTH-1:0] m1_axi_awid,
+    input  logic [7:0]               m1_axi_awlen,
+    input  logic [2:0]               m1_axi_awsize,
+    input  logic [1:0]               m1_axi_awburst,
     input  logic                     m1_axi_awvalid,
     output logic                     m1_axi_awready,
     input  logic [31:0]              m1_axi_wdata,
     input  logic [3:0]               m1_axi_wstrb,
+    input  logic                     m1_axi_wlast,
     input  logic                     m1_axi_wvalid,
     output logic                     m1_axi_wready,
     output logic [1:0]               m1_axi_bresp,
@@ -57,11 +61,15 @@ module axi_arbiter #(
     input  logic                     m1_axi_bready,
     input  logic [31:0]              m1_axi_araddr,
     input  logic [axi_pkg::AXI_ID_WIDTH-1:0] m1_axi_arid,
+    input  logic [7:0]               m1_axi_arlen,
+    input  logic [2:0]               m1_axi_arsize,
+    input  logic [1:0]               m1_axi_arburst,
     input  logic                     m1_axi_arvalid,
     output logic                     m1_axi_arready,
     output logic [31:0]              m1_axi_rdata,
     output logic [1:0]               m1_axi_rresp,
     output logic [axi_pkg::AXI_ID_WIDTH-1:0] m1_axi_rid,
+    output logic                     m1_axi_rlast,
     output logic                     m1_axi_rvalid,
     input  logic                     m1_axi_rready,
 
@@ -190,9 +198,9 @@ module axi_arbiter #(
             if (w_grant_m1_next) begin
                 s_axi_awaddr   = m1_axi_awaddr;
                 s_axi_awid     = {2'b10, m1_axi_awid[axi_pkg::AXI_ID_WIDTH-3:0]};
-                s_axi_awlen    = 8'h0;
-                s_axi_awsize   = 3'b010;
-                s_axi_awburst  = 2'b01;
+                s_axi_awlen    = m1_axi_awlen;
+                s_axi_awsize   = m1_axi_awsize;
+                s_axi_awburst  = m1_axi_awburst;
                 s_axi_awvalid  = 1'b1;
                 m1_axi_awready = s_axi_awready;
             end else if (w_grant_m2_next) begin
@@ -208,9 +216,9 @@ module axi_arbiter #(
             if (w_grant == W_IDLE_M1) begin
                 s_axi_awaddr   = m1_axi_awaddr;
                 s_axi_awid     = {2'b10, m1_axi_awid[axi_pkg::AXI_ID_WIDTH-3:0]};
-                s_axi_awlen    = 8'h0;
-                s_axi_awsize   = 3'b010;
-                s_axi_awburst  = 2'b01;
+                s_axi_awlen    = m1_axi_awlen;
+                s_axi_awsize   = m1_axi_awsize;
+                s_axi_awburst  = m1_axi_awburst;
                 s_axi_awvalid  = m1_axi_awvalid;
                 m1_axi_awready = s_axi_awready;
             end else begin
@@ -241,7 +249,7 @@ module axi_arbiter #(
         if (w_active_is_m1) begin
             s_axi_wdata   = m1_axi_wdata;
             s_axi_wstrb   = m1_axi_wstrb;
-            s_axi_wlast   = 1'b1;
+            s_axi_wlast   = m1_axi_wlast;
             s_axi_wvalid  = m1_axi_wvalid;
             m1_axi_wready = s_axi_wready;
         end else if ((!w_active && w_grant_m2_next) || (w_active && w_grant == W_IDLE_M2)) begin
@@ -360,9 +368,9 @@ module axi_arbiter #(
             AR_MASTER1: begin
                 s_axi_araddr   = m1_axi_araddr;
                 s_axi_arid     = {2'b10, m1_axi_arid[axi_pkg::AXI_ID_WIDTH-3:0]};
-                s_axi_arlen    = 8'h0;
-                s_axi_arsize   = 3'b010;
-                s_axi_arburst  = 2'b01;
+                s_axi_arlen    = m1_axi_arlen;
+                s_axi_arsize   = m1_axi_arsize;
+                s_axi_arburst  = m1_axi_arburst;
                 s_axi_arvalid  = m1_axi_arvalid;
                 m1_axi_arready = s_axi_arready;
             end
@@ -387,7 +395,7 @@ module axi_arbiter #(
         m0_axi_rdata  = 32'h0; m0_axi_rresp = 2'b00; m0_axi_rid = '0;
         m0_axi_rlast  = 1'b0;  m0_axi_rvalid = 1'b0;
         m1_axi_rdata  = 32'h0; m1_axi_rresp = 2'b00; m1_axi_rid = '0;
-        m1_axi_rvalid = 1'b0;
+        m1_axi_rlast  = 1'b0;  m1_axi_rvalid = 1'b0;
         m2_axi_rdata  = 32'h0; m2_axi_rresp = 2'b00; m2_axi_rid = '0;
         m2_axi_rlast  = 1'b0;  m2_axi_rvalid = 1'b0;
 
@@ -397,6 +405,7 @@ module axi_arbiter #(
                     m1_axi_rdata  = s_axi_rdata;
                     m1_axi_rresp  = s_axi_rresp;
                     m1_axi_rid    = {{(axi_pkg::AXI_ID_WIDTH-2){1'b0}}, s_axi_rid[axi_pkg::AXI_ID_WIDTH-3:0]};
+                    m1_axi_rlast  = s_axi_rlast;
                     m1_axi_rvalid = 1'b1;
                     s_axi_rready  = m1_axi_rready;
                 end

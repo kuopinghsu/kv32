@@ -18,6 +18,12 @@ module tb_kv32_soc #(
     parameter int ICACHE_SIZE       = 4096, // I-cache total bytes
     parameter int ICACHE_LINE_SIZE  = 32,   // Cache line size in bytes
     parameter int ICACHE_WAYS       = 2,    // Cache associativity
+    parameter int DCACHE_EN         = 1,    // D-cache: 1=enabled, 0=bypass
+    parameter int DCACHE_SIZE       = 4096, // D-cache total bytes
+    parameter int DCACHE_LINE_SIZE  = 32,   // D-cache line size in bytes
+    parameter int DCACHE_WAYS       = 2,    // D-cache associativity
+    parameter int DCACHE_WRITE_BACK = 1,    // D-cache write policy: 1=write-back, 0=write-through
+    parameter int DCACHE_WRITE_ALLOC = 1,   // D-cache write-allocate on miss
     parameter int USE_CJTAG         = 1,    // JTAG mode: 0=JTAG, 1=cJTAG
     parameter int JTAG_IDCODE       = 32'h1DEAD3FF,  // JTAG device ID
     parameter int GPIO_NUM_PINS     = 4,    // Number of GPIO pins (1-128)
@@ -76,6 +82,14 @@ module tb_kv32_soc #(
     ,output logic [31:0] icache_perf_bypass_cnt
     ,output logic [31:0] icache_perf_fill_cnt
     ,output logic [31:0] icache_perf_cmo_cnt
+    // D-cache performance counters (always present but zero when DCACHE_EN=0)
+    ,output logic [31:0] dcache_perf_req_cnt
+    ,output logic [31:0] dcache_perf_hit_cnt
+    ,output logic [31:0] dcache_perf_miss_cnt
+    ,output logic [31:0] dcache_perf_bypass_cnt
+    ,output logic [31:0] dcache_perf_fill_cnt
+    ,output logic [31:0] dcache_perf_evict_cnt
+    ,output logic [31:0] dcache_perf_cmo_cnt
 `endif
 );
 
@@ -148,6 +162,12 @@ module tb_kv32_soc #(
         .ICACHE_SIZE    (ICACHE_SIZE),
         .ICACHE_LINE_SIZE(ICACHE_LINE_SIZE),
         .ICACHE_WAYS    (ICACHE_WAYS),
+        .DCACHE_EN      (DCACHE_EN),
+        .DCACHE_SIZE    (DCACHE_SIZE),
+        .DCACHE_LINE_SIZE(DCACHE_LINE_SIZE),
+        .DCACHE_WAYS    (DCACHE_WAYS),
+        .DCACHE_WRITE_BACK(DCACHE_WRITE_BACK),
+        .DCACHE_WRITE_ALLOC(DCACHE_WRITE_ALLOC),
         .USE_CJTAG      (USE_CJTAG),
         .JTAG_IDCODE    (JTAG_IDCODE),
         .GPIO_NUM_PINS  (GPIO_NUM_PINS)
@@ -223,6 +243,13 @@ module tb_kv32_soc #(
         ,.icache_perf_bypass_cnt(icache_perf_bypass_cnt)
         ,.icache_perf_fill_cnt  (icache_perf_fill_cnt)
         ,.icache_perf_cmo_cnt   (icache_perf_cmo_cnt)
+        ,.dcache_perf_req_cnt   (dcache_perf_req_cnt)
+        ,.dcache_perf_hit_cnt   (dcache_perf_hit_cnt)
+        ,.dcache_perf_miss_cnt  (dcache_perf_miss_cnt)
+        ,.dcache_perf_bypass_cnt(dcache_perf_bypass_cnt)
+        ,.dcache_perf_fill_cnt  (dcache_perf_fill_cnt)
+        ,.dcache_perf_evict_cnt (dcache_perf_evict_cnt)
+        ,.dcache_perf_cmo_cnt   (dcache_perf_cmo_cnt)
 `endif
     );
 

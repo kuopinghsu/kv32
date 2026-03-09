@@ -296,7 +296,17 @@ module kv32_decoder (
                             instr[31:20] != CSR_MVENDORID &&
                             instr[31:20] != CSR_MARCHID   &&
                             instr[31:20] != CSR_MIMPID    &&
-                            instr[31:20] != CSR_MHARTID) begin
+                            instr[31:20] != CSR_MHARTID   &&
+                            instr[31:20] != CSR_PMACFG0   &&
+                            instr[31:20] != CSR_PMACFG1   &&
+                            instr[31:20] != CSR_PMAADDR0  &&
+                            instr[31:20] != CSR_PMAADDR1  &&
+                            instr[31:20] != CSR_PMAADDR2  &&
+                            instr[31:20] != CSR_PMAADDR3  &&
+                            instr[31:20] != CSR_PMAADDR4  &&
+                            instr[31:20] != CSR_PMAADDR5  &&
+                            instr[31:20] != CSR_PMAADDR6  &&
+                            instr[31:20] != CSR_PMAADDR7) begin
                             illegal = 1'b1;
                         end
                     end

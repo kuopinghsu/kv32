@@ -23,6 +23,7 @@
 ../rtl/mem_axi.sv
 ../rtl/mem_axi_ro.sv
 ../rtl/kv32_icache.sv
+../rtl/kv32_dcache.sv
 ../rtl/kv32_pm.sv
 ../rtl/kv32_dtm.sv
 ../rtl/jtag/jtag_tap.sv

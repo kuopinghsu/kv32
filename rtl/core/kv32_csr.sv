@@ -52,6 +52,10 @@ module kv32_csr (
     output logic        irq_pending,
     output logic [31:0] irq_cause,
 
+    // PMA CSR outputs (pmacfg0/1, pmaaddr0-7)
+    output logic [1:0][31:0] pma_cfg_o,    // pmacfg0, pmacfg1
+    output logic [7:0][31:0] pma_addr_o,   // pmaaddr0-7
+
     // Cycle counter
     input  logic        retire_instr
 `ifndef SYNTHESIS
@@ -74,6 +78,13 @@ module kv32_csr (
     logic [31:0] mip;
     logic [63:0] mcycle;
     logic [63:0] minstret;
+
+    // PMA (Physical Memory Attributes) CSR registers
+    // pmacfg byte: [7]=L(lock) [6:5]=rsvd [4:3]=A(match) [2]=X(I$) [1]=C(D$) [0]=B(bufferable)
+    logic [1:0][31:0] pma_cfg_r;   // pmacfg0 (regions 0-3), pmacfg1 (regions 4-7)
+    logic [7:0][31:0] pma_addr_r;  // pmaaddr0-7 (NAPOT/TOR encoded, physaddr >> 2)
+    assign pma_cfg_o  = pma_cfg_r;
+    assign pma_addr_o = pma_addr_r;
 
     // cycle_csr_src: selects which counter is returned for cycle/time/mcycle reads.
     // In normal operation this is mcycle (actual wall-clock cycles).
@@ -212,6 +223,17 @@ module kv32_csr (
             CSR_MARCHID:   csr_rdata = 32'd0;
             CSR_MIMPID:    csr_rdata = 32'd0;
             CSR_MHARTID:   csr_rdata = 32'd0;
+            // Custom PMA CSRs (machine-mode custom R/W space, 0x7C0-0x7CB)
+            CSR_PMACFG0:  csr_rdata = pma_cfg_r[0];
+            CSR_PMACFG1:  csr_rdata = pma_cfg_r[1];
+            CSR_PMAADDR0: csr_rdata = pma_addr_r[0];
+            CSR_PMAADDR1: csr_rdata = pma_addr_r[1];
+            CSR_PMAADDR2: csr_rdata = pma_addr_r[2];
+            CSR_PMAADDR3: csr_rdata = pma_addr_r[3];
+            CSR_PMAADDR4: csr_rdata = pma_addr_r[4];
+            CSR_PMAADDR5: csr_rdata = pma_addr_r[5];
+            CSR_PMAADDR6: csr_rdata = pma_addr_r[6];
+            CSR_PMAADDR7: csr_rdata = pma_addr_r[7];
             default: begin
                 csr_rdata   = 32'd0;
                 csr_illegal = (csr_op != 3'b0);
@@ -247,6 +269,8 @@ module kv32_csr (
             mtval     <= 32'd0;
             mcycle    <= 64'd0;
             minstret  <= 64'd0;
+            pma_cfg_r  <= '0;   // all regions disabled (A=00) at reset
+            pma_addr_r <= '0;
         end else begin
             // Cycle counter
             mcycle <= mcycle + 64'd1;
@@ -297,6 +321,28 @@ module kv32_csr (
                     CSR_MCYCLEH:   mcycle[63:32] <= csr_wdata_final;
                     CSR_MINSTRET:  minstret[31:0]  <= csr_wdata_final;
                     CSR_MINSTRETH: minstret[63:32] <= csr_wdata_final;
+                    // PMA config: per-byte lock check (L bit = cfg_byte[7])
+                    CSR_PMACFG0: begin
+                        if (!pma_cfg_r[0][ 7]) pma_cfg_r[0][ 7: 0] <= csr_wdata_final[ 7: 0];
+                        if (!pma_cfg_r[0][15]) pma_cfg_r[0][15: 8] <= csr_wdata_final[15: 8];
+                        if (!pma_cfg_r[0][23]) pma_cfg_r[0][23:16] <= csr_wdata_final[23:16];
+                        if (!pma_cfg_r[0][31]) pma_cfg_r[0][31:24] <= csr_wdata_final[31:24];
+                    end
+                    CSR_PMACFG1: begin
+                        if (!pma_cfg_r[1][ 7]) pma_cfg_r[1][ 7: 0] <= csr_wdata_final[ 7: 0];
+                        if (!pma_cfg_r[1][15]) pma_cfg_r[1][15: 8] <= csr_wdata_final[15: 8];
+                        if (!pma_cfg_r[1][23]) pma_cfg_r[1][23:16] <= csr_wdata_final[23:16];
+                        if (!pma_cfg_r[1][31]) pma_cfg_r[1][31:24] <= csr_wdata_final[31:24];
+                    end
+                    // PMA address: locked if corresponding cfg byte's L bit is set
+                    CSR_PMAADDR0: if (!pma_cfg_r[0][ 7]) pma_addr_r[0] <= csr_wdata_final;
+                    CSR_PMAADDR1: if (!pma_cfg_r[0][15]) pma_addr_r[1] <= csr_wdata_final;
+                    CSR_PMAADDR2: if (!pma_cfg_r[0][23]) pma_addr_r[2] <= csr_wdata_final;
+                    CSR_PMAADDR3: if (!pma_cfg_r[0][31]) pma_addr_r[3] <= csr_wdata_final;
+                    CSR_PMAADDR4: if (!pma_cfg_r[1][ 7]) pma_addr_r[4] <= csr_wdata_final;
+                    CSR_PMAADDR5: if (!pma_cfg_r[1][15]) pma_addr_r[5] <= csr_wdata_final;
+                    CSR_PMAADDR6: if (!pma_cfg_r[1][23]) pma_addr_r[6] <= csr_wdata_final;
+                    CSR_PMAADDR7: if (!pma_cfg_r[1][31]) pma_addr_r[7] <= csr_wdata_final;
                     default: ;
                 endcase
             end

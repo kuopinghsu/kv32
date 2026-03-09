@@ -118,6 +118,18 @@ struct Elf32_Sym {
 #define CSR_MIMPID    0xf13  // Implementation ID
 #define CSR_MHARTID   0xf14  // Hart ID
 
+// Custom M-mode PMA CSRs (0x7C0-0x7CB)
+#define CSR_PMACFG0   0x7C0  // Packed PMA cfg bytes for regions 0-3
+#define CSR_PMACFG1   0x7C1  // Packed PMA cfg bytes for regions 4-7
+#define CSR_PMAADDR0  0x7C4  // physaddr>>2 for PMA region 0
+#define CSR_PMAADDR1  0x7C5  // physaddr>>2 for PMA region 1
+#define CSR_PMAADDR2  0x7C6  // physaddr>>2 for PMA region 2
+#define CSR_PMAADDR3  0x7C7  // physaddr>>2 for PMA region 3
+#define CSR_PMAADDR4  0x7C8  // physaddr>>2 for PMA region 4
+#define CSR_PMAADDR5  0x7C9  // physaddr>>2 for PMA region 5
+#define CSR_PMAADDR6  0x7CA  // physaddr>>2 for PMA region 6
+#define CSR_PMAADDR7  0x7CB  // physaddr>>2 for PMA region 7
+
 // Exception/Interrupt codes
 #define CAUSE_MISALIGNED_FETCH    0
 #define CAUSE_FETCH_ACCESS        1
@@ -229,6 +241,10 @@ public:
     uint32_t csr_marchid;    // Architecture ID
     uint32_t csr_mimpid;     // Implementation ID
     uint32_t csr_mhartid;    // Hart ID (hardware thread)
+
+    // Custom M-mode PMA CSRs
+    uint32_t csr_pmacfg[2];   // pmacfg0 (regions 0-3), pmacfg1 (regions 4-7)
+    uint32_t csr_pmaaddr[8];  // pmaaddr0-7
 
     // Exception handling
     bool exception_occurred;

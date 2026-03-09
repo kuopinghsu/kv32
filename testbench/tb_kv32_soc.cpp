@@ -364,6 +364,10 @@ static void dump_instruction_trace(
         uint32_t mstatus = mstatus_wb[0];
         bool is_csr = (csr_op != 0);
         bool is_mret = (instr == 0x30200073);
+        // AMO opcode (LR.W, SC.W, AMOSWAP, AMOADD, ...): bits[6:0] == 0x2F
+        // Atomics read memory but the old value is already in rd — skip mem field
+        // to match kv32sim trace format (which also emits no mem for atomics).
+        bool is_amo = ((instr & 0x7F) == 0x2F);
 
         DEBUG2("Cycle %llu: Instr %llu @ PC=0x%08x instr=0x%08x rd=%d mem_w=%d mem_r=%d",
              cycle_num, instr_count, pc, instr, rd_addr, mem_write_wb, mem_read_wb);
@@ -395,10 +399,12 @@ static void dump_instruction_trace(
         }
 
         // Write memory operation info for current instruction (at WB stage)
+        // AMO/LR/SC are excluded: the old mem value is already captured in rd,
+        // and kv32sim does not emit a mem field for atomics.
         if (mem_write_wb) {
             line_stream << " mem 0x" << std::setw(8) << alu_res
                         << " 0x" << std::setw(8) << store_data;
-        } else if (mem_read_wb) {
+        } else if (mem_read_wb && !is_amo) {
             line_stream << " mem 0x" << std::setw(8) << alu_res;
         }
 
@@ -425,6 +431,16 @@ static void dump_instruction_trace(
             case 0xc80: csr_name = "cycleh"; break;
             case 0xc81: csr_name = "timeh"; break;
             case 0xc82: csr_name = "instreth"; break;
+            case 0x7c0: csr_name = "pmacfg0"; break;
+            case 0x7c1: csr_name = "pmacfg1"; break;
+            case 0x7c4: csr_name = "pmaaddr0"; break;
+            case 0x7c5: csr_name = "pmaaddr1"; break;
+            case 0x7c6: csr_name = "pmaaddr2"; break;
+            case 0x7c7: csr_name = "pmaaddr3"; break;
+            case 0x7c8: csr_name = "pmaaddr4"; break;
+            case 0x7c9: csr_name = "pmaaddr5"; break;
+            case 0x7ca: csr_name = "pmaaddr6"; break;
+            case 0x7cb: csr_name = "pmaaddr7"; break;
             default: csr_name = "unknown"; break;
             }
             uint32_t csr_result = csr_rdata;
@@ -929,6 +945,36 @@ int main(int argc, char** argv) {
         std::cout << "  Cache misses :               " << misses << std::endl;
         std::cout << "  Bypass fetches :             " << bypass << std::endl;
         std::cout << "  Cache-line fills :           " << fills  << std::endl;
+        std::cout << "  CMO operations :             " << cmos   << std::endl;
+    }
+#endif
+
+#if DCACHE_EN
+    // Print D-Cache performance statistics
+    {
+        uint64_t req    = (uint64_t)dut->dcache_perf_req_cnt;
+        uint64_t hits   = (uint64_t)dut->dcache_perf_hit_cnt;
+        uint64_t misses = (uint64_t)dut->dcache_perf_miss_cnt;
+        uint64_t bypass = (uint64_t)dut->dcache_perf_bypass_cnt;
+        uint64_t fills  = (uint64_t)dut->dcache_perf_fill_cnt;
+        uint64_t evicts = (uint64_t)dut->dcache_perf_evict_cnt;
+        uint64_t cmos   = (uint64_t)dut->dcache_perf_cmo_cnt;
+        double   hit_rate = req ? (100.0 * hits / req) : 0.0;
+
+        std::cout << std::endl;
+        std::cout << "D-Cache Statistics :" << std::endl;
+        std::cout << "  Cache size :                 " << DCACHE_SIZE << " B  "
+                  << "(" << (DCACHE_SIZE / 1024) << " KB, "
+                  << DCACHE_WAYS << "-way, "
+                  << DCACHE_LINE_SIZE << "-byte lines, "
+                  << (DCACHE_WRITE_BACK ? "write-back" : "write-through") << ")" << std::endl;
+        std::cout << "  Data lookups :               " << req    << std::endl;
+        std::cout << "  Cache hits :                 " << hits
+                  << " (" << std::fixed << std::setprecision(2) << hit_rate << "%)" << std::endl;
+        std::cout << "  Cache misses :               " << misses << std::endl;
+        std::cout << "  Bypass accesses :            " << bypass << std::endl;
+        std::cout << "  Cache-line fills :           " << fills  << std::endl;
+        std::cout << "  Dirty-line evictions :       " << evicts << std::endl;
         std::cout << "  CMO operations :             " << cmos   << std::endl;
     }
 #endif

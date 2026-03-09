@@ -15,7 +15,7 @@
 [abstract]
 == Abstract
 
-This document provides comprehensive technical specifications for the RV32IMAC System-on-Chip (SoC), a high-performance 32-bit RISC-V processor platform. The SoC features a 5-stage pipelined RV32IMAC core with instruction cache, AXI4/AXI4-Lite interconnect, and a rich set of peripherals including UART, SPI, I2C, DMA, GPIO, timer/PWM, and interrupt controller. Designed for embedded applications, the SoC supports both RTL simulation and FPGA implementation.
+This document provides comprehensive technical specifications for the RV32IMAC System-on-Chip (SoC), a high-performance 32-bit RISC-V processor platform. The SoC features a 5-stage pipelined RV32IMAC core with separate instruction and data caches, AXI4/AXI4-Lite interconnect, and a rich set of peripherals including UART, SPI, I2C, DMA, GPIO, timer/PWM, and interrupt controller. Runtime-configurable Physical Memory Attributes (PMA) control per-region cacheability for both caches. Designed for embedded applications, the SoC supports both RTL simulation and FPGA implementation.
 
 <<<
 
@@ -25,8 +25,9 @@ This document provides comprehensive technical specifications for the RV32IMAC S
 
 The RV32IMAC SoC is a complete embedded processor system implementing the RISC-V RV32IMAC instruction set architecture with Machine mode (M-mode) privilege support. The system integrates:
 
-* **RV32IMAC Processor Core**: 5-stage pipeline with RVC expander, instruction cache, store buffer, and instruction buffer
-* **Memory Subsystem**: 2MB external RAM with AXI4 interface, configurable instruction cache
+* **RV32IMAC Processor Core**: 5-stage pipeline with RVC expander, instruction cache, data cache, store buffer, and instruction buffer
+* **Memory Subsystem**: 2MB external RAM with AXI4 interface, configurable instruction and data caches
+* **Physical Memory Attributes (PMA)**: 8 runtime-configurable regions controlling I-cache (X bit) and D-cache (C bit) cacheability per address range
 * **Interconnect**: AXI4-Lite crossbar interconnect supporting multiple master and slave devices
 * **Standard Peripherals**: UART, SPI, I2C, DMA with FIFO-buffered interfaces
 * **Interrupt System**: CLINT (Core-Local Interrupt) for timer/software interrupts, PLIC (Platform-Level Interrupt Controller) for external peripherals
@@ -45,7 +46,13 @@ The RV32IMAC SoC is a complete embedded processor system implementing the RISC-V
 |5-stage in-order (Fetch, Decode, Execute, Memory, Writeback)
 
 |Instruction Cache
-|Configurable size (default 4KB), associativity (default 2-way set-associative), line size (default 32B)
+|Configurable size (default 4KB), 2-way set-associative, 64B line; WRAP burst fill; PMA X-bit control
+
+|Data Cache
+|Configurable size (default 4KB), 2-way set-associative, 32B line; write-back / write-through; write-allocate / no-allocate; dirty eviction; CMO support; PMA C-bit control
+
+|Physical Memory Attributes (PMA)
+|8 runtime-configurable regions; address modes OFF/TOR/NA4/NAPOT; per-region I-cache (X) and D-cache (C) enable; lock bit
 
 |Privilege Modes
 |Machine (M-mode) only
@@ -66,7 +73,7 @@ The RV32IMAC SoC is a complete embedded processor system implementing the RISC-V
 |Timer, software, external (PLIC-routed)
 
 |Performance
-|~2.3 CPI typical, up to ~99% I-cache hit rate (workload dependent)
+|~2.3 CPI typical; up to ~99% I-cache hit rate; D-cache provides ~1-cycle load latency on hit (workload dependent)
 
 |Implementation
 |RTL simulation (Verilator), FPGA synthesis supported
@@ -80,10 +87,11 @@ This datasheet is organized as follows:
 * **Section 3**: Memory map and address decode
 * **Section 4**: Processor core specification
 * **Section 5**: Instruction cache specification
-* **Section 6**: Peripheral specifications (UART, SPI, I2C, DMA, GPIO, Timer/PWM, CLINT, PLIC, Magic device)
-* **Section 7**: AXI interconnect and bus protocol
-* **Section 8**: Electrical and timing characteristics
-* **Section 9**: Programming guide
+* **Section 6**: Data cache specification
+* **Section 7**: Peripheral specifications (UART, SPI, I2C, DMA, GPIO, Timer/PWM, CLINT, PLIC, Magic device)
+* **Section 8**: AXI interconnect and bus protocol
+* **Section 9**: Electrical and timing characteristics
+* **Section 10**: Programming guide
 * **Appendices**: Register quick reference, interrupt vectors, pin descriptions
 
 <<<
@@ -107,22 +115,23 @@ This datasheet is organized as follows:
     |  +-----v------+ |        v                                        |   |
     |  |   ID       | |   +----------+         +-------------+          |   |
     |  |  (Decode)  | |   | I-Cache  |<------->|  Mem Arbiter|          |   |
-    |  +-----+------+ |   | (4KB/2W) |         |  (I/D paths)|          |   |
+    |  +-----+------+ |   | (4KB/2W) |         |  (I+D paths)|          |   |
     |        |        |   +----------+         +------+------+          |   |
     |  +-----v------+ |                               |                 |   |
     |  |   EX       | |                               v                 |   |
     |  | (Execute)  | |                        +-------------+          |   |
     |  +-----+------+ |                        | AXI4-Lite   |          |   |
     |        |        |                        |  Crossbar   |          |   |
-    |  +-----v------+ |                        |  (1-to-10)  |          |   |
-    |  |   MEM      |-+->Store                 +------+------+          |   |
-    |  |  (Memory)  |<+--Buffer                       |                 |   |
-    |  +-----+------+ |  (SB_DEPTH)                   |                 |   |
-    |        |        |                               |                 |   |
-    |  +-----v------+ |   +---------------------------+-----------------+---+
-    |  |   WB       | |   | Slave 0: RAM (2MB)        |                 |   |
-    |  | (Writeback)| |   | 0x8000_0000-0x801F_FFFF   v                 |   |
-    |  +------------+ |   |                    +-------------+          |   |
+    |  +-----v------+ |   +----------+         |  (1-to-10)  |          |   |
+    |  |   MEM      |-+-->| D-Cache  |<------->+------+------+          |   |
+    |  |  (Memory)  |<+---| (4KB/2W) |                |                 |   |
+    |  +-----+------+ |   |write-back|                |                 |   |
+    |        | Store  |   +----------+                |                 |   |
+    |  +-----v------+ |   Buffer(SB)                  |                 |   |
+    |  |   WB       | |   +---------------------------+-----------------+---+
+    |  | (Writeback)| |   | Slave 0: RAM (2MB)        |                 |   |
+    |  +------------+ |   | 0x8000_0000-0x801F_FFFF   v                 |   |
+    |                 |   |                    +-------------+          |   |
     |                 |   |                    |  AXI4 RAM   |          |   |
     +-----------------+   |                    |  (2MB ext)  |          |   |
                           |                    +-------------+          |   |
@@ -225,10 +234,35 @@ An optional configurable instruction cache improves performance by reducing memo
 
 * **Size**: 4KB default (parameterizable)
 * **Associativity**: 2-way set-associative (parameterizable)
-* **Line Size**: 32 bytes (8 words)
+* **Line Size**: 64 bytes
 * **Replacement Policy**: Round-robin per set
-* **Bypass Mode**: Cacheable or direct-mapped via CMO operations
+* **Bypass Mode**: Cacheable or direct-mapped via CMO operations; PMA X-bit per region
 * **AXI Interface**: WRAP bursts for cache-line fills (critical-word-first)
+
+==== Data Cache (kv32_dcache)
+
+An optional configurable data cache reduces load/store latency:
+
+* **Size**: 4KB default (parameterizable)
+* **Associativity**: 2-way set-associative (parameterizable)
+* **Line Size**: 32 bytes (8 words)
+* **Write Policy**: Write-back (default) or write-through
+* **Allocate Policy**: Write-allocate on store miss (default) or no-allocate (bypass)
+* **Replacement Policy**: Round-robin per set
+* **Dirty Eviction**: Automatically write-back dirty line before fill (write-back mode)
+* **AXI Interface**: WRAP bursts for cache-line fills; AW/W/B channels for eviction and write-through
+* **CMO Support**: INVAL, FLUSH, CLEAN, FLUSH_ALL operations
+* **PMA Integration**: Per-region C bit controls D-cacheability; non-cacheable accesses bypass the cache
+
+==== Physical Memory Attributes (PMA)
+
+The PMA subsystem provides per-region cacheability control at runtime:
+
+* **Regions**: 8 independently configurable regions
+* **Address Modes**: OFF (disabled), TOR (top-of-range), NA4 (4B natural align), NAPOT (power-of-two)
+* **Per-region Attributes**: X bit (I-cacheable), C bit (D-cacheable), B bit (bufferable), L bit (locked)
+* **CSRs**: `pmacfg0` (0x7C0), `pmacfg1` (0x7C1), `pmaaddr0`–`pmaaddr7` (0x7C4–0x7CB)
+* **Fallback Rule**: When no region matches, `addr[31]=1` → cacheable (RAM); `addr[31]=0` → non-cacheable (I/O)
 
 ==== Memory Subsystem
 
@@ -473,10 +507,16 @@ Typical performance metrics (workload-dependent):
 |Metric |Typical Value
 
 |CPI (Cycles Per Instruction)
-|~2.3 (with I-cache enabled, ~99% hit rate)
+|~2.3 (I-cache only); ~1.5–1.8 with both I-cache and D-cache enabled
 
 |I-Cache Hit Rate
 |~99% (depends on working set size)
+
+|D-Cache Hit Rate
+|~95–99% (depends on access pattern and working set)
+
+|D-Cache Hit Latency
+|1 cycle (registered output from SRAM)
 
 |Branch Misprediction Penalty
 |2 cycles (flush IF and ID stages)
@@ -584,6 +624,26 @@ The core implements Machine-mode CSRs per RISC-V Privileged Spec v1.11:
 |mhartid
 |R/O
 |Hardware thread ID (returns 0)
+
+|0x7C0
+|pmacfg0
+|R/W
+|PMA configuration for regions 0–3 (8-bit cfg per region: `[7]=L [4:3]=A [2]=X [1]=C [0]=B`)
+
+|0x7C1
+|pmacfg1
+|R/W
+|PMA configuration for regions 4–7 (same format as pmacfg0)
+
+|0x7C4
+|pmaaddr0
+|R/W
+|PMA address register for region 0 (bits[33:2] of address, NAPOT-encoded)
+
+|0x7C5–0x7CB
+|pmaaddr1–pmaaddr7
+|R/W
+|PMA address registers for regions 1–7 (same format as pmaaddr0)
 |===
 
 === Exception and Interrupt Handling
@@ -775,6 +835,144 @@ The cache provides performance monitoring signals (not synthesized):
 * `perf_miss_cnt`: Cache misses
 * `perf_bypass_cnt`: Bypass fetches (cache disabled)
 * `perf_fill_cnt`: Completed line fills
+* `perf_cmo_cnt`: CMO operations executed
+
+<<<
+
+== Data Cache Specification
+
+=== Overview
+
+The data cache (`kv32_dcache`) reduces load/store latency by caching frequently accessed data. It supports both write-back and write-through policies with write-allocate or no-allocate behaviour on store misses.
+
+[cols="1,3"]
+.D-Cache Configuration
+|===
+|Parameter |Default Value
+
+|DCACHE_SIZE
+|4096 bytes (4KB)
+
+|DCACHE_LINE_SIZE
+|32 bytes (8 words)
+
+|DCACHE_WAYS
+|2 (2-way set-associative)
+
+|Number of Sets
+|64 (computed: SIZE / (LINE_SIZE × WAYS))
+
+|Replacement Policy
+|Round-robin (per-set victim pointer)
+
+|Write Policy
+|Write-back (DCACHE_WRITE_BACK=1); write-through with DCACHE_WRITE_BACK=0
+
+|Allocate Policy
+|Write-allocate (DCACHE_WRITE_ALLOC=1); no-allocate with DCACHE_WRITE_ALLOC=0
+|===
+
+=== Cache Organisation
+
+* **Address Decomposition**:
+** Tag: bits [31:11] (21 bits)
+** Index: bits [10:5] (6 bits, selects 1 of 64 sets)
+** Word Offset: bits [4:2] (3 bits, selects 1 of 8 words)
+** Byte Offset: bits [1:0] (byte within word)
+
+* **Storage**:
+** Valid bits: flip-flops (2 ways × 64 sets = 128 bits)
+** Dirty bits: flip-flops (2 ways × 64 sets = 128 bits, write-back mode only)
+** Tag storage: SRAM macros (2 instances, 64 entries × 21 bits)
+** Data storage: SRAM macros (2 instances, 512 entries × 32 bits, byte-enable write)
+
+=== Cache Operations
+
+==== Load Hit
+
+1. Core asserts `core_req_valid` with address and `mem_read=1`
+2. Cache performs lookup (1 cycle, SRAM read launched speculatively in `S_IDLE`)
+3. On hit, returns data via `core_resp_data` next cycle (zero-stall if core is ready)
+
+**Latency**: 1 cycle (registered output)
+
+==== Load Miss — Clean Victim
+
+1. Cache detects miss in lookup stage
+2. Issues AXI WRAP burst for entire cache line (8 beats, critical-word-first)
+3. Returns critical word early to unblock core
+4. Remaining beats drain in background
+
+**Latency**: Memory latency + 1 cycle (critical-word-first optimisation)
+
+==== Load Miss — Dirty Victim (Write-Back Mode)
+
+1. Cache detects miss; victim line is dirty
+2. Writes dirty line back to memory (AXI write: AW → W × 8 → B)
+3. Fetches new line with AXI WRAP burst
+4. Returns critical word to core
+
+**Latency**: Memory latency × 2 (eviction + fill round-trip)
+
+==== Store Hit
+
+1. Cache detects hit; data SRAM performs read-modify-write in `S_HIT_WR`
+2. For write-back: dirty bit set; no AXI traffic
+3. For write-through: dirty bit unchanged; AXI write issued (`S_WT_AW → S_WT_W → S_WT_B`)
+
+**Write-Back Latency**: 1 cycle (no AXI traffic)
+**Write-Through Latency**: Memory latency
+
+==== Store Miss
+
+* **Write-Allocate** (`DCACHE_WRITE_ALLOC=1`): Allocate new line (evict dirty if needed), fill from memory, then perform hit-store.
+* **No-Allocate** (`DCACHE_WRITE_ALLOC=0`): Write directly to memory via AXI — no line allocation.
+
+==== PMA Bypass (Non-Cacheable Access)
+
+When `use_dcache=0` (PMA C bit clear or CMO_DISABLE):
+
+* Reads: single-beat AXI INCR read, data forwarded directly to core
+* Writes: single-beat AXI INCR write with byte strobes
+
+=== Cache Management Operations (CMO)
+
+The cache supports software-initiated management via the `cmo_*` sideband interface:
+
+[cols="1,2,4"]
+.Supported CMO Operations
+|===
+|Opcode |Name |Description
+
+|2'b00
+|CMO_INVAL
+|Invalidate specific cache line matching address (clears valid bit; no writeback)
+
+|2'b01
+|CMO_FLUSH
+|Flush (write-back + invalidate) specific cache line matching address
+
+|2'b10
+|CMO_CLEAN
+|Write back dirty line without invalidating (write-back mode only)
+
+|2'b11
+|CMO_FLUSH_ALL
+|Write back all dirty lines; invalidate all entries (DMA pre/post-transfer use)
+|===
+
+NOTE: `CMO_FLUSH_ALL` is triggered by `FENCE.I` and is required before DMA transfers to maintain coherence.
+
+=== Performance Counters (Simulation Only)
+
+The cache provides performance monitoring signals (not synthesized):
+
+* `perf_req_cnt`: Total data accesses
+* `perf_hit_cnt`: Cache hits (load or store)
+* `perf_miss_cnt`: Cache misses
+* `perf_bypass_cnt`: Non-cacheable bypasses (PMA or CMO_DISABLE)
+* `perf_fill_cnt`: Completed line fills
+* `perf_evict_cnt`: Dirty line evictions
 * `perf_cmo_cnt`: CMO operations executed
 
 <<<
@@ -2230,34 +2428,66 @@ The external RAM interface uses full AXI4 with burst support:
 The instruction cache uses WRAP bursts for critical-word-first cache-line fills:
 
 * Burst type: `ARBURST = 2'b10` (WRAP)
-* Burst length: `ARLEN = (line_size / 4) - 1` (e.g., 7 for 32-byte line)
+* Burst length: `ARLEN = (line_size / 4) - 1` (e.g., 15 for 64-byte line)
 * Starting address: Critical word address (PC)
 * Wrap boundary: Cache-line boundary
 
-Example: Fetch from address 0x80000014 with 32-byte cache line:
+==== D-Cache Burst Transactions
+
+The data cache uses WRAP bursts for cache-line fills and INCR for dirty evictions and write-through:
+
+* **Fill (read)**: `ARBURST = 2'b10` (WRAP), `ARLEN = (line_size / 4) - 1` (e.g., 7 for 32-byte line)
+* **Dirty eviction (write)**: `AWBURST = 2'b01` (INCR), `AWLEN = WORDS_PER_LINE - 1`, full cache-line burst starting at line base address
+* **Write-through (write)**: `AWBURST = 2'b01` (INCR), `AWLEN = 0` (single beat), byte strobes indicate sub-word granularity
+* **Non-cacheable bypass**: `ARBURST = 2'b01` (INCR), `ARLEN = 0` (single beat) for reads; same for writes
+
+Example: D-cache WRAP fill from address 0x80000054 with 32-byte cache line:
+
+----
+ARCHR = 0x80000054
+ARLEN = 7           // 8 beats
+ARBURST = WRAP
+Beats returned:
+  0: 0x80000054 (critical word, returned first)
+  1: 0x80000058
+  2: 0x8000005C
+  3: 0x80000040 (wrap to line boundary)
+  4: 0x80000044
+  5: 0x80000048
+  6: 0x8000004C
+  7: 0x80000050
+----
+
+Example: I-cache WRAP fill from address 0x80000014 with 64-byte cache line:
 
 ----
 ARADDR = 0x80000014
-ARLEN = 7           // 8 beats
+ARLEN = 15          // 16 beats
 ARBURST = WRAP
 Beats returned:
   0: 0x80000014 (critical word, returned first)
   1: 0x80000018
   2: 0x8000001C
-  3: 0x80000000 (wrap to line boundary)
-  4: 0x80000004
-  5: 0x80000008
-  6: 0x8000000C
-  7: 0x80000010
+  3: 0x80000020
+  4: 0x80000024
+  5: 0x80000028
+  6: 0x8000002C
+  7: 0x80000030
+  8: 0x80000034
+  9: 0x80000038
+  A: 0x8000003C
+  B: 0x80000000 (wrap to line boundary)
+  C: 0x80000004
+  D: 0x80000008
+  E: 0x8000000C
+  F: 0x80000010
 ----
+
+NOTE: D-Cache also uses WRAP bursts for fills; see Section 6 for the D-Cache-specific example.
 
 ==== Data Access Transactions
 
-Data loads/stores use single-beat INCR bursts:
-
-* Burst type: `ARBURST = 2'b01` (INCR)
-* Burst length: `ARLEN = 0` (single beat)
-* Write strobes: Indicate which bytes are valid (1, 2, or 4 bytes)
+Data loads/stores without D-cache use single-beat INCR bursts. When D-cache is enabled, most accesses are served from cache without AXI traffic; only misses, dirty evictions, and write-through stores generate AXI transactions (see <<Data Cache Specification>>).
 
 === Bus Performance
 
@@ -2379,6 +2609,10 @@ NOTE: Power estimates are for Xilinx 7-series FPGA implementation at 100 MHz, 1.
 |~10 mW
 |SRAM power dominant
 
+|D-Cache (4KB, 2-way)
+|~10 mW
+|SRAM power dominant; dirty eviction adds ~1 mW
+
 |AXI Interconnect
 |~5 mW
 |Crossbar + arbiters
@@ -2388,8 +2622,8 @@ NOTE: Power estimates are for Xilinx 7-series FPGA implementation at 100 MHz, 1.
 |UART, SPI, I2C, DMA idle
 
 |Total SoC
-|~40 mW
-|Typical workload @ 100 MHz
+|~50 mW
+|Typical workload @ 100 MHz (both caches enabled)
 |===
 
 === Environmental Specifications
@@ -2621,12 +2855,14 @@ void dma_memcpy(void *dst, const void *src, size_t len) {
 === Performance Optimization Tips
 
 1. **Enable I-Cache**: Set `ICACHE_EN=1` parameter for significant speedup (~2-5× depending on workload)
-2. **Increase Buffer Depths**: Larger `IB_DEPTH` and `SB_DEPTH` improve throughput in memory-intensive code
-3. **Use DMA for Bulk Transfers**: Offload large memory copies to DMA controller
-4. **Minimize Load-Use Dependencies**: Reorder instructions to avoid pipeline stalls
-5. **Use Fast Multiply/Divide**: Set `FAST_MUL=1` and `FAST_DIV=1` for single-cycle operations
-6. **Align Data Structures**: 4-byte alignment avoids misaligned access penalties
-7. **Batch Peripheral I/O**: Use FIFOs to buffer multiple bytes before checking status
+2. **Enable D-Cache**: Set `DCACHE_EN=1` for data-access speedup on load/store-intensive workloads (~1-cycle load latency on hit vs. 3+ cycles to RAM)
+3. **Tune Cache Write Policy**: Use `DCACHE_WRITE_BACK=1` (default) for best performance; use `DCACHE_WRITE_BACK=0` (write-through) where strong write ordering is required
+4. **Increase Buffer Depths**: Larger `IB_DEPTH` and `SB_DEPTH` improve throughput in memory-intensive code
+5. **Use DMA for Bulk Transfers**: Offload large memory copies to DMA controller; issue `cbo.flush` / `FENCE.I` before/after DMA for coherence
+6. **Minimize Load-Use Dependencies**: Reorder instructions to avoid pipeline stalls
+7. **Use Fast Multiply/Divide**: Set `FAST_MUL=1` and `FAST_DIV=1` for single-cycle operations
+8. **Align Data Structures**: 4-byte alignment avoids misaligned access penalties
+9. **Batch Peripheral I/O**: Use FIFOs to buffer multiple bytes before checking status
 
 === Debugging
 
@@ -3405,6 +3641,11 @@ NOTE: I2C requires external pull-up resistors (4.7kΩ typical) on SCL and SDA.
 |2026-02-28
 |KV32 Dev Team
 |Added GPIO (`axi_gpio.sv`) and Timer/PWM (`axi_timer.sv`) peripheral specifications; updated memory map and address decode (Slave 7=GPIO, Slave 8=Timer, Slave 9=Magic); corrected DMA channel count (8→4); added PLIC sources 5 (GPIO) and 6 (Timer); added CAP registers to UART/SPI/I2C/DMA/GPIO/Timer; expanded Appendix A/C accordingly
+
+|1.2
+|2026-03-09
+|KV32 Dev Team
+|Added Data Cache specification (Section 6): write-back/write-through, write-allocate/no-allocate, dirty eviction, CMO ops (INVAL/FLUSH/CLEAN/FLUSH_ALL); added Physical Memory Attributes (PMA) CSRs (`pmacfg0/1`, `pmaaddr0`–`pmaaddr7`, 0x7C0–0x7CB); updated SoC block diagram (SVG + ASCII) to show D-Cache; updated System Components, Key Features, Abstract, and Performance Optimization sections; added D-Cache burst transaction details to AXI section; updated power estimate to ~50 mW
 |===
 
 <<<

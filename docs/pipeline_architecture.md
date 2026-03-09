@@ -111,15 +111,17 @@ forward_a, forward_b:
 **Purpose**: Perform load and store operations to data memory.
 
 **Components**:
-- **Data Memory Interface**: AXI read/write interface
+- **Data Cache** (`kv32_dcache`): Optional write-back set-associative data cache (present when `DCACHE_EN=1`). Provides 1-cycle hit latency for loads/stores; handles dirty-line eviction and CMO operations
+- **Data Memory Interface**: AXI read/write interface; accessed directly when D-cache is disabled, or only on D-cache misses / dirty evictions when enabled
 - **Store Buffer** (`kv32_sb`): Asynchronous store completion buffer (depth configurable via `SB_DEPTH` parameter)
 - **Load/Store Data Encoding**: Handles byte/halfword/word alignment and sign extension
 
 **Store Buffer**:
 - Allows stores to complete without blocking the pipeline
 - FIFO buffer holds pending stores (default depth: 2)
-- Stores are issued to memory in order
+- Stores are issued to memory (or D-cache) in order
 - Flushed on exceptions/branches to maintain precise exceptions
+- When D-cache is enabled, the store buffer drains store data into the D-cache (which handles write-back or write-through to main memory)
 
 **Memory Request Routing**:
 - **Loads**: Go directly to memory (but stall if stores are pending to prevent RAW hazards)
@@ -140,6 +142,7 @@ forward_a, forward_b:
 - Loads stall when any stores are pending in the store buffer
 - This conservative approach prevents reading stale data
 - More aggressive implementations could forward from store buffer
+- When D-cache is enabled, D-cache hit loads complete in 1 cycle and do not interact with store-buffer forwarding (the store buffer drains before loads are issued to the D-cache)
 
 **Pipeline Register Output**: MEM/WB register latches:
 - `alu_result_wb`: ALU result (used for non-memory instructions)
@@ -227,6 +230,7 @@ add x3, x1, x4   # Needs x1 in EX stage (one cycle too early!)
 | **Load-Use** | Load in EX, dependent instruction in ID | Stall pipeline (inject bubble) |
 | **Control (Branch)** | Branch evaluation in EX | Flush IF and ID stages on misprediction |
 | **Memory Backpressure** | Memory not ready | Stall appropriate stage |
+| **D-Cache Miss** | Cache lookup miss | Stall MEM stage until fill completes (CWF optimisation) |
 | **Store-Load** | Store pending in buffer | Stall load until stores complete |
 
 ## Design Philosophy
@@ -255,6 +259,12 @@ Only the **data path** (register file reads in ID, ALU execution in EX) needs fo
 |-----------|---------|-------------|
 | `IB_DEPTH` | 2 | Instruction buffer depth (outstanding instruction fetches) |
 | `SB_DEPTH` | 2 | Store buffer depth (buffered stores awaiting memory completion) |
+| `DCACHE_EN` | 0 | 1 = enable data cache (`kv32_dcache`); 0 = all loads/stores go directly to AXI |
+| `DCACHE_SIZE` | 4096 | Data cache capacity in bytes (power of 2) |
+| `DCACHE_LINE_SIZE` | 32 | Data cache line size in bytes |
+| `DCACHE_WAYS` | 2 | Data cache associativity |
+| `DCACHE_WRITE_BACK` | 1 | 1 = write-back; 0 = write-through |
+| `DCACHE_WRITE_ALLOC` | 1 | 1 = write-allocate on store miss; 0 = no-allocate bypass |
 
 Higher depths allow more outstanding operations but increase area and latency.
 
@@ -293,10 +303,11 @@ The pipeline supports **precise exceptions**:
 **Common Stalls**:
 - **Load-use hazard**: +1 cycle bubble
 - **Branch misprediction**: +2 cycles (flush IF and ID stages)
-- **Memory backpressure**: Variable cycles depending on memory latency
+- **Memory backpressure**: Variable cycles depending on memory latency; reduced to ~0 extra cycles when D-cache is enabled and access is a hit
+- **D-cache miss**: Memory latency + 1 cycle (critical-word-first fill); dirty eviction adds one additional memory round-trip
 - **Multi-cycle ALU**: Variable cycles (multiply: 2-3 cycles, divide: up to 34 cycles)
 
-**Typical CPI**: 1.2-1.5 for most code (depending on load/branch frequency)
+**Typical CPI**: 1.2–1.5 for most code without caches; 1.1–1.3 with both I-cache and D-cache enabled (reduces memory-backpressure stalls significantly)
 
 ## Related Files
 

@@ -78,6 +78,12 @@ module kv32_soc #(
     parameter int unsigned ICACHE_SIZE       = 4096,             // I-cache total bytes
     parameter int unsigned ICACHE_LINE_SIZE  = 32,               // Cache line size in bytes (32 = 8 words/line)
     parameter int unsigned ICACHE_WAYS       = 2,                // Cache associativity (number of ways)
+    parameter bit          DCACHE_EN         = 1'b1,             // Data cache: 1=enabled, 0=bypass (uses mem_axi bridge)
+    parameter int unsigned DCACHE_SIZE       = 4096,             // D-cache total bytes
+    parameter int unsigned DCACHE_LINE_SIZE  = 32,               // D-cache line size in bytes
+    parameter int unsigned DCACHE_WAYS       = 2,                // D-cache associativity (number of ways)
+    parameter bit          DCACHE_WRITE_BACK = 1'b1,             // 1=write-back, 0=write-through
+    parameter bit          DCACHE_WRITE_ALLOC= 1'b1,             // 1=write-allocate, 0=no-alloc
     parameter bit          USE_CJTAG         = 1'b1,             // JTAG mode: 0=JTAG, 1=cJTAG
     parameter bit [31:0]   JTAG_IDCODE       = 32'h1DEAD3FF,     // JTAG device identification code
     parameter int unsigned GPIO_NUM_PINS     = 4                 // Number of GPIO pins (1-128, generates only required registers)
@@ -171,7 +177,15 @@ module kv32_soc #(
     output logic [31:0] icache_perf_miss_cnt,
     output logic [31:0] icache_perf_bypass_cnt,
     output logic [31:0] icache_perf_fill_cnt,
-    output logic [31:0] icache_perf_cmo_cnt
+    output logic [31:0] icache_perf_cmo_cnt,
+    // D-cache performance counters (zero when DCACHE_EN=0)
+    output logic [31:0] dcache_perf_req_cnt,
+    output logic [31:0] dcache_perf_hit_cnt,
+    output logic [31:0] dcache_perf_miss_cnt,
+    output logic [31:0] dcache_perf_bypass_cnt,
+    output logic [31:0] dcache_perf_fill_cnt,
+    output logic [31:0] dcache_perf_evict_cnt,
+    output logic [31:0] dcache_perf_cmo_cnt
 `endif
 );
 
@@ -185,9 +199,7 @@ module kv32_soc #(
     logic        imem_req_ready;      // Memory system ready for new request
     // Loop-free version of imem_req_addr for icache fill-pending logic;
     // uses dedup_consumed (without imem_req_ready) to break the UNOPTFLAT loop.
-    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] imem_req_addr_fill;
-    /* verilator lint_on UNUSEDSIGNAL */
     logic        imem_resp_valid;     // Instruction data available
     logic [31:0] imem_resp_data;      // Fetched instruction word
     logic        imem_resp_error;     // Access error (e.g., unmapped address)
@@ -222,20 +234,22 @@ module kv32_soc #(
     logic [7:0]               imem_axi_arlen;      // Burst length (icache only)
     logic [2:0]               imem_axi_arsize;     // Burst size
     logic [1:0]               imem_axi_arburst;    // Burst type (INCR/WRAP)
-    /* verilator lint_off UNUSEDSIGNAL */
     logic                     imem_axi_rlast;      // Last beat of burst (icache only)
-    /* verilator lint_on UNUSEDSIGNAL */
 
     // ========================================================================
     // Data Memory AXI Bridge Signals (Read/Write)
     // ========================================================================
-    // Converts core's simple request/response to full AXI4 with ID support
+    // Converts core's simple request/response to full AXI4 with ID and burst support
     logic [31:0]              dmem_axi_awaddr;     // Write address
     logic [axi_pkg::AXI_ID_WIDTH-1:0] dmem_axi_awid;      // Write address ID
+    logic [7:0]               dmem_axi_awlen;      // Burst length
+    logic [2:0]               dmem_axi_awsize;     // Burst size
+    logic [1:0]               dmem_axi_awburst;    // Burst type
     logic                     dmem_axi_awvalid;
     logic                     dmem_axi_awready;
     logic [31:0]              dmem_axi_wdata;
     logic [3:0]               dmem_axi_wstrb;
+    logic                     dmem_axi_wlast;
     logic                     dmem_axi_wvalid;
     logic                     dmem_axi_wready;
     logic [1:0]               dmem_axi_bresp;
@@ -244,11 +258,15 @@ module kv32_soc #(
     logic                     dmem_axi_bready;
     logic [31:0]              dmem_axi_araddr;
     logic [axi_pkg::AXI_ID_WIDTH-1:0] dmem_axi_arid;      // Read address ID
+    logic [7:0]               dmem_axi_arlen;      // Burst length
+    logic [2:0]               dmem_axi_arsize;     // Burst size
+    logic [1:0]               dmem_axi_arburst;    // Burst type
     logic                     dmem_axi_arvalid;
     logic                     dmem_axi_arready;
     logic [31:0]              dmem_axi_rdata;
     logic [1:0]               dmem_axi_rresp;
     logic [axi_pkg::AXI_ID_WIDTH-1:0] dmem_axi_rid;       // Read data ID
+    logic                     dmem_axi_rlast;      // Last beat of burst
     logic                     dmem_axi_rvalid;
     logic                     dmem_axi_rready;
 
@@ -503,11 +521,9 @@ module kv32_soc #(
     logic        magic_axi_rready;
 
     // CMO sideband from CPU core (FENCE.I / cbo.inval instructions)
-    /* verilator lint_off UNUSEDSIGNAL */
     logic        core_cmo_valid;     // Core CMO request valid
     logic [1:0]  core_cmo_op;        // Core CMO operation
     logic [31:0] core_cmo_addr;      // Core CMO target address
-    /* verilator lint_on UNUSEDSIGNAL */
     logic        core_cmo_ready;     // Acknowledge back to core
 
     // ========================================================================
@@ -554,6 +570,17 @@ module kv32_soc #(
     logic        core_clk;            // Gated clock supplied to kv32_core by kv32_pm
     logic        core_wakeup;         // Wakeup pulse from kv32_pm to kv32_core
     logic        icache_idle;         // ICache has no AXI transaction in-flight
+    logic        dcache_idle;         // DCache has no AXI transaction in-flight
+
+    // PMA (Physical Memory Attributes) CSRs from core, routed to I-Cache and D-Cache
+    logic [1:0][31:0] pma_cfg;        // pmacfg0, pmacfg1 from kv32_core
+    logic [7:0][31:0] pma_addr;       // pmaaddr0-7 from kv32_core
+
+    // CMO interface wires (core → dcache)
+    logic        core_dcache_cmo_valid;
+    logic [1:0]  core_dcache_cmo_op;
+    logic [31:0] core_dcache_cmo_addr;
+    logic        core_dcache_cmo_ready;
 
     // Tie off debug memory interface (not yet implemented - would need AXI master)
     assign dbg_mem_ready = 1'b0;
@@ -649,9 +676,19 @@ module kv32_soc #(
         .icache_cmo_ready(core_cmo_ready),
         .icache_idle_i   (icache_idle),
 
+        .dcache_cmo_valid(core_dcache_cmo_valid),
+        .dcache_cmo_op   (core_dcache_cmo_op),
+        .dcache_cmo_addr (core_dcache_cmo_addr),
+        .dcache_cmo_ready(core_dcache_cmo_ready),
+        .dcache_idle_i   (dcache_idle),
+
         // WFI / Power Management
         .core_sleep_o(core_sleep),
         .wakeup_i    (core_wakeup),
+
+        // PMA CSR outputs
+        .pma_cfg_o (pma_cfg),
+        .pma_addr_o(pma_addr),
 
         // Debug interface
         .dbg_halt_req_i(dbg_halt_req),
@@ -728,6 +765,10 @@ module kv32_soc #(
                 .cmo_op     (core_cmo_op),
                 .cmo_ready  (icache_cmo_ready_w),
 
+                // PMA configuration
+                .pma_cfg_i (pma_cfg),
+                .pma_addr_i(pma_addr),
+
                 // Power management
                 .icache_idle(icache_idle_w)
 `ifndef SYNTHESIS
@@ -796,62 +837,195 @@ module kv32_soc #(
             assign icache_perf_bypass_cnt = '0;
             assign icache_perf_fill_cnt   = '0;
             assign icache_perf_cmo_cnt    = '0;
+            // Sink signals driven by core/arbiter but only consumed by kv32_icache
+            logic _unused_icache_nc;
+            assign _unused_icache_nc = &{1'b0,
+                imem_req_addr_fill,
+                imem_axi_rlast,
+                core_cmo_valid, core_cmo_op, core_cmo_addr};
 `endif
 
         end
 
     // ========================================================================
-    // Data Memory to AXI Bridge (Read/Write)
+    // Data Memory Interface: D-Cache or Simple AXI Bridge
     // ========================================================================
-    // Converts core's simple request/response to full AXI4 (AW/W/B/AR/R) with ID support
-    // Supports both loads and stores with byte-level write enables
-    mem_axi #(
+    // DCACHE_EN=1: kv32_dcache (full AXI4 burst master, write-back/write-through)
+    // DCACHE_EN=0: mem_axi     (single-beat AXI4 bridge, original path)
+    if (DCACHE_EN) begin : g_dcache
+
+        kv32_dcache #(
+            .DCACHE_SIZE       (DCACHE_SIZE),
+            .DCACHE_LINE_SIZE  (DCACHE_LINE_SIZE),
+            .DCACHE_WAYS       (DCACHE_WAYS),
+            .DCACHE_WRITE_BACK (DCACHE_WRITE_BACK),
+            .DCACHE_WRITE_ALLOC(DCACHE_WRITE_ALLOC)
+        ) dcache (
+            .clk    (core_clk),
+            .rst_n  (cpu_rst_n),
+
+            // Core side
+            .core_req_valid    (dmem_req_valid),
+            .core_req_addr     (dmem_req_addr),
+            .core_req_we       (dmem_req_we),
+            .core_req_wdata    (dmem_req_wdata),
+            .core_req_ready    (dmem_req_ready),
+            .core_resp_valid   (dmem_resp_valid),
+            .core_resp_data    (dmem_resp_data),
+            .core_resp_error   (dmem_resp_error),
+            .core_resp_is_write(dmem_resp_is_write),
+            .core_resp_ready   (dmem_resp_ready),
+
+            // CMO
+            .cmo_valid_i(core_dcache_cmo_valid),
+            .cmo_op_i   (core_dcache_cmo_op),
+            .cmo_addr_i (core_dcache_cmo_addr),
+            .cmo_ready_o(core_dcache_cmo_ready),
+
+            // AXI4 burst master
+            .axi_awvalid(dmem_axi_awvalid),
+            .axi_awaddr (dmem_axi_awaddr),
+            .axi_awlen  (dmem_axi_awlen),
+            .axi_awsize (dmem_axi_awsize),
+            .axi_awburst(dmem_axi_awburst),
+            .axi_awready(dmem_axi_awready),
+            .axi_wvalid (dmem_axi_wvalid),
+            .axi_wdata  (dmem_axi_wdata),
+            .axi_wstrb  (dmem_axi_wstrb),
+            .axi_wlast  (dmem_axi_wlast),
+            .axi_wready (dmem_axi_wready),
+            .axi_bresp  (dmem_axi_bresp),
+            .axi_bvalid (dmem_axi_bvalid),
+            .axi_bready (dmem_axi_bready),
+            .axi_arvalid(dmem_axi_arvalid),
+            .axi_araddr (dmem_axi_araddr),
+            .axi_arlen  (dmem_axi_arlen),
+            .axi_arsize (dmem_axi_arsize),
+            .axi_arburst(dmem_axi_arburst),
+            .axi_arready(dmem_axi_arready),
+            .axi_rdata  (dmem_axi_rdata),
+            .axi_rresp  (dmem_axi_rresp),
+            .axi_rlast  (dmem_axi_rlast),
+            .axi_rvalid (dmem_axi_rvalid),
+            .axi_rready (dmem_axi_rready),
+
+            .dcache_enable_i(1'b1),
+            .dcache_idle_o  (dcache_idle),
+
+            // PMA configuration
+            .pma_cfg_i (pma_cfg),
+            .pma_addr_i(pma_addr)
+
 `ifndef SYNTHESIS
-        .BRIDGE_NAME("DMEM_BRIDGE"),
+            ,.perf_req_cnt    (dcache_perf_req_cnt)
+            ,.perf_hit_cnt    (dcache_perf_hit_cnt)
+            ,.perf_miss_cnt   (dcache_perf_miss_cnt)
+            ,.perf_bypass_cnt (dcache_perf_bypass_cnt)
+            ,.perf_fill_cnt   (dcache_perf_fill_cnt)
+            ,.perf_evict_cnt  (dcache_perf_evict_cnt)
+            ,.perf_cmo_cnt    (dcache_perf_cmo_cnt)
 `endif
-        .OUTSTANDING_DEPTH(4)  // Conservative limit matching original system capability
-    ) dmem_bridge (
-        .clk(clk),
-        .rst_n(soc_rst_n),
+        );
 
-        .mem_req_valid(dmem_req_valid),
-        .mem_req_addr(dmem_req_addr),
-        .mem_req_we(dmem_req_we),
-        .mem_req_wdata(dmem_req_wdata),
-        .mem_req_ready(dmem_req_ready),
+        assign dmem_axi_awid  = '0;
+        assign dmem_axi_arid  = '0;
+        // dmem_axi_rid, dmem_axi_bid: driven by arbiter M1 outputs; dcache has no bid/rid ports
+`ifndef SYNTHESIS
+        logic _unused_dcache_id;
+        assign _unused_dcache_id = &{1'b0, dmem_axi_bid, dmem_axi_rid};
+`endif
 
-        .mem_resp_valid(dmem_resp_valid),
-        .mem_resp_data(dmem_resp_data),
-        .mem_resp_error(dmem_resp_error),
-        .mem_resp_is_write(dmem_resp_is_write),
-        .mem_resp_ready(dmem_resp_ready),
+    end else begin : g_no_dcache
 
-        .axi_awaddr(dmem_axi_awaddr),
-        .axi_awid(dmem_axi_awid),
-        .axi_awvalid(dmem_axi_awvalid),
-        .axi_awready(dmem_axi_awready),
+        // Simple AXI bridge (original single-beat path)
+        mem_axi #(
+`ifndef SYNTHESIS
+            .BRIDGE_NAME("DMEM_BRIDGE"),
+`endif
+            .OUTSTANDING_DEPTH(4)
+        ) dmem_bridge (
+            .clk(clk),
+            .rst_n(soc_rst_n),
 
-        .axi_wdata(dmem_axi_wdata),
-        .axi_wstrb(dmem_axi_wstrb),
-        .axi_wvalid(dmem_axi_wvalid),
-        .axi_wready(dmem_axi_wready),
+            .mem_req_valid(dmem_req_valid),
+            .mem_req_addr(dmem_req_addr),
+            .mem_req_we(dmem_req_we),
+            .mem_req_wdata(dmem_req_wdata),
+            .mem_req_ready(dmem_req_ready),
 
-        .axi_bresp(dmem_axi_bresp),
-        .axi_bid(dmem_axi_bid),
-        .axi_bvalid(dmem_axi_bvalid),
-        .axi_bready(dmem_axi_bready),
+            .mem_resp_valid(dmem_resp_valid),
+            .mem_resp_data(dmem_resp_data),
+            .mem_resp_error(dmem_resp_error),
+            .mem_resp_is_write(dmem_resp_is_write),
+            .mem_resp_ready(dmem_resp_ready),
 
-        .axi_araddr(dmem_axi_araddr),
-        .axi_arid(dmem_axi_arid),
-        .axi_arvalid(dmem_axi_arvalid),
-        .axi_arready(dmem_axi_arready),
+            .axi_awaddr(dmem_axi_awaddr),
+            .axi_awid(dmem_axi_awid),
+            .axi_awvalid(dmem_axi_awvalid),
+            .axi_awready(dmem_axi_awready),
 
-        .axi_rdata(dmem_axi_rdata),
-        .axi_rresp(dmem_axi_rresp),
-        .axi_rid(dmem_axi_rid),
-        .axi_rvalid(dmem_axi_rvalid),
-        .axi_rready(dmem_axi_rready)
-    );
+            .axi_wdata(dmem_axi_wdata),
+            .axi_wstrb(dmem_axi_wstrb),
+            .axi_wvalid(dmem_axi_wvalid),
+            .axi_wready(dmem_axi_wready),
+
+            .axi_bresp(dmem_axi_bresp),
+            .axi_bid(dmem_axi_bid),
+            .axi_bvalid(dmem_axi_bvalid),
+            .axi_bready(dmem_axi_bready),
+
+            .axi_araddr(dmem_axi_araddr),
+            .axi_arid(dmem_axi_arid),
+            .axi_arvalid(dmem_axi_arvalid),
+            .axi_arready(dmem_axi_arready),
+
+            .axi_rdata(dmem_axi_rdata),
+            .axi_rresp(dmem_axi_rresp),
+            .axi_rid(dmem_axi_rid),
+            .axi_rlast(dmem_axi_rlast),
+            .axi_rvalid(dmem_axi_rvalid),
+            .axi_rready(dmem_axi_rready)
+        );
+
+        // Single-beat bridge: fix burst fields for arbiter M1
+        assign dmem_axi_awlen   = 8'h00;
+        assign dmem_axi_awsize  = 3'b010;
+        assign dmem_axi_awburst = 2'b01;  // INCR
+        assign dmem_axi_wlast   = 1'b1;
+        assign dmem_axi_arlen   = 8'h00;
+        assign dmem_axi_arsize  = 3'b010;
+        assign dmem_axi_arburst = 2'b01;  // INCR
+        // dmem_axi_rlast driven by arbiter m1_axi_rlast and connected to mem_axi.axi_rlast
+
+        // No dcache: CMO ack immediately
+        assign core_dcache_cmo_ready = 1'b1;
+        assign dcache_idle           = 1'b1;
+
+`ifndef SYNTHESIS
+        assign dcache_perf_req_cnt    = '0;
+        assign dcache_perf_hit_cnt    = '0;
+        assign dcache_perf_miss_cnt   = '0;
+        assign dcache_perf_bypass_cnt = '0;
+        assign dcache_perf_fill_cnt   = '0;
+        assign dcache_perf_evict_cnt  = '0;
+        assign dcache_perf_cmo_cnt    = '0;
+        // Sink CMO signals driven by core but only consumed by kv32_dcache
+        logic _unused_dcache_nc;
+        assign _unused_dcache_nc = &{1'b0,
+            core_dcache_cmo_valid, core_dcache_cmo_op, core_dcache_cmo_addr,
+            dmem_axi_bid, dmem_axi_rid};
+`endif
+
+    end
+
+    // PMA signals are consumed by whichever cache(s) are enabled; sink them
+    // in simulation when both caches are disabled to keep lint clean.
+    if (!ICACHE_EN && !DCACHE_EN) begin : g_no_cache_pma_sink
+`ifndef SYNTHESIS
+        logic _unused_pma;
+        assign _unused_pma = &{1'b0, pma_cfg, pma_addr};
+`endif
+    end
 
     // ========================================================================
     // AXI Arbiter (Split Read/Write)
@@ -881,28 +1055,36 @@ module kv32_soc #(
         .m0_axi_rready  (imem_axi_rready),
         .m0_axi_rlast   (imem_axi_rlast),
 
-        // Master 1: Data memory (Read/Write) with ID
-        .m1_axi_awaddr(dmem_axi_awaddr),
-        .m1_axi_awid(dmem_axi_awid),
+        // Master 1: Data memory (Read/Write) with burst support
+        .m1_axi_awaddr (dmem_axi_awaddr),
+        .m1_axi_awid   (dmem_axi_awid),
+        .m1_axi_awlen  (dmem_axi_awlen),
+        .m1_axi_awsize (dmem_axi_awsize),
+        .m1_axi_awburst(dmem_axi_awburst),
         .m1_axi_awvalid(dmem_axi_awvalid),
         .m1_axi_awready(dmem_axi_awready),
-        .m1_axi_wdata(dmem_axi_wdata),
-        .m1_axi_wstrb(dmem_axi_wstrb),
-        .m1_axi_wvalid(dmem_axi_wvalid),
-        .m1_axi_wready(dmem_axi_wready),
-        .m1_axi_bresp(dmem_axi_bresp),
-        .m1_axi_bid(dmem_axi_bid),
-        .m1_axi_bvalid(dmem_axi_bvalid),
-        .m1_axi_bready(dmem_axi_bready),
-        .m1_axi_araddr(dmem_axi_araddr),
-        .m1_axi_arid(dmem_axi_arid),
+        .m1_axi_wdata  (dmem_axi_wdata),
+        .m1_axi_wstrb  (dmem_axi_wstrb),
+        .m1_axi_wlast  (dmem_axi_wlast),
+        .m1_axi_wvalid (dmem_axi_wvalid),
+        .m1_axi_wready (dmem_axi_wready),
+        .m1_axi_bresp  (dmem_axi_bresp),
+        .m1_axi_bid    (dmem_axi_bid),
+        .m1_axi_bvalid (dmem_axi_bvalid),
+        .m1_axi_bready (dmem_axi_bready),
+        .m1_axi_araddr (dmem_axi_araddr),
+        .m1_axi_arid   (dmem_axi_arid),
+        .m1_axi_arlen  (dmem_axi_arlen),
+        .m1_axi_arsize (dmem_axi_arsize),
+        .m1_axi_arburst(dmem_axi_arburst),
         .m1_axi_arvalid(dmem_axi_arvalid),
         .m1_axi_arready(dmem_axi_arready),
-        .m1_axi_rdata(dmem_axi_rdata),
-        .m1_axi_rresp(dmem_axi_rresp),
-        .m1_axi_rid(dmem_axi_rid),
-        .m1_axi_rvalid(dmem_axi_rvalid),
-        .m1_axi_rready(dmem_axi_rready),
+        .m1_axi_rdata  (dmem_axi_rdata),
+        .m1_axi_rresp  (dmem_axi_rresp),
+        .m1_axi_rid    (dmem_axi_rid),
+        .m1_axi_rlast  (dmem_axi_rlast),
+        .m1_axi_rvalid (dmem_axi_rvalid),
+        .m1_axi_rready (dmem_axi_rready),
 
         // Master 2: DMA engine (Read/Write)
         .m2_axi_awaddr  (dma_m_axi_awaddr),

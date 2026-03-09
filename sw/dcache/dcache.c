@@ -13,6 +13,7 @@
 #include <csr.h>
 #include "kv_platform.h"
 #include "kv_cache.h"
+#include "kv_pma.h"
 
 // ---------------------------------------------------------------------------
 // Helper: output one character via UART MMIO
@@ -329,6 +330,76 @@ int main(void) {
         }
         if (ok) my_puts("  Result: PASS  (all stores in correct order)\n\n");
         else    my_puts("  Result: FAIL\n\n");
+    }
+
+    // =========================================================
+    // TEST 8: PMA CSR – mark RAM non-D-cacheable, verify bypass
+    // =========================================================
+    my_puts("[TEST 8] PMA CSR: mark RAM non-D-cacheable via NAPOT region\n");
+    {
+        // Write a known pattern and flush to backing memory before switching PMA
+        for (int i = 0; i < BUF_WORDS; i++)
+            tbuf[i] = 0xEE000000UL | (uint32_t)i;
+        for (int i = 0; i < BUF_WORDS; i += LINE_WORDS)
+            kv_cbo_flush((void *)&tbuf[i]);
+
+        // Program region 0: NAPOT covering the full SRAM (2 MB at 0x8000_0000).
+        // Remove the C (D-cacheable) bit – I-cacheable + bufferable stay set so
+        // instruction fetches are unaffected.
+        kv_pma_set_napot(0, KV_RAM_BASE, KV_RAM_SIZE,
+                         KV_PMA_ICACHEABLE | KV_PMA_BUFFERABLE);
+        kv_fence_rw();
+
+        // With C=0, every data access should bypass the D-cache.
+        // Both sweeps should take similar cycles – no warm-up.
+        uint32_t pma_sweep1 = time_read_sweep();
+        uint32_t pma_sweep2 = time_read_sweep();
+
+        my_puts("  Non-D-cacheable sweep 1 cycles: "); print_dec(pma_sweep1); my_puts("\n");
+        my_puts("  Non-D-cacheable sweep 2 cycles: "); print_dec(pma_sweep2); my_puts("\n");
+
+        // Bypass check: sweep2 should NOT be dramatically faster than sweep1
+        if (pma_sweep2 > 0 && pma_sweep1 > 0 && pma_sweep2 < pma_sweep1 / 2) {
+            my_puts("  Timing: WARN  (sweep2 >> faster – PMA bypass may not work)\n");
+        } else {
+            my_puts("  Timing: PASS  (sweep1 ~= sweep2: no spurious D-cache warmup)\n");
+        }
+
+        // Correctness: data flushed to memory before PMA switch must read back correctly
+        int ok = 1;
+        for (int i = 0; i < BUF_WORDS; i++) {
+            if (tbuf[i] != (0xEE000000UL | (uint32_t)i)) {
+                ok = 0;
+                my_puts("  FAIL at word "); print_dec(i);
+                my_puts(": got 0x"); print_hex32(tbuf[i]); my_puts("\n");
+                fails++;
+                break;
+            }
+        }
+        if (ok) my_puts("  Correctness: PASS  (bypass read-back correct)\n");
+        else    my_puts("  Correctness: FAIL\n");
+
+        // Restore: re-enable D-cacheability for RAM
+        kv_pma_set_napot(0, KV_RAM_BASE, KV_RAM_SIZE,
+                         KV_PMA_ICACHEABLE | KV_PMA_DCACHEABLE | KV_PMA_BUFFERABLE);
+
+        // Force cold state so the timing check is meaningful
+        for (int i = 0; i < BUF_WORDS; i += LINE_WORDS)
+            kv_cbo_flush((void *)&tbuf[i]);
+
+        uint32_t cold_r = time_read_sweep();
+        uint32_t warm_r = time_read_sweep();
+        my_puts("  After restore – cold: "); print_dec(cold_r);
+        my_puts("  warm: "); print_dec(warm_r); my_puts("\n");
+        if (warm_r <= cold_r) {
+            my_puts("  Restore: PASS  (D-cacheability restored, warm <= cold)\n\n");
+        } else {
+            my_puts("  Restore: WARN  (warm > cold after restore)\n\n");
+        }
+
+        // Disable region 0 (A=00 → fallback to legacy bit[31] rule)
+        kv_pma_clear_region(0);
+        kv_fence_rw();
     }
 
     // =========================================================

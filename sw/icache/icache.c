@@ -11,6 +11,8 @@
 #include <stdint.h>
 #include <csr.h>
 #include "kv_platform.h"
+#include "kv_cache.h"
+#include "kv_pma.h"
 
 // ---------------------------------------------------------------------------
 // Helper: output one character via UART MMIO
@@ -60,26 +62,6 @@ static uint32_t time_hot_loop(uint32_t iters) {
 }
 
 // ---------------------------------------------------------------------------
-// Inline-assembly wrappers for CMO instructions
-// ---------------------------------------------------------------------------
-
-// fence.i – serialise and flush the entire instruction cache
-// Encoded as .word to avoid requiring -march=..._zifencei from the toolchain.
-// FENCE.I = opcode 0x0F, funct3=1, rs1=0, rd=0, imm=0 → 0x0000100F
-static inline void fence_i(void) {
-    __asm__ volatile (".word 0x0000100f" ::: "memory");
-}
-
-// cbo.inval rs1  – invalidate the I-cache line containing *addr
-// Encoding: .insn i OPCODE_MISC_MEM(0xf), funct3=2, rd=x0, imm=0, rs1
-static inline void cbo_inval(void *addr) {
-    __asm__ volatile (".insn i 0xf, 2, x0, 0(%0)"
-                      :
-                      : "r"(addr)
-                      : "memory");
-}
-
-// ---------------------------------------------------------------------------
 // Minimal trap handler (required by start.S)
 // ---------------------------------------------------------------------------
 void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
@@ -121,7 +103,7 @@ int main(void) {
     my_puts("[TEST 1] Cold vs warm timing\n");
 
     // Flush the cache so the hot_loop region is cold.
-    fence_i();
+    kv_fence_i();
 
     uint32_t cold_cycles = time_hot_loop(ITERS);
     uint32_t warm_cycles = time_hot_loop(ITERS);
@@ -141,7 +123,7 @@ int main(void) {
     my_puts("[TEST 2] FENCE.I instruction\n");
 
     uint32_t pre_fence_cycles = time_hot_loop(ITERS);
-    fence_i();
+    kv_fence_i();
     uint32_t post_fence_cycles = time_hot_loop(ITERS);
 
     my_puts("  Pre-fence  cycles: "); print_dec(pre_fence_cycles);  my_puts("\n");
@@ -152,7 +134,7 @@ int main(void) {
 
     // Correctness: hot_loop must return the same value across fence.i
     uint32_t ref = hot_loop(ITERS);
-    fence_i();
+    kv_fence_i();
     uint32_t chk = hot_loop(ITERS);
     if (ref == chk) {
         my_puts("  Result: PASS  (hot_loop result consistent across fence.i)\n\n");
@@ -170,7 +152,7 @@ int main(void) {
     (void)hot_loop(ITERS);
 
     // Invalidate the cache line containing hot_loop's code
-    cbo_inval((void *)&hot_loop);
+    kv_cbo_inval((void *)&hot_loop);
     my_puts("  Issued cbo.inval for hot_loop @ 0x");
     print_hex32((uint32_t)(uintptr_t)&hot_loop);
     my_puts("\n");
@@ -180,7 +162,7 @@ int main(void) {
 
     // Correctness: result must still match after invalidation
     uint32_t ref2 = hot_loop(ITERS);
-    fence_i();
+    kv_fence_i();
     uint32_t chk2 = hot_loop(ITERS);
     if (ref2 == chk2) {
         my_puts("  Result: PASS  (hot_loop result consistent after cbo.inval)\n\n");
@@ -207,7 +189,7 @@ int main(void) {
     // Fence.I: flush any stale icache lines before jumping to NCM.
     // (NCM has bit[31]=0 so the PMA check should bypass the cache, but
     // issuing FENCE.I ensures a clean state for the first NCM fetch.)
-    fence_i();
+    kv_fence_i();
 
     my_puts("  Copied 128 B to NCM; issuing FENCE.I before first call\n");
 
@@ -255,6 +237,64 @@ int main(void) {
         my_puts(" ref=0x"); print_hex32(ref_ncm);
         my_puts(")\n\n");
         fails++;
+    }
+
+    // =========================================================
+    // TEST 5: PMA CSR – mark RAM non-I-cacheable, verify bypass
+    // =========================================================
+    my_puts("[TEST 5] PMA CSR: mark RAM non-I-cacheable via NAPOT region\n");
+    {
+        // Program region 0: NAPOT covering the full SRAM (2 MB at 0x8000_0000).
+        // Remove the X (I-cacheable) bit – D-cacheable + bufferable stay set so
+        // data accesses are unaffected.
+        kv_pma_set_napot(0, KV_RAM_BASE, KV_RAM_SIZE,
+                         KV_PMA_DCACHEABLE | KV_PMA_BUFFERABLE);
+        kv_fence_i();   // flush all live I-cache lines before the bypass test
+
+        // With X=0, every instruction fetch should bypass the I-cache.
+        // Both calls should take similar cycles – no warm-up.
+        uint32_t pma_call1 = time_hot_loop(ITERS);
+        uint32_t pma_call2 = time_hot_loop(ITERS);
+
+        my_puts("  Non-I-cacheable call 1 cycles: "); print_dec(pma_call1); my_puts("\n");
+        my_puts("  Non-I-cacheable call 2 cycles: "); print_dec(pma_call2); my_puts("\n");
+
+        // Correctness: hot_loop must still return the correct value
+        uint32_t ref_pma = hot_loop(ITERS);
+        kv_fence_i();
+        uint32_t chk_pma = hot_loop(ITERS);
+        if (ref_pma == chk_pma) {
+            my_puts("  Correctness: PASS  (hot_loop result unchanged under bypass)\n");
+        } else {
+            my_puts("  Correctness: FAIL  (hot_loop result corrupted!)\n");
+            fails++;
+        }
+
+        // Bypass check: call2 should NOT be dramatically faster than call1
+        if (pma_call2 > 0 && pma_call1 > 0 && pma_call2 < pma_call1 / 2) {
+            my_puts("  Timing:      WARN  (call2 >> faster – PMA bypass may not work)\n\n");
+        } else {
+            my_puts("  Timing:      PASS  (call1 ~= call2: no spurious I-cache warmup)\n\n");
+        }
+
+        // Restore: re-enable I-cacheability for RAM
+        kv_pma_set_napot(0, KV_RAM_BASE, KV_RAM_SIZE,
+                         KV_PMA_ICACHEABLE | KV_PMA_DCACHEABLE | KV_PMA_BUFFERABLE);
+        kv_fence_i();   // cold-start with caching re-enabled
+
+        uint32_t cold_r = time_hot_loop(ITERS);
+        uint32_t warm_r = time_hot_loop(ITERS);
+        my_puts("  After restore – cold: "); print_dec(cold_r);
+        my_puts("  warm: "); print_dec(warm_r); my_puts("\n");
+        if (warm_r <= cold_r) {
+            my_puts("  Restore:     PASS  (I-cacheability restored, warm <= cold)\n\n");
+        } else {
+            my_puts("  Restore:     WARN  (warm > cold after restore)\n\n");
+        }
+
+        // Disable region 0 (A=00 → fallback to legacy bit[31] rule)
+        kv_pma_clear_region(0);
+        kv_fence_i();
     }
 
     // =========================================================

@@ -155,6 +155,10 @@ KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
     csr_mimpid = 0;     // No implementation ID
     csr_mhartid = 0;    // Hart ID = 0 (single core)
 
+    // Initialize PMA CSRs (all regions disabled – fallback to bit[31] rule)
+    for (int i = 0; i < 2; i++) csr_pmacfg[i]  = 0;
+    for (int i = 0; i < 8; i++) csr_pmaaddr[i] = 0;
+
     // Initialize device drivers
     magic = new MagicDevice();
     uart = new UARTDevice();
@@ -306,6 +310,16 @@ void KV32Simulator::log_commit(uint32_t pc, uint32_t inst, int rd_num,
             case 0xc00: csr_name = "cycle"; break;
             case 0xc01: csr_name = "time"; break;
             case 0xc02: csr_name = "instret"; break;
+            case 0x7c0: csr_name = "pmacfg0"; break;
+            case 0x7c1: csr_name = "pmacfg1"; break;
+            case 0x7c4: csr_name = "pmaaddr0"; break;
+            case 0x7c5: csr_name = "pmaaddr1"; break;
+            case 0x7c6: csr_name = "pmaaddr2"; break;
+            case 0x7c7: csr_name = "pmaaddr3"; break;
+            case 0x7c8: csr_name = "pmaaddr4"; break;
+            case 0x7c9: csr_name = "pmaaddr5"; break;
+            case 0x7ca: csr_name = "pmaaddr6"; break;
+            case 0x7cb: csr_name = "pmaaddr7"; break;
             default: csr_name = "unknown"; break;
             }
             line_stream << " c" << std::setfill('0') << std::setw(3) << std::hex << csr_num
@@ -350,6 +364,16 @@ void KV32Simulator::log_commit(uint32_t pc, uint32_t inst, int rd_num,
             case 0x342: csr_name = "mcause"; break;
             case 0x343: csr_name = "mtval"; break;
             case 0x344: csr_name = "mip"; break;
+            case 0x7c0: csr_name = "pmacfg0"; break;
+            case 0x7c1: csr_name = "pmacfg1"; break;
+            case 0x7c4: csr_name = "pmaaddr0"; break;
+            case 0x7c5: csr_name = "pmaaddr1"; break;
+            case 0x7c6: csr_name = "pmaaddr2"; break;
+            case 0x7c7: csr_name = "pmaaddr3"; break;
+            case 0x7c8: csr_name = "pmaaddr4"; break;
+            case 0x7c9: csr_name = "pmaaddr5"; break;
+            case 0x7ca: csr_name = "pmaaddr6"; break;
+            case 0x7cb: csr_name = "pmaaddr7"; break;
             default: csr_name = "unknown"; break;
             }
             trace_file << " c" << std::dec << csr_num << "_" << csr_name
@@ -445,6 +469,17 @@ uint32_t KV32Simulator::read_csr(uint32_t csr) {
         return csr_mimpid;
     case CSR_MHARTID:
         return csr_mhartid;
+    // Custom PMA CSRs
+    case CSR_PMACFG0:  return csr_pmacfg[0];
+    case CSR_PMACFG1:  return csr_pmacfg[1];
+    case CSR_PMAADDR0: return csr_pmaaddr[0];
+    case CSR_PMAADDR1: return csr_pmaaddr[1];
+    case CSR_PMAADDR2: return csr_pmaaddr[2];
+    case CSR_PMAADDR3: return csr_pmaaddr[3];
+    case CSR_PMAADDR4: return csr_pmaaddr[4];
+    case CSR_PMAADDR5: return csr_pmaaddr[5];
+    case CSR_PMAADDR6: return csr_pmaaddr[6];
+    case CSR_PMAADDR7: return csr_pmaaddr[7];
     default:
         std::cerr << "Warning: Reading unknown CSR 0x" << std::hex << csr
                   << std::endl;
@@ -509,6 +544,28 @@ void KV32Simulator::write_csr(uint32_t csr, uint32_t value) {
     case CSR_MISA:  // MISA is read-only
         // Read-only CSRs, ignore writes
         break;
+
+    // Custom PMA CSRs (M-mode R/W with per-byte/per-region lock)
+    case CSR_PMACFG0:
+        for (int b = 0; b < 4; b++)
+            if (!((csr_pmacfg[0] >> (b*8)) & 0x80u))  // lock bit clear?
+                csr_pmacfg[0] = (csr_pmacfg[0] & ~(0xFFu << (b*8))) |
+                                 (value & (0xFFu << (b*8)));
+        break;
+    case CSR_PMACFG1:
+        for (int b = 0; b < 4; b++)
+            if (!((csr_pmacfg[1] >> (b*8)) & 0x80u))
+                csr_pmacfg[1] = (csr_pmacfg[1] & ~(0xFFu << (b*8))) |
+                                 (value & (0xFFu << (b*8)));
+        break;
+    case CSR_PMAADDR0: if (!(csr_pmacfg[0] & 0x00000080u)) csr_pmaaddr[0] = value; break;
+    case CSR_PMAADDR1: if (!(csr_pmacfg[0] & 0x00008000u)) csr_pmaaddr[1] = value; break;
+    case CSR_PMAADDR2: if (!(csr_pmacfg[0] & 0x00800000u)) csr_pmaaddr[2] = value; break;
+    case CSR_PMAADDR3: if (!(csr_pmacfg[0] & 0x80000000u)) csr_pmaaddr[3] = value; break;
+    case CSR_PMAADDR4: if (!(csr_pmacfg[1] & 0x00000080u)) csr_pmaaddr[4] = value; break;
+    case CSR_PMAADDR5: if (!(csr_pmacfg[1] & 0x00008000u)) csr_pmaaddr[5] = value; break;
+    case CSR_PMAADDR6: if (!(csr_pmacfg[1] & 0x00800000u)) csr_pmaaddr[6] = value; break;
+    case CSR_PMAADDR7: if (!(csr_pmacfg[1] & 0x80000000u)) csr_pmaaddr[7] = value; break;
 
     default:
         std::cerr << "Warning: Writing unknown CSR 0x" << std::hex << csr
@@ -1653,6 +1710,9 @@ void KV32Simulator::step() {
                 CSR_CYCLE,   CSR_TIME,    CSR_INSTRET,
                 CSR_CYCLEH,  CSR_TIMEH,   CSR_INSTRETH,
                 CSR_MVENDORID, CSR_MARCHID, CSR_MIMPID, CSR_MHARTID,
+                CSR_PMACFG0, CSR_PMACFG1,
+                CSR_PMAADDR0, CSR_PMAADDR1, CSR_PMAADDR2, CSR_PMAADDR3,
+                CSR_PMAADDR4, CSR_PMAADDR5, CSR_PMAADDR6, CSR_PMAADDR7,
             };
             if (known_csrs.find(csr_addr) == known_csrs.end()) {
                 take_trap(CAUSE_ILLEGAL_INSTRUCTION, inst);
