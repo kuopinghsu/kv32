@@ -2487,8 +2487,13 @@ module kv32_core #(
 
         case (amo_state)
             AMO_IDLE: begin
-                // Check if AMO instruction is entering MEM stage
-                if (is_amo_mem && mem_valid && !mem_wb_stall) begin
+                // Check if AMO instruction is entering MEM stage for the first time.
+                // Guard with !amo_started to prevent a spurious re-issue in the same
+                // cycle that the AMO completes (AMO_WRITE->AMO_IDLE): at that moment
+                // amo_in_progress drops so mem_wb_stall clears, but the AMO instruction
+                // is still in the MEM stage and amo_started=1, meaning we must NOT
+                // re-issue a fresh memory request for it.
+                if (is_amo_mem && mem_valid && !mem_wb_stall && !amo_started) begin
                     if (amo_op_mem == AMO_SC && (!lr_valid || (lr_addr != alu_result_mem))) begin
                         // SC with invalid reservation: no memory access
                         amo_mem_req = 1'b0;

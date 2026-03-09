@@ -128,6 +128,7 @@ SVLINT ?= None
 VERILATOR_JOBS ?= 0
 VERILATOR_FLAGS = -Wall -Wno-UNSIGNED --trace --trace-fst --cc --exe --build -j $(VERILATOR_JOBS)
 VERILATOR_FLAGS += -sv --timing
+VERILATOR_FLAGS += --timescale 1ns/1ps
 VERILATOR_FLAGS += --top-module tb_kv32_soc
 VERILATOR_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM
 VERILATOR_FLAGS += -CFLAGS "-Wall -Werror -Wno-bool-operation -Wno-parentheses-equality -Wno-unused-variable"
@@ -274,6 +275,7 @@ SW_PARAMS_STAMP  = $(BUILD_DIR)/.sw_build_params
 # Verilator lint-only flags (all warnings enabled, -Werror-IMPLICIT, no simulation output)
 VERILATOR_LINT_FLAGS  = --lint-only -Wall -Wno-UNSIGNED
 VERILATOR_LINT_FLAGS += -sv --timing
+VERILATOR_LINT_FLAGS += --timescale 1ns/1ps
 VERILATOR_LINT_FLAGS += --top-module tb_kv32_soc
 VERILATOR_LINT_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM
 VERILATOR_LINT_FLAGS += -Werror-IMPLICIT

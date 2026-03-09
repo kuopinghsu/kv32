@@ -8,6 +8,8 @@
 // peripheral testing in simulation.
 // ============================================================================
 
+`timescale 1ns/1ps
+
 /* verilator lint_off SYNCASYNCNET */
 module tb_kv32_soc #(
     parameter int FAST_MUL          = 1,    // Multiply mode: 1=combinatorial, 0=serial
@@ -285,22 +287,49 @@ module tb_kv32_soc #(
     );
 `else
     // -------------------------------------------------------------------------
-    // DDR4 model: ddr4_axi4_slave (32-bit AXI4 with full ID/sideband, 1 GB)
-    // Sideband signals not driven by the 32-bit SoC core are tied to safe values.
+    // DDR4 model: ddr4_axi4_slave
+    // aclk = clk (100 MHz, same as CPU core) — fully synchronous AXI domain.
+    // mclk = independent DDR4 half-rate clock at DDR4_SPEED_GRADE/2 MHz,
+    //        generated here and asynchronous with respect to aclk.
     // -------------------------------------------------------------------------
+
+    // DDR4 half-rate clock: period = 2000/(DDR4_SPEED_GRADE) ns
+    // Examples: DDR4-1600 → 0.625 ns half-period; DDR4-3200 → 0.3125 ns
+    localparam real MCLK_HALF_PERIOD_NS = 1000.0 / DDR4_SPEED_GRADE;
+
+    // Independent DDR4 memory clock (asynchronous to clk)
+    logic mclk;
+    initial mclk = 1'b0;
+    /* verilator lint_off STMTDLY */
+    always #(MCLK_HALF_PERIOD_NS) mclk = ~mclk;
+    /* verilator lint_on STMTDLY */
+
+    // 2-FF reset synchroniser: async assert (rst_n low), synchronous release
+    // into the mclk domain.
+    logic mresetn_meta, mresetn;
+    always_ff @(posedge mclk or negedge rst_n) begin
+        if (!rst_n) {mresetn, mresetn_meta} <= 2'b00;
+        else        {mresetn, mresetn_meta} <= {mresetn_meta, 1'b1};
+    end
+
     /* verilator lint_off PINCONNECTEMPTY */
     ddr4_axi4_slave #(
-        .AXI_ID_WIDTH   (4),
-        .AXI_ADDR_WIDTH (32),
-        .AXI_DATA_WIDTH (32),
-        .DDR4_DENSITY_GB(1),
-        .BASE_ADDR      (32'h80000000),
+        .AXI_ID_WIDTH       (4),
+        .AXI_ADDR_WIDTH     (32),
+        .AXI_DATA_WIDTH     (32),
+        .DDR4_DENSITY_GB    (1),
+        .BASE_ADDR          (32'h80000000),
+        .AXI_CLK_PERIOD_NS  (10),          // aclk = 100 MHz
         .ENABLE_TIMING_CHECK(0),
-        .VERBOSE_MODE   (0),
-        .DDR4_SPEED_GRADE(DDR4_SPEED_GRADE)
+        .ENABLE_TIMING_MODEL(1),
+        .VERBOSE_MODE       (0),
+        .SIM_MEM_DEPTH      (524288),      // 2 MB / 4 B per entry
+        .DDR4_SPEED_GRADE   (DDR4_SPEED_GRADE)
     ) ext_mem (
         .aclk            (clk),
         .aresetn         (rst_n),
+        .mclk            (mclk),
+        .mresetn         (mresetn),
         // Write address channel
         .s_axi_awid      (4'b0),
         .s_axi_awaddr    (axi_awaddr),

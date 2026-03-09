@@ -36,10 +36,57 @@
 #include <chrono>
 #endif
 
-// Clock period in ns
-#define CLK_PERIOD 20
+// Clock period in nanoseconds
+#define CLK_PERIOD 10
+// Half-period in picoseconds (timescale 1ns/1ps, 100 MHz clk = 10 ns period)
+#define CLK_HALF_PS 5000ULL
 
-// Global time variable for Verilator $time
+// Evaluate at the current time (captures signal changes including clock edges),
+// then advance to target_ps, servicing any SV timing events between now and target.
+// When VM_TIMING=1 (--timing builds), nextTimeSlot() gives the earliest pending
+// event; we must not jump past it.  When VM_TIMING=0 the body runs just once.
+//
+// Usage: set dut->clk to new value, then call eval_and_advance(target_ps).
+// The first eval() captures the clock edge transition at the current time.
+// Subsequent eval() calls service mclk (and other SV timer) events.
+static inline void eval_and_advance(Vtb_kv32_soc* dut, VerilatedContext* contextp,
+                                    VerilatedFstC* tfp_fst,
+#if VM_TRACE_VCD
+                                    VerilatedVcdC* tfp_vcd,
+#endif
+                                    uint64_t target_ps) {
+    // Eval at current time — captures the just-set clock edge
+    dut->eval();
+    if (tfp_fst) tfp_fst->dump(contextp->time());
+#if VM_TRACE_VCD
+    if (tfp_vcd) tfp_vcd->dump(contextp->time());
+#endif
+
+#if VM_TIMING
+    // Advance time step-by-step, servicing SV timing events until target
+    while (contextp->time() < target_ps) {
+        uint64_t next_sv = dut->nextTimeSlot();
+        uint64_t step    = std::min(next_sv, target_ps) - contextp->time();
+        if (step == 0) step = 1;  // guard against zero-advance
+        contextp->timeInc(step);
+        dut->eval();
+        if (tfp_fst) tfp_fst->dump(contextp->time());
+#if VM_TRACE_VCD
+        if (tfp_vcd) tfp_vcd->dump(contextp->time());
+#endif
+    }
+#else
+    // No --timing: single jump to target
+    contextp->timeInc(target_ps - contextp->time());
+    dut->eval();
+    if (tfp_fst) tfp_fst->dump(contextp->time());
+#if VM_TRACE_VCD
+    if (tfp_vcd) tfp_vcd->dump(contextp->time());
+#endif
+#endif
+}
+
+// Global time variable for Verilator $time (legacy sc_time_stamp path)
 vluint64_t main_time = 0;
 
 // Required by Verilator for $time
@@ -630,7 +677,7 @@ int main(int argc, char** argv) {
     // Plain --trace uses RISC-V spec behaviour (cycle = wall-clock mcycle).
     dut->trace_mode = trace_compare_mode ? 1 : 0;
 
-    vluint64_t time_counter = 0;
+    auto* contextp = dut->contextp();
     bool error = false;  // Track if simulation ended with error
     int exit_code = 0;   // Capture exit code from $finish()
 
@@ -641,25 +688,30 @@ int main(int argc, char** argv) {
         std::cout << "Max instructions: " << max_instructions << std::endl;
     }
 
-    // Reset for a few cycles
+    // Initial eval at time 0: runs initial blocks, sets up timing coroutines
+    dut->eval();
+    if (tfp_fst) tfp_fst->dump(contextp->time());
+#if VM_TRACE_VCD
+    if (tfp_vcd) tfp_vcd->dump(contextp->time());
+#endif
+
+    // Reset for a few cycles — drive CPU clock while servicing any SV timing events
     for (int i = 0; i < 10; i++) {
         dut->clk = 0;
-        dut->eval();
-        if (tfp_fst) tfp_fst->dump(time_counter);
+        eval_and_advance(dut, contextp, tfp_fst,
 #if VM_TRACE_VCD
-        if (tfp_vcd) tfp_vcd->dump(time_counter);
+                         tfp_vcd,
 #endif
-        time_counter++;
-        main_time++;
+                         contextp->time() + CLK_HALF_PS);
+        main_time += CLK_PERIOD / 2;
 
         dut->clk = 1;
-        dut->eval();
-        if (tfp_fst) tfp_fst->dump(time_counter);
+        eval_and_advance(dut, contextp, tfp_fst,
 #if VM_TRACE_VCD
-        if (tfp_vcd) tfp_vcd->dump(time_counter);
+                         tfp_vcd,
 #endif
-        time_counter++;
-        main_time++;
+                         contextp->time() + CLK_HALF_PS);
+        main_time += CLK_PERIOD / 2;
     }
 
     // Load program BEFORE releasing reset (so memory is ready when core starts)
@@ -722,23 +774,21 @@ int main(int argc, char** argv) {
         }
         // Clock low
         dut->clk = 0;
-        dut->eval();
-        if (tfp_fst) tfp_fst->dump(time_counter);
+        eval_and_advance(dut, contextp, tfp_fst,
 #if VM_TRACE_VCD
-        if (tfp_vcd) tfp_vcd->dump(time_counter);
+                         tfp_vcd,
 #endif
-        time_counter++;
-        main_time++;
+                         contextp->time() + CLK_HALF_PS);
+        main_time += CLK_PERIOD / 2;
 
         // Clock high
         dut->clk = 1;
-        dut->eval();
-        if (tfp_fst) tfp_fst->dump(time_counter);
+        eval_and_advance(dut, contextp, tfp_fst,
 #if VM_TRACE_VCD
-        if (tfp_vcd) tfp_vcd->dump(time_counter);
+                         tfp_vcd,
 #endif
-        time_counter++;
-        main_time++;
+                         contextp->time() + CLK_HALF_PS);
+        main_time += CLK_PERIOD / 2;
 
         // Generate trace on clock high (after eval)
         if (enable_trace) {
@@ -786,7 +836,7 @@ int main(int argc, char** argv) {
     }
     #endif
 
-    std::cout << "  Simulation time :            " << main_time << " ns" << std::endl;
+    std::cout << "  Simulation time :            " << (contextp->time() / 1000) << " ns" << std::endl;
     std::cout << "  Total cycles :               " << cycle_count << std::endl;
     std::cout << "  Instructions :               " << (uint64_t)dut->instret_count << std::endl;
 
