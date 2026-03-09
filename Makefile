@@ -346,7 +346,9 @@ all: rtl-all sim-all compare-all spike-all freertos-compare-simple
 test-all: rtl-all sim-all compare-all
 
 # Verify memory interface
-verify-mem:
+verify-mem: verify-sram verify-ddr4
+
+verify-sram:
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=4 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=1 compare-all rtl-all
@@ -359,9 +361,14 @@ verify-mem:
 	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=0 compare-all rtl-all
 	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=0 ICACHE_EN=0 compare-all rtl-all
+
+verify-ddr4:
+	@make -f Makefile MEM_TYPE=ddr4-1600 compare-all rtl-all
+	@make -f Makefile MEM_TYPE=ddr4-1600 ICACHE_EN=0 compare-all rtl-all
 	@make -f Makefile MEM_TYPE=ddr4-1866 compare-all rtl-all
 	@make -f Makefile MEM_TYPE=ddr4-1866 ICACHE_EN=0 compare-all rtl-all
 	@make -f Makefile MEM_TYPE=ddr4-3200 compare-all rtl-all
+	@make -f Makefile MEM_TYPE=ddr4-3200 ICACHE_EN=0 compare-all rtl-all
 
 # Build RTL with Verilator
 build-rtl: $(BUILD_TARGET)

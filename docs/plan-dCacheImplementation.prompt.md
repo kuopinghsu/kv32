@@ -32,7 +32,7 @@ Derived: `SETS = SIZE/(LINE_SIZE*WAYS)`, `SET_BITS = $clog2(SETS)`, `OFFSET_BITS
 ### 3. Storage arrays (per way)
 - Data: `logic [SETS-1:0][WORDS_PER_LINE-1:0][31:0] data_array [WAYS]`
 - Tag: `logic [SETS-1:0][TAG_BITS-1:0] tag_array [WAYS]`
-- Valid bit: `logic [SETS-1:0][WAYS-1:0] valid_array`
+- Valid bit: `logic [SETS-1:0][WAYS-1:0] valid_array`, use flip-flops, so the it can init the cache in one cycle by clearing cache line on reset (instead of relying on a separate reset loop to clear memory arrays)
 - Dirty bit: `logic [SETS-1:0][WAYS-1:0] dirty_array` (only meaningful when `DCACHE_WRITE_BACK=1`)
 - Pseudo-LRU: `logic [SETS-1:0] plru_bit` (1 bit per set for 2-way; parameterise for higher associativity)
 
