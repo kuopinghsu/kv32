@@ -138,8 +138,29 @@ static mrtos_tcb_t *schedule_pick(void)
  */
 static void do_schedule(void)
 {
+    /*
+     * Pre-emption path (sem_post, mutex_unlock, ...): if the current task
+     * is still RUNNING it was NOT explicitly put back by the caller
+     * (unlike yield/delay/block which set state before calling us).
+     * Re-insert it into the ready queue so it can be picked up later.
+     */
+    if (g_current != NULL && g_current->state == MRTOS_TASK_RUNNING) {
+        g_current->state = MRTOS_TASK_READY;
+        mrtos_ready_insert(g_current);
+    }
+
     mrtos_tcb_t *next = schedule_pick();
     if (next == NULL || next == g_current) {
+        /* No switch needed — current task stays (or becomes) the runner.
+         * Cancel any stale switch state left by a previous do_schedule call
+         * so the trap-exit does not execute a spurious context switch. */
+        mrtos_ctx_switch_pending = 0;
+        mrtos_ctx_old_sp_ptr     = NULL;
+        mrtos_ctx_new_sp         = NULL;
+        if (g_current != NULL && g_current->state == MRTOS_TASK_READY) {
+            mrtos_ready_remove(g_current);
+            g_current->state = MRTOS_TASK_RUNNING;
+        }
         return;
     }
 
@@ -161,9 +182,17 @@ static void do_schedule(void)
 static void idle_task(void *arg)
 {
     (void)arg;
+    /*
+     * Spin idle loop — no WFI.
+     *
+     * WFI causes a 1-instruction trace divergence between RTL and kv32sim:
+     * RTL wakes from WFI at PC+4 and retires the next instruction before
+     * taking the pending interrupt, while kv32sim takes the trap with
+     * mepc=PC+4 immediately without retiring any extra instruction.
+     * A plain spin loop avoids this asymmetry and keeps traces identical.
+     */
     while (1) {
-        /* WFI: halt the hart until the next interrupt. */
-        __asm__ volatile ("wfi" ::: "memory");
+        __asm__ volatile ("nop" ::: "memory");
     }
 }
 
@@ -319,16 +348,24 @@ void mrtos_yield(void)
 {
     uint32_t saved = mrtos_port_enter_critical();
 
-    /* Re-insert the current task at the tail of its priority queue. */
     if (g_current != NULL) {
+        /* Re-insert the current task at the tail of its priority queue. */
         g_current->state = MRTOS_TASK_READY;
         mrtos_ready_insert(g_current);
+
+        /*
+         * Arm the context switch while g_current still points to the
+         * yielding task.  do_schedule() sets mrtos_ctx_old_sp_ptr to
+         * &g_current->sp so the trap exit can save the frame.
+         * Trigger the MSI inside the critical section (MIE=0) so the
+         * interrupt is pending but cannot fire until after mret sets
+         * MIE=1, preventing any race with a concurrent timer IRQ.
+         */
+        mrtos_request_switch();
+        mrtos_port_yield(); /* MSIP set; fires after mrtos_port_exit_critical */
     }
 
     mrtos_port_exit_critical(saved);
-
-    /* Trigger machine software interrupt → trap handler → context switch. */
-    mrtos_port_yield();
 }
 
 void mrtos_delay(uint32_t ticks)
@@ -352,17 +389,37 @@ void mrtos_delay(uint32_t ticks)
             g_delayed_head->prev = g_current;
         }
         g_delayed_head = g_current;
+
+        /* Arm context switch while g_current still valid, then set MSIP
+         * pending before re-enabling interrupts (no race with timer). */
+        mrtos_request_switch();
+        mrtos_port_yield();
     }
 
     mrtos_port_exit_critical(saved);
-
-    /* Trigger scheduler to pick next task. */
-    mrtos_port_yield();
 }
 
 void mrtos_request_switch(void)
 {
     do_schedule();
+}
+
+/**
+ * @brief Called from the MSI handler to fix up yield with no available switch.
+ *
+ * If mrtos_yield() was called but do_schedule() found no higher-priority
+ * task (the current task is the only one), the task is in the READY
+ * state while still holding the CPU.  Restore it to RUNNING so the
+ * tick handler does not see an inconsistent state.
+ */
+void mrtos_yield_msi_fixup(void)
+{
+    if (!mrtos_ctx_switch_pending
+            && g_current != NULL
+            && g_current->state == MRTOS_TASK_READY) {
+        mrtos_ready_remove(g_current);
+        g_current->state = MRTOS_TASK_RUNNING;
+    }
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -400,11 +457,14 @@ void mrtos_tick(void)
     /*
      * Round-robin: re-insert the running task at the tail of its queue
      * so that the next task at the same priority runs next tick.
+     * do_schedule() will see state==READY and skip the duplicate re-insert,
+     * but mrtos_ctx_old_sp_ptr still captures &g_current->sp correctly.
      */
     if (g_current != NULL && g_current->state == MRTOS_TASK_RUNNING) {
         g_current->state = MRTOS_TASK_READY;
         mrtos_ready_insert(g_current);
-        g_current = NULL;
+        /* DO NOT set g_current = NULL: do_schedule() needs it to fill
+         * mrtos_ctx_old_sp_ptr so the trap exit saves the frame. */
     }
 
     /* Pick the next task and arm the context-switch variables. */

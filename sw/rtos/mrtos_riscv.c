@@ -50,6 +50,7 @@
  */
 
 #include <stdint.h>
+#include <stddef.h>
 #include "mrtos.h"
 #include "mrtos_port.h"
 #include "kv_platform.h"
@@ -73,6 +74,9 @@ extern volatile void    *mrtos_ctx_new_sp;
 
 /** Last programmed mtimecmp value; updated in mrtos_port_ack_timer(). */
 static uint64_t g_next_cmp;
+
+/** Runtime tick period in mtime counts.  Default = MRTOS_TICKS_PER_SLOT. */
+static volatile uint32_t g_tick_period = MRTOS_TICKS_PER_SLOT;
 
 /* ════════════════════════════════════════════════════════════════════
  * C trap handler — called from mrtos_trap_vector
@@ -108,10 +112,13 @@ void mrtos_trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
             /* Machine software interrupt — yield requested by a task.
              * Clear MSIP so the interrupt does not re-fire. */
             KV_CLINT_MSIP = 0u;
-            /* The caller (mrtos_yield / mrtos_delay) already placed itself
-             * in the correct state and called mrtos_request_switch().
-             * Nothing more to do here; the context switch is performed by
-             * the assembly trap-exit sequence. */
+            /*
+             * Edge case: mrtos_yield() set the task to READY but
+             * do_schedule() found no higher-priority task to switch to.
+             * Restore the current task to RUNNING state.
+             */
+            extern void mrtos_yield_msi_fixup(void);
+            mrtos_yield_msi_fixup();
             return;
         }
 
@@ -181,6 +188,22 @@ void __attribute__((naked, aligned(4))) mrtos_trap_vector(void)
         "sw    t0,   4(sp)\n\t"
         "csrr  t0, mstatus\n\t"
         "sw    t0,   0(sp)\n\t"
+
+        /* ── Reload gp before entering C trap handler ───────────── */
+        /*
+         * gp (x3) is the RISC-V global pointer used for gp-relative
+         * addressing of small-data globals.  It must equal
+         * __global_pointer$ for C globals to be accessible.  The
+         * interrupted task may have had any value in gp (including 0
+         * if it was a freshly created task whose frame gp slot was
+         * not yet written), so we reload it here using purely
+         * PC-relative addressing (auipc + addi), which is independent
+         * of the current gp.
+         */
+        ".option push\n\t"
+        ".option norelax\n\t"
+        "la    gp, __global_pointer$\n\t"
+        ".option pop\n\t"
 
         /* ── Call C trap handler ─────────────────────────────────── */
         "csrr  a0, mcause\n\t"
@@ -338,7 +361,7 @@ void mrtos_port_init(void)
     __asm__ volatile ("csrw mtvec, %0" :: "r"(vec));
 
     /* Program first tick: mtime + one tick interval. */
-    g_next_cmp = kv_clint_mtime() + (uint64_t)MRTOS_TICKS_PER_SLOT;
+    g_next_cmp = kv_clint_mtime() + (uint64_t)g_tick_period;
     kv_clint_set_mtimecmp(g_next_cmp);
 
     /* Enable machine timer and software interrupts. */
@@ -348,10 +371,31 @@ void mrtos_port_init(void)
 
 void mrtos_port_ack_timer(void)
 {
-    /* Advance compare by one tick interval to schedule the next tick.
-     * Using relative increment prevents tick drift. */
-    g_next_cmp += (uint64_t)MRTOS_TICKS_PER_SLOT;
+    /* Advance compare by one tick interval (no-drift for normal periods). */
+    g_next_cmp += (uint64_t)g_tick_period;
+    /* When tick_period < ISR latency, g_next_cmp can fall behind mtime,
+     * causing an infinite stream of back-to-back timer interrupts and
+     * starving all tasks.  Clamp to now+period in that case. */
+    uint64_t now = kv_clint_mtime();
+    if (g_next_cmp <= now)
+        g_next_cmp = now + (uint64_t)g_tick_period;
     kv_clint_set_mtimecmp(g_next_cmp);
+}
+
+void mrtos_set_tick_period(uint32_t clint_ticks)
+{
+    uint32_t mstatus = mrtos_port_enter_critical();
+    g_tick_period = clint_ticks;
+    /* Reprogram mtimecmp immediately so the new rate takes effect now
+     * rather than waiting for the currently-scheduled tick to fire. */
+    g_next_cmp = kv_clint_mtime() + (uint64_t)clint_ticks;
+    kv_clint_set_mtimecmp(g_next_cmp);
+    mrtos_port_exit_critical(mstatus);
+}
+
+uint32_t mrtos_get_tick_period(void)
+{
+    return g_tick_period;
 }
 
 uint32_t mrtos_port_enter_critical(void)

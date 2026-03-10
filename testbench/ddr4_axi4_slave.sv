@@ -1367,8 +1367,11 @@ module ddr4_axi4_slave #(
             if (wr_state != WR_IDLE || rd_state != RD_IDLE)
                 stats.busy_cycles <= stats.busy_cycles + 1;
             // Track pending-in-FIFO (queued but not yet processing) counts.
-            // aw_count / ar_count are the number of entries sitting in FIFOs
-            // waiting for the processing FSM; add 1 if the FSM itself is busy.
+            // aw_count / ar_count are entries sitting in FIFOs waiting for the FSM;
+            // add 1 when the FSM itself is actively processing one.
+            // Peak = FIFO_DEPTH(queued) + 1(in-service) = MAX_OUTSTANDING + 1.
+            // awready / arready go low at aw_count == FIFO_DEPTH, so the FIFO
+            // never overflows; max_outstanding simply exceeds MAX_OUTSTANDING by 1.
             begin
                 automatic longint wr_out = longint'(aw_count) +
                                            (wr_state != WR_IDLE ? 1 : 0);
@@ -1476,8 +1479,8 @@ module ddr4_axi4_slave #(
         $display("║    tCCD Stalls:                 %10d                                   ║", stats.tCCD_stall_count);
         $display("╠══════════════════════════════════════════════════════════════════════════════╣");
         $display("║  OUTSTANDING REQUESTS                                                        ║");
-        $display("║    Max Outstanding Reads:       %10d  (FIFO depth = %0d)                ║", stats.max_outstanding_reads,  MAX_OUTSTANDING);
-        $display("║    Max Outstanding Writes:      %10d  (FIFO depth = %0d)                ║", stats.max_outstanding_writes, MAX_OUTSTANDING);
+        $display("║    Max Outstanding Reads:       %10d  (queue depth=%0d, +1 in-service)  ║", stats.max_outstanding_reads,  MAX_OUTSTANDING);
+        $display("║    Max Outstanding Writes:      %10d  (queue depth=%0d, +1 in-service)  ║", stats.max_outstanding_writes, MAX_OUTSTANDING);
         $display("╠══════════════════════════════════════════════════════════════════════════════╣");
         $display("║  ERROR STATISTICS                                                            ║");
         $display("║    Address Errors:              %10d                                   ║", stats.address_errors);

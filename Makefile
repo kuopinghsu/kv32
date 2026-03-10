@@ -67,7 +67,7 @@ TEST_DIRS = $(shell find $(SW_DIR) -mindepth 1 -maxdepth 1 -type d ! -name commo
 TEST_NAMES = $(notdir $(TEST_DIRS))
 
 # Tests to compare (exclude I/O-dependent tests that require external peripherals)
-COMPARE_EXCLUDE = full i2c uart spi dma dcache gpio timer wfi rtos
+COMPARE_EXCLUDE = full i2c uart spi dma dcache gpio timer wfi
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
 # Tests to run under Spike (excludes tests not supported by Spike; override with SPIKE_TESTS=<list>)
@@ -654,7 +654,7 @@ endef
 else
 _SIM_PREREQ =
 define _SIM_RUN
-cd $(BUILD_DIR) && ./$(SIM) $(if $(filter 1,$(TRACE_COMPARE)),--trace-compare --log=sim_trace.txt,$(if $(filter 1,$(TRACE)),--rtl-trace --log=sim_trace.txt)) $(1).elf
+cd $(BUILD_DIR) && ./$(SIM) $(if $(filter 1,$(TRACE_COMPARE)),--trace-compare --log=sim_trace.txt,$(if $(filter 1,$(TRACE)),--rtl-trace --log=sim_trace.txt)) $(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) $(1).elf
 endef
 endif
 

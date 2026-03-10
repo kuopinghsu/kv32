@@ -129,6 +129,26 @@ void mrtos_port_yield(void);
  */
 void mrtos_port_ack_timer(void);
 
+/**
+ * @brief Change the timer tick interval at runtime.
+ *
+ * Safe to call from any task context.  The new period takes effect
+ * immediately: mtimecmp is reprogrammed to mtime + @p clint_ticks.
+ *
+ * In trace-compare mode mtime advances once per retired instruction,
+ * so setting @p clint_ticks to a small value (e.g. 10) triggers a
+ * context switch approximately every 10 retired instructions — useful
+ * for stressing div/mul operations across preemptions.
+ *
+ * @param clint_ticks  New period in mtime counts.  Must be >= 2.
+ */
+void mrtos_set_tick_period(uint32_t clint_ticks);
+
+/**
+ * @brief Return the current tick period in mtime counts.
+ */
+uint32_t mrtos_get_tick_period(void);
+
 #ifdef __cplusplus
 }
 #endif

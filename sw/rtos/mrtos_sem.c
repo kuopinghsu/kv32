@@ -89,32 +89,32 @@ void mrtos_sem_init(mrtos_sem_t *s, uint32_t initial_count)
 
 void mrtos_sem_wait(mrtos_sem_t *s)
 {
-    while (1) {
-        uint32_t saved = mrtos_port_enter_critical();
+    uint32_t saved = mrtos_port_enter_critical();
 
-        if (s->count > 0u) {
-            s->count--;
-            mrtos_port_exit_critical(saved);
-            return;
-        }
-
-        /* Count is zero — block the calling task. */
-        mrtos_tcb_t *self = mrtos_current_task();
-        self->state = MRTOS_TASK_BLOCKED;
-        fifo_push(&s->waiters, self);
-
-        /* Schedule the next ready task. */
-        mrtos_request_switch();
+    if (s->count > 0u) {
+        /* Token available — consume it immediately. */
+        s->count--;
         mrtos_port_exit_critical(saved);
-
-        /* Suspend until posted. */
-        mrtos_port_yield();
-
-        /*
-         * Retry the count check after waking: another task may have
-         * taken the token between post and this task running.
-         */
+        return;
     }
+
+    /* Count is zero — block the calling task. */
+    mrtos_tcb_t *self = mrtos_current_task();
+    self->state = MRTOS_TASK_BLOCKED;
+    fifo_push(&s->waiters, self);
+
+    /* Schedule the next ready task and yield. */
+    mrtos_request_switch();
+    mrtos_port_exit_critical(saved);
+
+    /*
+     * Suspend here until sem_post_locked pulls us out of the waiters
+     * queue and puts us back into the ready queue.  On single-core
+     * there are no spurious wakeups, so no re-check is needed.
+     * sem_post_locked transfers the token implicitly by waking the
+     * task — no count increment happens for the waiter path.
+     */
+    mrtos_port_yield();
 }
 
 void mrtos_sem_post(mrtos_sem_t *s)

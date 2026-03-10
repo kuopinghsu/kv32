@@ -652,12 +652,13 @@ void KV32Simulator::check_interrupts() {
     // Dispatch highest-priority pending+enabled interrupt
     uint32_t pending = csr_mip & csr_mie;
 
+    // Priority order matches RTL (kv32_csr.sv): MEI > MSI > MTI
     if (pending & (1 << 11)) {       // External interrupt (PLIC)
         take_trap(CAUSE_MACHINE_EXTERNAL_INT, 0);
-    } else if (pending & (1 << 7)) { // Timer interrupt
-        take_trap(CAUSE_MACHINE_TIMER_INT, 0);
     } else if (pending & (1 << 3)) { // Software interrupt
         take_trap(CAUSE_MACHINE_SOFTWARE_INT, 0);
+    } else if (pending & (1 << 7)) { // Timer interrupt
+        take_trap(CAUSE_MACHINE_TIMER_INT, 0);
     }
 }
 
@@ -1227,6 +1228,7 @@ void KV32Simulator::step() {
     bool trace_is_store = false;
     bool trace_is_csr = false;
     uint32_t trace_csr_num = 0;
+    bool trace_is_mret = false;
 
     // Decode and execute
     switch (opcode) {
@@ -1600,6 +1602,7 @@ void KV32Simulator::step() {
                 trace_rd = -1;
                 trace_rd_val = new_mstatus;
                 next_pc = csr_mepc;
+                trace_is_mret = true;
             } else if (csr_addr == 0x105) {
                 // WFI — Wait For Interrupt
                 //
@@ -1670,9 +1673,10 @@ void KV32Simulator::step() {
                     // Take the highest-priority pending interrupt.
                     // take_trap() sets: pc = mtvec, mepc = exec_pc+4 (already set above),
                     //                   mcause, mtval, mstatus (MPIE=MIE, MIE=0, MPP=M).
+                    // Priority order matches RTL (kv32_csr.sv): MEI > MSI > MTI
                     if      (pending & (1u << 11)) take_trap(CAUSE_MACHINE_EXTERNAL_INT, 0);
-                    else if (pending & (1u <<  7)) take_trap(CAUSE_MACHINE_TIMER_INT,    0);
                     else if (pending & (1u <<  3)) take_trap(CAUSE_MACHINE_SOFTWARE_INT, 0);
+                    else if (pending & (1u <<  7)) take_trap(CAUSE_MACHINE_TIMER_INT,    0);
                     break;
                 }
                 wfi_spin_active = false; // we are no longer inside the WFI spin
@@ -1860,17 +1864,48 @@ void KV32Simulator::step() {
         pc = mtvec & ~0x3;
     } else {
         // Normal retirement: log trace entry and advance PC
+        //
+        // RTL special case: MRET restores MIE at the EX→MEM posedge (not at WB),
+        // so an interrupt can fire while MRET is in MEM — MRET is flushed without
+        // retiring or being traced.  Simulate the same: after MRET restores MIE,
+        // re-check for pending interrupts before committing the retirement.
+        if (trace_is_mret) {
+            // -- MRET preemption check (matches RTL EX→MEM behaviour) --
+            //
+            // In the RTL, MRET restores MIE at the EX→MEM posedge.  The interrupt
+            // is checked on the MEM cycle with the pre-retirement mtime (no +1
+            // lookahead).  MRET is only flushed (not retired) when the interrupt
+            // fires in MEM, i.e. when mtime_before >= mtimecmp OR MSIP/MEIP is set.
+            //
+            // If the interrupt fires only via the WB lookahead (mtime_before+1 ==
+            // mtimecmp), MRET still commits (the WB instruction is never suppressed),
+            // and the interrupt fires on the next cycle.
+            //
+            // Simulate by undoing the slave tick before the check so that
+            // check_interrupts() sees mtime_before (= N), not N+1.
+            untick_slaves();          // temporarily restore pre-retirement mtime
+            pc = next_pc;             // take_trap() must save MRET's return address
+            uint32_t saved_trap_count = trap_count;
+            check_interrupts();       // fires if mtime_before >= mtimecmp OR MSIP/MEIP
+            if (trap_count != saved_trap_count) {
+                // Interrupt fired in MEM stage — MRET is not retired.
+                inst_count--;
+                csr_minstret--;
+                // untick already done; mtime stays at N (no MRET retirement).
+                return;
+            }
+            // No MEM-stage interrupt — MRET retires in WB.
+            // Re-apply the tick so mtime advances with the retirement.
+            tick_slaves();
+            // Fall through to log_commit.
+        }
         log_commit(exec_pc, orig_inst, trace_rd, trace_rd_val, trace_has_mem,
                        trace_mem_addr, trace_mem_val, trace_is_store, trace_is_csr,
                        trace_csr_num);
         pc = next_pc;
     }
 
-    // Safety check
-    if (inst_count > 100000000) {
-        std::cerr << "Instruction limit exceeded" << std::endl;
-        running = false;
-    }
+    // Note: instruction limit (if set via --instructions) is enforced in run()
 }
 
 // Load ELF file
