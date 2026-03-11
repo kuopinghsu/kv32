@@ -39,6 +39,28 @@ FREERTOS_LDFLAGS  = -T $(FREERTOS_SYS)/freertos_link.ld
 FREERTOS_LDFLAGS += -Wl,--gc-sections
 FREERTOS_LDFLAGS += -lc -lgcc
 
+# FreeRTOS Spike runtime configuration.
+# Intentionally do not load plugin_clint/plugin_plic: Spike built-in CLINT/PLIC
+# are used to avoid overlapping device mappings.
+FREERTOS_SPIKE_PLUGINS = \
+	$(BUILD_DIR)/spike_plugin_magic.so  \
+	$(BUILD_DIR)/spike_plugin_uart.so   \
+	$(BUILD_DIR)/spike_plugin_i2c.so    \
+	$(BUILD_DIR)/spike_plugin_spi.so    \
+	$(BUILD_DIR)/spike_plugin_dma.so    \
+	$(BUILD_DIR)/spike_plugin_gpio.so   \
+	$(BUILD_DIR)/spike_plugin_timer.so
+FREERTOS_SPIKE_EXTLIBS_LOCAL = $(patsubst $(BUILD_DIR)/%,--extlib=./%,$(FREERTOS_SPIKE_PLUGINS))
+FREERTOS_SPIKE_DEVICES = \
+	-m2047 \
+	--device=plugin_magic,0x40000000 \
+	--device=plugin_uart,0x20010000 \
+	--device=plugin_i2c,0x20020000 \
+	--device=plugin_spi,0x20030000 \
+	--device=plugin_dma,0x20000000 \
+	--device=plugin_gpio,0x20050000 \
+	--device=plugin_timer,0x20040000
+
 # ============================================================================
 # Help
 # ============================================================================
@@ -135,10 +157,13 @@ freertos-sim-%:
 		exit 1; \
 	fi
 	@$(MAKE) -C $(PROJECT_ROOT) build-sim
+	@$(MAKE) -C $(PROJECT_ROOT) build-spike-plugins
 	@$(MAKE) freertos-$*
 	@if [ "$(SIM)" = "spike" ]; then \
-		cd $(BUILD_DIR) && spike \
-			--isa=rv32ima -m0x80000000:0x200000 \
+		cd $(BUILD_DIR) && $(SPIKE) \
+			--isa=rv32imac_zicsr_zicntr_zicbom \
+			$(FREERTOS_SPIKE_EXTLIBS_LOCAL) \
+			$(FREERTOS_SPIKE_DEVICES) \
 			$(if $(filter 1,$(TRACE)$(TRACE_COMPARE)),--log-commits --log=sim_trace.txt) \
 			$(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
 			freertos-$*.elf; \

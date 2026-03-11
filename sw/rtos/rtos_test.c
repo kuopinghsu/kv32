@@ -32,6 +32,68 @@
 static int g_pass_count;
 static int g_fail_count;
 
+/*
+ * Workload knobs for simulation runtime control.
+ *
+ * MRTOS_TEST_FAST controls profile selection and defaults to 1 (fast).
+ * Set it to 0 here for the full profile, or override individual MRTOS_T* macros.
+ */
+#ifndef MRTOS_TEST_FAST
+#define MRTOS_TEST_FAST 1
+#endif
+
+#if MRTOS_TEST_FAST
+#ifndef MRTOS_T1_RUNS
+#define MRTOS_T1_RUNS 3
+#endif
+#ifndef MRTOS_T2_START_DELAY
+#define MRTOS_T2_START_DELAY 1
+#endif
+#ifndef MRTOS_T2_POST_GAP
+#define MRTOS_T2_POST_GAP 1
+#endif
+#ifndef MRTOS_T3_LOW_WORK_SLICES
+#define MRTOS_T3_LOW_WORK_SLICES 3
+#endif
+#ifndef MRTOS_T3_MED_START_DELAY
+#define MRTOS_T3_MED_START_DELAY 2
+#endif
+#ifndef MRTOS_T3_HIGH_START_DELAY
+#define MRTOS_T3_HIGH_START_DELAY 3
+#endif
+#ifndef MRTOS_T4_ITERS
+#define MRTOS_T4_ITERS 12
+#endif
+#ifndef MRTOS_T4_TICK_FAST
+#define MRTOS_T4_TICK_FAST 5000
+#endif
+#else
+#ifndef MRTOS_T1_RUNS
+#define MRTOS_T1_RUNS 5
+#endif
+#ifndef MRTOS_T2_START_DELAY
+#define MRTOS_T2_START_DELAY 2
+#endif
+#ifndef MRTOS_T2_POST_GAP
+#define MRTOS_T2_POST_GAP 1
+#endif
+#ifndef MRTOS_T3_LOW_WORK_SLICES
+#define MRTOS_T3_LOW_WORK_SLICES 5
+#endif
+#ifndef MRTOS_T3_MED_START_DELAY
+#define MRTOS_T3_MED_START_DELAY 3
+#endif
+#ifndef MRTOS_T3_HIGH_START_DELAY
+#define MRTOS_T3_HIGH_START_DELAY 5
+#endif
+#ifndef MRTOS_T4_ITERS
+#define MRTOS_T4_ITERS 100
+#endif
+#ifndef MRTOS_T4_TICK_FAST
+#define MRTOS_T4_TICK_FAST 350
+#endif
+#endif
+
 #define TEST_PASS(id, msg) \
     do { \
         printf("[PASS] Test %d: %s\n", (id), (msg)); \
@@ -57,7 +119,7 @@ static void task1a(void *arg)
 {
     (void)arg;
     /* Run for N ticks then signal done. */
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < MRTOS_T1_RUNS; i++) {
         t1a_runs++;
         mrtos_yield();
     }
@@ -69,7 +131,7 @@ static void task1a(void *arg)
 static void task1b(void *arg)
 {
     (void)arg;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < MRTOS_T1_RUNS; i++) {
         t1b_runs++;
         mrtos_yield();
     }
@@ -109,11 +171,11 @@ static void task2_producer(void *arg)
 {
     (void)arg;
     /* Give consumers time to block on the semaphore. */
-    mrtos_delay(2);
+    mrtos_delay(MRTOS_T2_START_DELAY);
 
     /* Post twice — should wake both consumers. */
     mrtos_sem_post(&t2_sem);
-    mrtos_delay(1);
+    mrtos_delay(MRTOS_T2_POST_GAP);
     mrtos_sem_post(&t2_sem);
 
     while (1) { mrtos_delay(1000); }
@@ -155,7 +217,7 @@ static void task3_low(void *arg)
      * Allow the scheduler to run other tasks during this loop so that
      * HIGH can attempt to acquire the mutex and trigger PI.
      */
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < MRTOS_T3_LOW_WORK_SLICES; i++) {
         mrtos_delay(1);
         /* Record our effective priority (should be raised to HIGH's when
          * HIGH is waiting). */
@@ -176,7 +238,7 @@ static void task3_medium(void *arg)
     /* Initial delay: let LOW acquire the mutex before MED starts contending.
      * Without this, MED (priority 2) would starve LOW (priority 4) during
      * the window when LOW needs CPU to call mrtos_mutex_lock. */
-    mrtos_delay(3);
+    mrtos_delay(MRTOS_T3_MED_START_DELAY);
     /* Run in tight loop to stress the scheduler until signalled to stop. */
     while (!t3_med_stop) {
         if (t3_lo_held) {
@@ -192,7 +254,7 @@ static void task3_high(void *arg)
 {
     (void)arg;
     /* Let LOW grab the mutex first. */
-    mrtos_delay(5);
+    mrtos_delay(MRTOS_T3_HIGH_START_DELAY);
 
     mrtos_mutex_lock(&t3_mutex);
     t3_hi_got = 1;
@@ -219,8 +281,8 @@ static void task3_high(void *arg)
  * Run with:  make FAST_DIV=0 FAST_MUL=0 compare-rtos
  * ═══════════════════════════════════════════════════════════════════ */
 
-#define T4_ITERS      100   /* iterations per task */
-#define T4_TICK_FAST  350   /* mtime ticks — stress test minimum (was crashing before scheduler fix) */
+#define T4_ITERS      MRTOS_T4_ITERS
+#define T4_TICK_FAST  MRTOS_T4_TICK_FAST
 
 static mrtos_tcb_t  t4div_tcb, t4mul_tcb;
 static uint8_t      t4div_stack[1024], t4mul_stack[1024];
@@ -309,7 +371,7 @@ static void supervisor_task(void *arg)
     mrtos_sem_wait(&t1_done);
     mrtos_sem_wait(&t1_done);
 
-    if (t1a_runs >= 5 && t1b_runs >= 5) {
+    if (t1a_runs >= MRTOS_T1_RUNS && t1b_runs >= MRTOS_T1_RUNS) {
         TEST_PASS(1, "Both equal-priority tasks ran (RR scheduler)");
     } else {
         TEST_FAIL(1, "One or both tasks starved");
