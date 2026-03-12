@@ -343,8 +343,12 @@ module axi_xbar (
 
     // Decode error handling for unmapped read addresses
     localparam int DECODE_ERR_FIFO_DEPTH = 8;
-    logic [axi_pkg::AXI_ID_WIDTH-1:0] decode_err_id_fifo  [0:DECODE_ERR_FIFO_DEPTH-1];
-    logic [7:0]                        decode_err_len_fifo [0:DECODE_ERR_FIFO_DEPTH-1];
+    logic [axi_pkg::AXI_ID_WIDTH-1:0]       decode_err_id_fifo   [0:DECODE_ERR_FIFO_DEPTH-1];
+    logic [7:0]                              decode_err_len_fifo  [0:DECODE_ERR_FIFO_DEPTH-1];
+    // Per-entry barrier: the s0_ar_id_wr_ptr value at the time this decode_err was enqueued.
+    // The entry may not fire until s0_ar_id_rd_ptr has reached this value, ensuring all S0
+    // ARs that were accepted before this decode_err have returned their R-channel responses.
+    logic [$clog2(AR_ID_FIFO_DEPTH):0]       decode_err_s0_snap_fifo [0:DECODE_ERR_FIFO_DEPTH-1];
     logic [$clog2(DECODE_ERR_FIFO_DEPTH):0] decode_err_wr_ptr;
     logic [$clog2(DECODE_ERR_FIFO_DEPTH):0] decode_err_rd_ptr;
     logic decode_err_pending;
@@ -432,8 +436,37 @@ module axi_xbar (
     // decode_err_valid is set when the FIFO becomes non-empty (registered) and
     // cleared immediately when the response handshake completes (pop fires).
     logic decode_err_valid;
+
+    // AXI4 ordering guard: a decode-error response must not overtake older
+    // S0 (RAM / DDR4) read responses on the same AXI ID.
+    //
+    // With same-ID transactions (CONST_ID=0 in mem_axi_ro) the AXI4 spec
+    // requires in-order delivery.  The decode-error path is synchronous logic
+    // (responds in a few cycles) while S0 may be a high-latency DRAM slave
+    // (tens of cycles).  Without this guard the decode-error for a newer AR
+    // (e.g. fetch to unmapped 0x00000000) would arrive at the master before
+    // the S0 responses for older ARs (e.g. speculative I-fetch prefetches),
+    // causing the IB's discard_cnt to discard the error and wrongly commit a
+    // stale prefetch result as the instruction at the unmapped address.
+    //
+    // Per-entry guard: when a decode_err is enqueued, we snapshot s0_ar_id_wr_ptr
+    // (= how many S0 ARs have been accepted so far).  The entry fires only when
+    // s0_ar_id_rd_ptr has reached that snapshot, meaning all S0 reads that were
+    // accepted *before* this decode_err have completed.  S0 reads issued *after*
+    // the decode_err was enqueued are irrelevant to this ordering constraint and
+    // do not delay the response.  This avoids the deadlock that a global
+    // "no S0 pending" check would cause when the exception handler's first
+    // instruction fetch (to S0/DDR4) is issued while older decode_errs are still
+    // draining: the global guard would block those decode_errs, causing DDR4 to
+    // respond first and have that response wrongly discarded by the IB.
+    logic decode_err_s0_ok;
+    logic [$clog2(AR_ID_FIFO_DEPTH):0] decode_err_head_snap;
+    assign decode_err_head_snap = decode_err_s0_snap_fifo[decode_err_rd_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]];
+    // Fire when s0_ar_id_rd_ptr has reached the snapshot captured at push time.
+    assign decode_err_s0_ok = (s0_ar_id_rd_ptr == decode_err_head_snap);
+
     // A beat is accepted whenever decode_err is driving and rready is asserted
-    assign decode_err_beat_accepted = decode_err_valid && m_axi_rready &&
+    assign decode_err_beat_accepted = decode_err_valid && m_axi_rready && decode_err_s0_ok &&
                             !(s0_axi_rvalid | s1_axi_rvalid | s2_axi_rvalid | s3_axi_rvalid |
                               s4_axi_rvalid | s5_axi_rvalid | s6_axi_rvalid | s7_axi_rvalid |
                               s8_axi_rvalid | s9_axi_rvalid);
@@ -459,8 +492,11 @@ module axi_xbar (
             decode_err_beat_cnt <= '0;
         end else begin
             if (decode_err_push) begin
-                decode_err_id_fifo [decode_err_wr_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]] <= m_axi_arid;
-                decode_err_len_fifo[decode_err_wr_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]] <= m_axi_arlen;
+                decode_err_id_fifo     [decode_err_wr_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]] <= m_axi_arid;
+                decode_err_len_fifo    [decode_err_wr_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]] <= m_axi_arlen;
+                // Snapshot the S0 AR write pointer: this decode_err must not fire
+                // until s0_ar_id_rd_ptr reaches this value (all prior S0 ARs settled).
+                decode_err_s0_snap_fifo[decode_err_wr_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]] <= s0_ar_id_wr_ptr;
                 decode_err_wr_ptr <= decode_err_wr_ptr + 1;
             end
             if (decode_err_pop) begin
@@ -1056,10 +1092,12 @@ module axi_xbar (
             m_axi_rlast   = 1'b1;
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = s9_ar_id_fifo[s9_ar_id_rd_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]];
-        end else if (decode_err_valid) begin
+        end else if (decode_err_valid && decode_err_s0_ok) begin
             // Generate decode error response for unmapped address.
             // Must send arlen+1 beats and assert RLAST only on the final beat
             // to comply with AXI4 burst protocol.
+            // decode_err_s0_ok ensures this response does not overtake any
+            // older S0 responses (AXI4 same-ID in-order delivery requirement).
             m_axi_rdata   = 32'hDEADBEEF;  // Debug pattern for decode errors
             m_axi_rresp   = 2'b10;  // SLVERR
             m_axi_rlast   = (decode_err_beat_cnt == decode_err_len_fifo[decode_err_rd_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]]);
