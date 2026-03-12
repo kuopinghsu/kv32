@@ -384,10 +384,14 @@ module kv32_dcache #(
     logic [31:0]                 fill_pend_data_r;   // captured data from AXI bus
     logic                        fill_pend_error_r;  // error flag for captured beat
 
-    // Burst beat index (relative to WRAP start = req_word_off) for a new request
+    // Burst beat index (relative to WRAP start = fill_req_word_off_r) for a new request
     // targeting the same cache line.  Overflow wraps naturally at WORD_OFFSET_BITS.
+    // IMPORTANT: must use fill_req_word_off_r, NOT req_word_off (which comes from
+    // req_addr_r).  After a first fill_pend is accepted, req_addr_r is updated to
+    // the fill_pend address, so req_word_off no longer reflects the WRAP start,
+    // causing subsequent fill_pend burst-position calculations to be wrong.
     logic [WORD_OFFSET_BITS-1:0] fill_pend_burst_comb;
-    assign fill_pend_burst_comb = WORD_OFFSET_BITS'(new_req_word_off - req_word_off);
+    assign fill_pend_burst_comb = WORD_OFFSET_BITS'(new_req_word_off - fill_req_word_off_r);
 
     // Incoming address targets the same cache line currently being filled.
     logic fill_same_line;
@@ -411,6 +415,16 @@ module kv32_dcache #(
         !fill_pend_req_r && !fill_pend_resp_r &&
         (core_req_we == 4'b0000) &&
         (fill_pend_burst_comb >= fill_word_cnt);
+
+    // True when an ACCEPT+CAPTURE would fire this cycle:
+    //   a new same-line load is accepted *and* its beat is on the AXI bus right now.
+    // Used to block S_FILL_REST → S_IDLE in the same cycle: the NBA
+    // fill_pend_resp_r=1 is invisible to next-state combinational logic, so without
+    // this guard the response would be lost to the S_IDLE safety reset next cycle.
+    logic fill_pend_accept_and_capture;
+    assign fill_pend_accept_and_capture =
+        core_req_valid && core_req_ready && fill_pend_can_accept &&
+        fill_pend_beat_now && axi_rready;
 
     // Eviction line base address: tag + index + 0 offset
     logic [31:0] evict_base_addr;
@@ -561,9 +575,17 @@ module kv32_dcache #(
                 //   The NBA update to fill_pend_resp_r=1 is invisible to combinational
                 //   next-state logic in the same cycle, so exiting to S_IDLE on that
                 //   cycle would lose the pending response and deadlock the core.
+                //
+                // Also block when fill_pend_accept_and_capture is true:
+                //   A new same-line load is accepted with its beat on the bus right now
+                //   (ACCEPT+CAPTURE path). This NBA-sets fill_pend_resp_r=1 in the same
+                //   cycle we would transition to S_IDLE. The S_IDLE safety reset in the
+                //   NEXT cycle would clear fill_pend_resp_r before the response is ever
+                //   delivered, permanently stalling the load.
                 if ((!fill_active_r || (axi_rvalid && axi_rready && axi_rlast)) &&
                         (!fill_pend_resp_r || core_resp_ready) &&
-                        !fill_pend_beat_for_req)
+                        !fill_pend_beat_for_req &&
+                        !fill_pend_accept_and_capture)
                     next_state = S_IDLE;
             end
 
@@ -1353,6 +1375,17 @@ module kv32_dcache #(
             if (fill_commit) begin
                 `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] FILL COMMIT way=%0d index=%0d tag=0x%h",
                     fill_way, req_index, req_tag));
+            end
+            if (data_fill_we) begin
+                `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] FILL BEAT set=%0d off=%0d data=0x%h state=%0d fill_off=%0d cnt=%0d way=%0d",
+                    req_index,
+                    WORD_OFFSET_BITS'(fill_req_word_off_r + fill_word_cnt),
+                    axi_rdata, state, fill_req_word_off_r, fill_word_cnt, fill_way));
+            end
+            if ((state == S_EVICT_W || state == S_CMO_WB_W) && axi_wvalid && axi_wready) begin
+                `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] EVICT BEAT set=%0d beat=%0d data=0x%h addr=0x%h",
+                    req_index, fill_word_cnt, axi_wdata,
+                    evict_base_addr + (32'(fill_word_cnt) << 2)));
             end
             if (state == S_IDLE && cmo_valid_i && cmo_ready_o) begin
                 `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] CMO ACCEPTED(IDLE) addr=0x%h set=%0d op=%0d",

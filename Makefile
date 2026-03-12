@@ -414,26 +414,26 @@ test-all: rtl-all sim-all compare-all
 verify-mem: verify-sram verify-ddr4
 
 verify-sram:
-	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=4 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=1 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=1 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=1 ICACHE_EN=0 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=4 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=0 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=0 compare-all rtl-all
-	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=0 ICACHE_EN=0 compare-all rtl-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=4 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=1 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=1 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=1 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=1 ICACHE_EN=0 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=4 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=4 MEM_DUAL_PORT=0 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=1 MEM_DUAL_PORT=0 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=1 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=0 rtl-all compare-all
+	@make -f Makefile MEM_READ_LATENCY=16 MEM_WRITE_LATENCY=16 MEM_DUAL_PORT=0 ICACHE_EN=0 rtl-all compare-all
 
 verify-ddr4:
-	@make -f Makefile MEM_TYPE=ddr4-1600 compare-all rtl-all
-	@make -f Makefile MEM_TYPE=ddr4-1600 ICACHE_EN=0 compare-all rtl-all
-	@make -f Makefile MEM_TYPE=ddr4-1866 compare-all rtl-all
-	@make -f Makefile MEM_TYPE=ddr4-1866 ICACHE_EN=0 compare-all rtl-all
-	@make -f Makefile MEM_TYPE=ddr4-3200 compare-all rtl-all
-	@make -f Makefile MEM_TYPE=ddr4-3200 ICACHE_EN=0 compare-all rtl-all
+	@make -f Makefile MEM_TYPE=ddr4-1600 rtl-all compare-all
+	@make -f Makefile MEM_TYPE=ddr4-1600 ICACHE_EN=0 rtl-all compare-all
+	@make -f Makefile MEM_TYPE=ddr4-1866 rtl-all compare-all
+	@make -f Makefile MEM_TYPE=ddr4-1866 ICACHE_EN=0 rtl-all compare-all
+	@make -f Makefile MEM_TYPE=ddr4-3200 rtl-all compare-all
+	@make -f Makefile MEM_TYPE=ddr4-3200 ICACHE_EN=0 rtl-all compare-all
 
 # Build RTL with Verilator
 build-rtl: $(BUILD_TARGET)
