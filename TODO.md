@@ -2,28 +2,7 @@
 
 ## Pending
 
-### 1. Physical Memory Attributes (PMA)
-**Priority: HIGH** — Architectural prerequisite for correct cache behavior.
-- [x] Implement PMA check on bit[31] of the physical address for **I-cache** (icache bypass):
-  - `0` → non-cacheable (bit[31]=0: all I/O and NCM addresses → single-beat INCR bypass fetch)
-  - `1` → cacheable (bit[31]=1: RAM at 0x8000_0000+ → normal fill or CMO-controlled bypass)
-  - Implemented as `pma_cacheable = req_addr_r[31]` ; `use_cache = cache_enable & pma_cacheable`
-  - Added `[ICACHE] PMA bypass` DEBUG2 message in `kv32_icache.sv`
-- [ ] Extend PMA check to the **D-cache** (depends on #2 D-Cache Implementation).
-
-### 2. D-Cache Implementation
-**Priority: HIGH** — Major microarchitecture feature; depends on #1 (PMA) for cacheability policy.
-- [ ] Design and implement `kv32_dcache.sv`: write-back, write-allocate, direct-mapped or set-associative. Refer to `kv32_icache.sv` to provide configurable options.
-- [ ] Issue WRAP AXI transaction, CWF (Crtitical Word First) data read
-- [ ] Integrate with the AXI data bus; handle store-buffer interaction (flush / drain on cache miss).
-- [ ] Add CMO (Cache Management Operation) support to match the existing I-cache interface.
-- [ ] Update `kv32_core.sv` to instantiate D-cache and wire the data-memory interface.
-- [ ] Update `kv32_soc.sv` and synthesis / FPGA compile lists.
-- [ ] Add `sw/dcache` test suite: basic hit/miss, eviction, coherency with store buffer, CMO flush.
-- [ ] Update `sw/dma` to invalidate cache to ensure coherency
-- [ ] Update `docs/kv32_soc_datasheet.adoc`, `docs/kv32_soc_block_diagram.svg` and `docs/pipeline_architecture.md`.
-
-### 3. RISC-V Debug Interface
+### 1. RISC-V Debug Interface
 **Priority: HIGH** — First-class debug capability; enables GDB-based bringup and post-silicon-style validation.
 
 #### Phase 1 — Core debug port wiring
@@ -71,27 +50,21 @@
 #### Phase 8 — Documentation
 - [ ] Update `docs/jtag_cjtag_integration.md`: complete DM register map, abstract command protocol, SBA operation, trigger module usage, and OpenOCD/GDB setup instructions.
 
-### 4. Zephyr RTOS Porting Update
+### 2. Zephyr RTOS Porting Update
 **Priority: MEDIUM** — Keeps RTOS support current.
 - [ ] Bring the Zephyr port up to date with the latest kernel version.
 - [ ] Resolve any outstanding porting issues.
 
-### 5. GitHub CI Workflow
+### 3. GitHub CI Workflow
 **Priority: LOW** — Improves project hygiene; no functional dependency.
 - [ ] Add a GitHub Actions workflow that builds the simulator, runs lint, and
   executes the regression suite on every push and pull request.
 
-### 6. Google RISCV-DV Integration
+### 4. Google RISCV-DV Integration
 **Priority: LOW** — Broad verification; high effort, no prerequisite blockers.
 - [ ] Evaluate and run the Google RISC-V DV random instruction test suite against the kv32 RTL.
 
-### ~~7. DDR4 Delay Model Audit~~
-**Priority: MEDIUM** — Required to fix `ICACHE_EN=0` hang in `rtl-wfi`.
-- [x] Check actual latency model in `testbench/ddr4_axi4_slave.sv` (read/write state machine cycles, burst timing).
-- [x] Determine minimum timer period for `MEM_TYPE=ddr4-1866 ICACHE_EN=0` so WFI stall window is long enough.
-- [x] Fix `sw/wfi/wfi.c` TEST 2 (and any other timing-sensitive tests) to use DDR4-adjusted periods when icache is disabled.
-
-### 8. FuseSoC Support
+### 5. FuseSoC Support
 **Priority: LOW** — Enables standard IP packaging and integration with third-party EDA flows.
 - [ ] Create a top-level `kv32_soc.core` FuseSoC core description file: declare all RTL source files (`rtl/`, `rtl/core/`, `rtl/jtag/`, `rtl/memories/`), testbench files (`testbench/`), and parameters (`CLK_FREQ`, `BAUD_RATE`, `ICACHE_EN`, `ICACHE_SIZE`, etc.).
 - [ ] Add a `fusesoc_libraries.conf` (or `fusesoc.conf`) at the repo root pointing to the local core library.
@@ -104,16 +77,6 @@
 ---
 
 ## Completed
-
-### ~~C8. Doxygen Documentation~~
-- Added `Doxyfile` at repo root: `INPUT=sw/include,sim,rtl`, `RECURSIVE=YES`, `EXTRACT_ALL=YES`, `GENERATE_HTML=YES`, `OUTPUT_DIRECTORY=docs/doxygen`.
-- Wrote `scripts/doxygen_sv_filter.py`: custom SV→C++ filter (module/endmodule → class/};, preserves `/** */` comments) since `doxygen-filter-sv` is not on PyPI; configured via `FILTER_PATTERNS` and `EXTENSION_MAPPING=sv=C++`.
-- Annotated all `sw/include/*.h` with `@file`/`@brief`/`@defgroup`/`@ingroup` and per-function `/** @brief @param @return */` doc-comments.
-- Annotated `sim/kv32sim.h`, `sim/device.h`, and `sim/gdb_stub.h` with full Doxygen class/struct/function documentation.
-- Added `/** @brief @ingroup rtl */` above `module` declarations in `kv32_soc.sv`, `kv32_core.sv`, `kv32_icache.sv`, and all `axi_*.sv` peripherals; `@see` cross-links to `docs/kv32_soc_datasheet.adoc`.
-- Added `make docs` target to top-level `Makefile`.
-- Added `docs/doxygen/` to `.gitignore`.
-- `make docs` builds with zero warnings: `docs/doxygen/html/index.html`.
 
 ### ~~C1. Null Address Bus-Error Test~~
 - Added null pointer load/store and function-call cases to `sw/bus_err`.
@@ -163,6 +126,16 @@ Final AXI slave assignment:
   to use the SDK API.
 - Added early-exit guard to `sw/icache`: if `ICACHE_EN=0`, the test exits gracefully
   (verify with `make ICACHE_EN=0 rtl-icache`).
+
+### ~~C8. Doxygen Documentation~~
+- Added `Doxyfile` at repo root: `INPUT=sw/include,sim,rtl`, `RECURSIVE=YES`, `EXTRACT_ALL=YES`, `GENERATE_HTML=YES`, `OUTPUT_DIRECTORY=docs/doxygen`.
+- Wrote `scripts/doxygen_sv_filter.py`: custom SV→C++ filter (module/endmodule → class/};, preserves `/** */` comments) since `doxygen-filter-sv` is not on PyPI; configured via `FILTER_PATTERNS` and `EXTENSION_MAPPING=sv=C++`.
+- Annotated all `sw/include/*.h` with `@file`/`@brief`/`@defgroup`/`@ingroup` and per-function `/** @brief @param @return */` doc-comments.
+- Annotated `sim/kv32sim.h`, `sim/device.h`, and `sim/gdb_stub.h` with full Doxygen class/struct/function documentation.
+- Added `/** @brief @ingroup rtl */` above `module` declarations in `kv32_soc.sv`, `kv32_core.sv`, `kv32_icache.sv`, and all `axi_*.sv` peripherals; `@see` cross-links to `docs/kv32_soc_datasheet.adoc`.
+- Added `make docs` target to top-level `Makefile`.
+- Added `docs/doxygen/` to `.gitignore`.
+- `make docs` builds with zero warnings: `docs/doxygen/html/index.html`.
 
 ### ~~C8. Dead-Signal (`_unused_ok`) Audit and Cleanup~~
 - Audited all `_unused_ok` sinks across the RTL.
@@ -313,3 +286,25 @@ Final AXI slave assignment:
 - Updated `docs/pipeline_architecture.md` and `docs/kv32_soc_datasheet.adoc` with RVC/`kv32_rvc` expander description and C-extension ISA table entry.
 - Updated `misa = 32'h4014_1105` (C bit set) in `rtl/core/kv32_csr.sv` and IDCODE in `rtl/kv32_dtm.sv`.
 - All tests pass: `make test-all` 18/18, `make TRACE=1 arch-test-rv32c` 29/29.
+
+### ~~C19. Physical Memory Attributes (PMA) — D-Cache Extension~~
+- Extended the PMA cacheability check to the data path in `rtl/kv32_dcache.sv`: `pma_cacheable = req_addr[31]`; addresses with bit[31]=0 (I/O, NCM) bypass the cache and are forwarded as single-beat INCR transactions directly to AXI.
+- PMA bypass is applied unconditionally per-request, independent of the global `dcache_enable` CMO register.
+- (I-cache PMA bypass, NCM region, and related testbench/simulator changes were completed under C13.)
+
+### ~~C20. D-Cache Implementation~~
+- Implemented `rtl/kv32_dcache.sv`: configurable write-back/write-through (`DCACHE_WRITE_BACK`), write-allocate/no-alloc (`DCACHE_WRITE_ALLOC`), N-way set-associative (`DCACHE_WAYS`); SRAM macro wrappers (`sram_1rw`) for tag and data arrays; pseudo-LRU replacement (1 bit per set for 2-way, round-robin pointer for N-way).
+- AXI4 interface: critical-word-first WRAP burst fills (AR+R channels), INCR burst dirty-line evictions (AW+W+B channels), single-beat INCR bypasses for non-cacheable (PMA) addresses.
+- CMO support: `CBO.INVAL` (invalidate matching line), `CBO.CLEAN` (write-back dirty lines only), `CBO.FLUSH` (write-back + invalidate); `FENCE.I` triggers `CMO_FLUSH_ALL` (write-back all dirty lines + invalidate all).
+- Integrated into `kv32_soc.sv` with `DCACHE_EN` parameter (default 1); `DCACHE_EN=0` falls back to `mem_axi` bridge so all data accesses go directly to AXI.
+- D-cache performance counters exported from `kv32_soc`: `dcache_perf_req_cnt`, `dcache_perf_hit_cnt`, `dcache_perf_miss_cnt`.
+- Store-buffer interaction: D-cache checks the store buffer for forwarding on load hits; cache-miss path drains the store buffer before issuing a fill.
+- Added `sw/dcache` test suite: hit/miss, write-back eviction, CMO flush, store-buffer coherency, PMA bypass.
+- Updated `sw/dma` to issue `CBO.FLUSH` after DMA transfers to maintain coherency.
+- Updated `docs/cache_architecture.md`, `docs/kv32_soc_datasheet.adoc`, and `docs/pipeline_architecture.md` with D-cache architecture, register map, and parameter descriptions.
+- Updated synthesis (`syn/`) and FPGA (`fpga/`) compile lists to include `kv32_dcache.sv`.
+
+### ~~C21. DDR4 Delay Model Audit~~
+- Checked actual latency model in `testbench/ddr4_axi4_slave.sv` (read/write state machine cycles, burst timing).
+- Determined minimum timer period for `MEM_TYPE=ddr4-1866 ICACHE_EN=0` so the WFI stall window is long enough.
+- Fixed `sw/wfi/wfi.c` TEST 2 (and timing-sensitive tests) to use DDR4-adjusted periods when I-cache is disabled.

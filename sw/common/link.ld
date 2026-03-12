@@ -88,19 +88,25 @@ SECTIONS
     } > RAM :data
 
     /* Host-Target Interface section for Spike compatibility */
-    .tohost : ALIGN(8) {
+    /* Align to 128 bytes to prevent cache line crossing and false sharing. */
+    .tohost : ALIGN(128) {
         tohost = .;
         . += 8;
         fromhost = .;
         . += 8;
     } > RAM :data
 
+    . = ALIGN(128);
+
     /* Reference to flash copy of data section - for ROM-based systems */
     _eronly = LOADADDR(.data) + SIZEOF(.data);
 
     /* Stack section - heap and stack share remaining memory */
+    /* ALIGN(128) ensures __heap_start is past tohost's 32-byte D-cache line.
+     * The outer ". = ALIGN(128)" orphan is ignored by GNU ld for zero-size
+     * sections; the inner alignment here is the reliable way to guarantee this. */
     .stack : {
-        . = ALIGN(16);
+        . = ALIGN(128);
         __heap_start = .;
         /* Heap grows upward from here, stack grows downward from end of RAM */
     } > RAM

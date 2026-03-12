@@ -31,14 +31,15 @@
 //   - CMO INVAL invalidates the way whose tag matches the supplied address.
 //   - CMO ENABLE re-enables normal caching.
 //
-// Performance Optimization: Zero-Latency Word-by-Word Forwarding
+// Performance Optimization: Word-by-Word Forwarding (fill-pending)
 //   During cache line fills, each word is forwarded to the instruction fetch
-//   unit IMMEDIATELY (combinationally) as it arrives from memory, without
-//   waiting for the entire cache line to be read. This minimizes instruction
-//   fetch latency for sequential accesses within the same cache line.
+//   unit as it arrives from memory, without waiting for the entire cache line
+//   to be stored. This minimizes instruction fetch latency for sequential
+//   accesses within the same cache line.
 //   - Word 0 (critical word): served via CWF in S_RESP (1 cycle after arrival)
-//   - Word 1,2,3,...: served via direct forwarding in S_FILL_REST (0 cycles)
-//   - Cache line population: happens in parallel, written after all words arrive
+//   - Word 1,2,3,...: served via fill_pend registered path in S_FILL_REST (1 cycle)
+//     (fill_direct_forward is disabled — see comment near that signal for rationale)
+//   - Cache line population: happens in parallel, written as each beat arrives
 //   - Backpressure handling: if core is not ready, response is registered
 // ============================================================================
 

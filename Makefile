@@ -259,7 +259,7 @@ ICACHE_LINE_SIZE    ?= 32
 ICACHE_WAYS         ?= 2
 
 # D-cache defaults
-DCACHE_EN           ?= 0
+DCACHE_EN           ?= 1
 DCACHE_SIZE         ?= 4096
 DCACHE_LINE_SIZE    ?= 32
 DCACHE_WAYS         ?= 2

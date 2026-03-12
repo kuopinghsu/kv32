@@ -157,7 +157,7 @@ module kv32_core #(
 `endif
 
     // Timeout for detecting pipeline deadlocks (simulation only)
-    localparam int STALL_TIMEOUT = 200;  // Cycles before timeout assertion
+    localparam int STALL_TIMEOUT = 2000; // Cycles before timeout assertion (must accommodate D-cache CMO_FLUSH_ALL: 128 entries × ~10 cycles/dirty-wb ≈ 1400 cycles worst-case)
 
     // ====== Performance Counters ======
     logic [63:0] cycle_counter;
@@ -515,6 +515,15 @@ module kv32_core #(
     // pipeline stages back to the execute stage.
     logic [1:0]  forward_a, forward_b;   // Forwarding control: 00=ID, 01=WB, 10=MEM
     logic [31:0] rs1_forwarded, rs2_forwarded; // Forwarded register values
+    // mem_fwd_is_dup: the instruction currently in MEM is a duplicate of the last
+    // retired instruction (same PC and encoding). This happens when cbo_committing
+    // re-fetches the instruction that was already advancing from EX→MEM at the same
+    // cycle. The duplicate executes with already-updated registers, producing a
+    // stale double-incremented result. Forwarding this value to downstream EX or ID
+    // stages gives wrong operands; block it and fall back to the register file.
+    logic mem_fwd_is_dup;
+    assign mem_fwd_is_dup = mem_valid && (pc_mem == last_retired_pc) &&
+                            (instr_mem == last_retired_instr);
 
     // ====== Fetch Stage Implementation ======
 
@@ -1125,7 +1134,7 @@ module kv32_core #(
     // ============================================================================
     // Forward register values from later pipeline stages to ID stage when:
     //   1. MEM stage has valid instruction (not a pending load)
-    //   2. WB stage has unretired instruction (blocked by duplicate detection)
+    //   2. WB stage has a retiring instruction (retire_instr=1, NOT a blocked duplicate)
     //
     // Priority: MEM > WB > Register File
     //   - MEM has HIGHER priority because it holds the most recently issued write
@@ -1151,11 +1160,11 @@ module kv32_core #(
     // register (e.g. lui→addi back-to-back: lui is in WB, addi is in MEM).
     // Using WB-first priority would incorrectly latch the stale lui result into
     // rs_data_ex, causing wrong ALU input once the instruction stalls in EX.
-    assign rs1_data_id = (reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs1_addr == rd_addr_mem)) ? wb_write_data_next :
-                         (reg_we_wb && (rd_addr_wb != 5'd0) && (rs1_addr == rd_addr_wb)) ? wb_write_data :
+    assign rs1_data_id = (reg_we_mem && !mem_fwd_is_dup && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs1_addr == rd_addr_mem)) ? wb_write_data_next :
+                         (reg_we_wb && retire_instr && (rd_addr_wb != 5'd0) && (rs1_addr == rd_addr_wb)) ? wb_write_data :
                          rs1_data;
-    assign rs2_data_id = (reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs2_addr == rd_addr_mem)) ? wb_write_data_next :
-                         (reg_we_wb && (rd_addr_wb != 5'd0) && (rs2_addr == rd_addr_wb)) ? wb_write_data :
+    assign rs2_data_id = (reg_we_mem && !mem_fwd_is_dup && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs2_addr == rd_addr_mem)) ? wb_write_data_next :
+                         (reg_we_wb && retire_instr && (rd_addr_wb != 5'd0) && (rs2_addr == rd_addr_wb)) ? wb_write_data :
                          rs2_data;
 
     `ifdef DEBUG
@@ -1163,24 +1172,24 @@ module kv32_core #(
     always_ff @(posedge clk) begin
         if (rst_n && id_valid && !id_ex_stall && !id_flush) begin
             // MEM->ID forwarding fired for rs1
-            if (reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs1_addr == rd_addr_mem)) begin
+            if (reg_we_mem && !mem_fwd_is_dup && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs1_addr == rd_addr_mem)) begin
                 `DEBUG2(`DBG_GRP_REG, ("[ID_FWD_MEM->rs1] PC=0x%h rs1=x%0d rd_mem=x%0d wb_write_data_next=0x%h csr_op_mem=%0d mem_read_mem=%b alu_result_mem=0x%h",
                        pc_id, rs1_addr, rd_addr_mem, wb_write_data_next, csr_op_mem, mem_read_mem, alu_result_mem));
             end
-            // WB->ID forwarding fired for rs1 (only when MEM doesn't match)
-            if (reg_we_wb && (rd_addr_wb != 5'd0) && (rs1_addr == rd_addr_wb) &&
-                !(reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs1_addr == rd_addr_mem))) begin
+            // WB->ID forwarding fired for rs1 (only when MEM doesn't match, and not blocked)
+            if (reg_we_wb && retire_instr && (rd_addr_wb != 5'd0) && (rs1_addr == rd_addr_wb) &&
+                !(reg_we_mem && !mem_fwd_is_dup && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs1_addr == rd_addr_mem))) begin
                 `DEBUG2(`DBG_GRP_REG, ("[ID_FWD_WB->rs1] PC=0x%h rs1=x%0d rd_wb=x%0d wb_write_data=0x%h",
                        pc_id, rs1_addr, rd_addr_wb, wb_write_data));
             end
             // MEM->ID forwarding fired for rs2
-            if (reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs2_addr == rd_addr_mem)) begin
+            if (reg_we_mem && !mem_fwd_is_dup && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs2_addr == rd_addr_mem)) begin
                 `DEBUG2(`DBG_GRP_REG, ("[ID_FWD_MEM->rs2] PC=0x%h rs2=x%0d rd_mem=x%0d wb_write_data_next=0x%h csr_op_mem=%0d mem_read_mem=%b alu_result_mem=0x%h",
                        pc_id, rs2_addr, rd_addr_mem, wb_write_data_next, csr_op_mem, mem_read_mem, alu_result_mem));
             end
-            // WB->ID forwarding fired for rs2 (only when MEM doesn't match)
-            if (reg_we_wb && (rd_addr_wb != 5'd0) && (rs2_addr == rd_addr_wb) &&
-                !(reg_we_mem && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs2_addr == rd_addr_mem))) begin
+            // WB->ID forwarding fired for rs2 (only when MEM doesn't match, and not blocked)
+            if (reg_we_wb && retire_instr && (rd_addr_wb != 5'd0) && (rs2_addr == rd_addr_wb) &&
+                !(reg_we_mem && !mem_fwd_is_dup && mem_valid && !load_stall && (rd_addr_mem != 5'd0) && (rs2_addr == rd_addr_mem))) begin
                 `DEBUG2(`DBG_GRP_REG, ("[ID_FWD_WB->rs2] PC=0x%h rs2=x%0d rd_wb=x%0d wb_write_data=0x%h",
                        pc_id, rs2_addr, rd_addr_wb, wb_write_data));
             end
@@ -1408,17 +1417,17 @@ module kv32_core #(
         forward_b = 2'b00;  // Default: no forwarding for rs2
 
         // Forward rs1 if there's a RAW hazard
-        if (reg_we_mem && (rd_addr_mem != 5'd0) && (rd_addr_mem == rs1_addr_ex)) begin
-            forward_a = 2'b10;  // Forward from MEM (higher priority)
-        end else if (reg_we_wb && wb_valid && !wb_exception && (rd_addr_wb != 5'd0) && (rd_addr_wb == rs1_addr_ex)) begin
-            forward_a = 2'b01;  // Forward from WB (data ready and valid)
+        if (reg_we_mem && !mem_fwd_is_dup && (rd_addr_mem != 5'd0) && (rd_addr_mem == rs1_addr_ex)) begin
+            forward_a = 2'b10;  // Forward from MEM (higher priority, not a duplicate)
+        end else if (reg_we_wb && retire_instr && wb_valid && !wb_exception && (rd_addr_wb != 5'd0) && (rd_addr_wb == rs1_addr_ex)) begin
+            forward_a = 2'b01;  // Forward from WB (data ready, valid, and retired)
         end
 
         // Forward rs2 if there's a RAW hazard
-        if (reg_we_mem && (rd_addr_mem != 5'd0) && (rd_addr_mem == rs2_addr_ex)) begin
-            forward_b = 2'b10;  // Forward from MEM (higher priority)
-        end else if (reg_we_wb && wb_valid && !wb_exception && (rd_addr_wb != 5'd0) && (rd_addr_wb == rs2_addr_ex)) begin
-            forward_b = 2'b01;  // Forward from WB (data ready and valid)
+        if (reg_we_mem && !mem_fwd_is_dup && (rd_addr_mem != 5'd0) && (rd_addr_mem == rs2_addr_ex)) begin
+            forward_b = 2'b10;  // Forward from MEM (higher priority, not a duplicate)
+        end else if (reg_we_wb && retire_instr && wb_valid && !wb_exception && (rd_addr_wb != 5'd0) && (rd_addr_wb == rs2_addr_ex)) begin
+            forward_b = 2'b01;  // Forward from WB (data ready, valid, and retired)
         end
     end
 
@@ -2601,9 +2610,10 @@ module kv32_core #(
     assign fence_i_cmo_stall = is_fence_i_mem && mem_valid && !sb_store_pending &&
                                (!cmo_sent_r || !dcache_cmo_sent_r);
 
-    // cbo_cmo_stall: stall CBO in MEM until dcache CMO accepted.
+    // cbo_cmo_stall: stall CBO in MEM until store buffer drains AND dcache CMO accepted.
+    // Must drain store buffer first so the D-cache sees the latest data before flush.
     // CBO instructions target the dcache only (icache doesn't cache data).
-    assign cbo_cmo_stall = is_cbo_mem && mem_valid && !dcache_cmo_sent_r;
+    assign cbo_cmo_stall = is_cbo_mem && mem_valid && (sb_store_pending || !dcache_cmo_sent_r);
 
     assign mem_wb_stall = load_stall || store_stall || (is_amo_mem && amo_in_progress) || fence_stall ||
                           fence_i_drain_stall || fence_i_cmo_stall || cbo_cmo_stall;
@@ -2643,7 +2653,7 @@ module kv32_core #(
     // Note: cbo.clean is encoded as funct3=001; cbo.flush as funct3=010; cbo.inval as funct3=000
     // instr_mem[14:12] is the funct3 field (same encoding as the original instruction)
     assign dcache_cmo_valid = (is_fence_i_mem && mem_valid && !sb_store_pending && !dcache_cmo_sent_r) ||
-                              (is_cbo_mem     && mem_valid && !dcache_cmo_sent_r);
+                              (is_cbo_mem     && mem_valid && !sb_store_pending && !dcache_cmo_sent_r);
     assign dcache_cmo_op    = is_fence_i_mem ? DCACHE_CMO_FLUSH_ALL :
                               (instr_mem[14:12] == 3'b010) ? DCACHE_CMO_FLUSH :  // cbo.flush
                               DCACHE_CMO_INVAL;                                   // cbo.inval (default)

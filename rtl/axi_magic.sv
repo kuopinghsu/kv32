@@ -3,15 +3,28 @@
 // Project: KV32 RISC-V Processor
 // Description: AXI4-Lite Magic Device for Simulation Control
 //
-// Provides special memory-mapped registers for simulation and testing.
-// Base address: 0x40000000
+// Provides special memory-mapped registers and a Non-Cacheable Memory (NCM)
+// region used exclusively in simulation/testbench environments.  Not
+// synthesised for FPGA/ASIC targets.
 //
-// Magic Addresses:
-//   0x40000000: CONSOLE_MAGIC_ADDR - Output character
-//   0x40000004: EXIT_MAGIC_ADDR - Exit simulation
+// Base address: 0x4000_0000
 //
-// This device is typically used only in simulation/testbench environments
-// and not synthesized for FPGA/ASIC implementations.
+// Register Map:
+//   Offset 0x000 (0x4000_0000): CONSOLE_MAGIC - Write a character to stdout
+//   Offset 0x004 (0x4000_0004): EXIT_MAGIC    - Trigger simulation exit
+//
+// Non-Cacheable Memory (NCM):
+//   Base:  0x4000_1000  (NCM_BASE_ADDR)
+//   Size:  512 B  (128 × 32-bit words)
+//
+//   The NCM region lives below bit[31]=0, which falls outside the main DRAM
+//   window (0x8000_0000+) and therefore hits neither the I-cache PMA range
+//   nor the D-cache PMA range.  Every access is forced through the AXI bypass
+//   path, making this region ideal for testing cache-bypass behaviour:
+//     - Firmware can write arbitrary machine code into NCM and invoke it via a
+//       function pointer, exercising the uncached instruction-fetch path.
+//     - Data read/write to NCM verifies that the D-cache bypass path correctly
+//       forwards data and propagates AXI error responses (SLVERR) to the core.
 // ============================================================================
 
 `ifndef SYNTHESIS

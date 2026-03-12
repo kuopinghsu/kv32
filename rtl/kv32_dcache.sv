@@ -359,8 +359,58 @@ module kv32_dcache #(
     logic [WAY_BITS-1:0]         fill_way;
     logic [TAG_BITS-1:0]         evict_tag_r;   // tag of evicted line
     logic [WORD_OFFSET_BITS-1:0] fill_word_cnt; // reused as evict beat counter
+    logic [WORD_OFFSET_BITS-1:0] fill_req_word_off_r; // req_word_off saved at fill start
     logic                        fill_error;
     logic                        fill_active_r;  // AR accepted, burst in-flight
+    logic                        bypass_ar_sent_r; // Bypass AR accepted; ARVALID must stay low until next request
+
+    // =========================================================================
+    // Fill-pending: serve same-line load requests from AXI data bus while a
+    //   D-Cache line fill is still in progress (CWF beats 1+).
+    //
+    //   After the critical word (beat 0) unblocks the core, subsequent
+    //   sequential loads to the same cache line would otherwise stall until
+    //   S_FILL_REST drains and the line is re-read from SRAM in S_LOOKUP.
+    //   By accepting the new load in S_FILL_REST (or S_FILL_RESP back-to-back)
+    //   and capturing the matching AXI beat into fill_pend_data_r, we can serve
+    //   it 1 cycle after arrival — saving (WORDS_PER_LINE-2) stall cycles.
+    //
+    //   Only same-line loads are accepted; stores wait for S_IDLE → S_HIT_WR.
+    //   One in-flight fill_pend slot (mirrors kv32_icache.sv).
+    // =========================================================================
+    logic                        fill_pend_req_r;    // request latched, beat not yet arrived
+    logic [WORD_OFFSET_BITS-1:0] fill_pend_burst_r;  // burst beat index for the pending request
+    logic                        fill_pend_resp_r;   // beat captured, response ready to send
+    logic [31:0]                 fill_pend_data_r;   // captured data from AXI bus
+    logic                        fill_pend_error_r;  // error flag for captured beat
+
+    // Burst beat index (relative to WRAP start = req_word_off) for a new request
+    // targeting the same cache line.  Overflow wraps naturally at WORD_OFFSET_BITS.
+    logic [WORD_OFFSET_BITS-1:0] fill_pend_burst_comb;
+    assign fill_pend_burst_comb = WORD_OFFSET_BITS'(new_req_word_off - req_word_off);
+
+    // Incoming address targets the same cache line currently being filled.
+    logic fill_same_line;
+    assign fill_same_line = use_dcache && fill_active_r &&
+        (core_req_addr[31:BYTE_OFFSET_BITS] == req_addr_r[31:BYTE_OFFSET_BITS]);
+
+    // The AXI beat for the incoming (not-yet-accepted) request is on the bus now.
+    logic fill_pend_beat_now;
+    assign fill_pend_beat_now = axi_rvalid && (fill_word_cnt == fill_pend_burst_comb);
+
+    // The AXI beat for the already-latched pending request is arriving now.
+    logic fill_pend_beat_for_req;
+    assign fill_pend_beat_for_req = fill_pend_req_r && axi_rvalid && axi_rready &&
+        (fill_word_cnt == fill_pend_burst_r);
+
+    // Guard: can we accept a new fill-pending request?
+    //   – same cache line, load only (no stores), no previous pending req/resp,
+    //   – required beat has not yet been consumed (burst_comb >= fill_word_cnt)
+    logic fill_pend_can_accept;
+    assign fill_pend_can_accept = fill_same_line &&
+        !fill_pend_req_r && !fill_pend_resp_r &&
+        (core_req_we == 4'b0000) &&
+        (fill_pend_burst_comb >= fill_word_cnt);
 
     // Eviction line base address: tag + index + 0 offset
     logic [31:0] evict_base_addr;
@@ -393,8 +443,17 @@ module kv32_dcache #(
                 if (use_dcache && cache_hit) begin
                     if (req_we_r != 4'b0000)
                         next_state = S_HIT_WR;
-                    else
-                        next_state = S_HIT_RD;
+                    else begin
+                        // Zero-stall hit-read: core_resp_valid fires combinatorially
+                        // in S_LOOKUP.  If the core accepts it this cycle
+                        // (core_resp_ready=1, which is always true when
+                        // dmem_resp_ready=1'b1), go directly to S_IDLE to avoid
+                        // sending a duplicate response in S_HIT_RD next cycle.
+                        if (core_resp_ready)
+                            next_state = S_IDLE;
+                        else
+                            next_state = S_HIT_RD;
+                    end
                 end else if (!use_dcache) begin
                     // Non-cacheable bypass
                     if (req_we_r != 4'b0000)
@@ -424,8 +483,13 @@ module kv32_dcache #(
             end
 
             S_WT_AW: begin
-                if (axi_awvalid && axi_awready)
-                    next_state = S_WT_W;
+                if (axi_awvalid && axi_awready) begin
+                    // Single-beat WT: W is also presented in this state
+                    if (axi_wvalid && axi_wready && axi_wlast)
+                        next_state = S_WT_B;   // Both accepted simultaneously
+                    else
+                        next_state = S_WT_W;   // AW done, W still pending
+                end
             end
 
             S_WT_W: begin
@@ -460,9 +524,16 @@ module kv32_dcache #(
 
             S_FILL_R: begin
                 if (axi_rvalid && axi_rready) begin
-                    // CWF: go to S_FILL_RESP as soon as beat 0 arrives
-                    // (For a miss-write with write-alloc, also on first beat)
-                    if (axi_rlast || fill_word_cnt == '0)
+                    // For loads: CWF – forward critical word at beat 0 immediately.
+                    // For write-alloc stores: must wait for the full line (rlast) so
+                    // fill_commit fires in S_FILL_R and resp_is_write_r is set to 1
+                    // before we enter S_FILL_RESP.  Without this, the D-cache issues a
+                    // resp with is_write=0 at beat-0 and the store buffer never receives
+                    // its completion (resp_valid = dmem_resp_valid && dmem_resp_is_write),
+                    // causing the store buffer to fill up and permanently stall the core.
+                    if (axi_rlast ||
+                        (fill_word_cnt == '0 &&
+                         (req_we_r == 4'b0000 || !DCACHE_WRITE_ALLOC)))
                         next_state = S_FILL_RESP;
                 end
             end
@@ -473,16 +544,26 @@ module kv32_dcache #(
                         next_state = S_FILL_REST;
                     else if (cmo_valid_i)
                         next_state = S_CMO_SCAN;
-                    else if (core_req_valid)
-                        next_state = S_LOOKUP;
                     else
+                        // Always return to S_IDLE so that the SRAM is re-read for the
+                        // next request and req_addr_r / req_we_r are correctly latched.
+                        // The old fast-path FILL_RESP→S_LOOKUP skipped S_IDLE which
+                        // left stale req_we_r from the fill and stale tag_sram_rdata,
+                        // causing an infinite miss/evict loop.
                         next_state = S_IDLE;
                 end
             end
 
             S_FILL_REST: begin
-                // Stay until burst complete
-                if (!fill_active_r || (axi_rvalid && axi_rready && axi_rlast))
+                // Stay until burst complete AND any fill-pend response has been consumed.
+                //
+                // Block exit when fill_pend_beat_for_req is true this cycle:
+                //   The NBA update to fill_pend_resp_r=1 is invisible to combinational
+                //   next-state logic in the same cycle, so exiting to S_IDLE on that
+                //   cycle would lose the pending response and deadlock the core.
+                if ((!fill_active_r || (axi_rvalid && axi_rready && axi_rlast)) &&
+                        (!fill_pend_resp_r || core_resp_ready) &&
+                        !fill_pend_beat_for_req)
                     next_state = S_IDLE;
             end
 
@@ -498,8 +579,13 @@ module kv32_dcache #(
             end
 
             S_BYPASS_WR_AW: begin
-                if (axi_awvalid && axi_awready)
-                    next_state = S_BYPASS_WR_W;
+                if (axi_awvalid && axi_awready) begin
+                    // Single-beat bypass: W is also presented in this state
+                    if (axi_wvalid && axi_wready && axi_wlast)
+                        next_state = S_BYPASS_WR_B;  // Both accepted simultaneously
+                    else
+                        next_state = S_BYPASS_WR_W;  // AW done, W still pending
+                end
             end
 
             S_BYPASS_WR_W: begin
@@ -542,7 +628,7 @@ module kv32_dcache #(
 
             S_CMO_WB_B: begin
                 if (axi_bvalid && axi_bready)
-                    next_state = S_CMO_SCAN;  // continue scanning
+                    next_state = cmo_scan_done ? S_CMO_DONE : S_CMO_SCAN;
             end
 
             S_CMO_DONE: next_state = S_IDLE;
@@ -594,16 +680,21 @@ module kv32_dcache #(
     // =========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            fill_way      <= '0;
-            fill_word_cnt <= '0;
-            fill_error    <= 1'b0;
-            evict_tag_r   <= '0;
+            fill_way             <= '0;
+            fill_word_cnt        <= '0;
+            fill_req_word_off_r  <= '0;
+            fill_error           <= 1'b0;
+            evict_tag_r          <= '0;
         end else if (state == S_LOOKUP && !cache_hit && use_dcache) begin
-            // Latch victim for eviction
-            fill_way    <= victim_way;
-            evict_tag_r <= tag_sram_rdata[victim_way];
-            fill_error  <= 1'b0;
-            fill_word_cnt <= '0;
+            // Latch victim for eviction and save the original word offset for
+            // the fill so that accepting a same-line fill-pending request later
+            // (which updates req_addr_r / req_word_off) cannot corrupt the SRAM
+            // write address for the remaining beats of this fill.
+            fill_way            <= victim_way;
+            evict_tag_r         <= tag_sram_rdata[victim_way];
+            fill_error          <= 1'b0;
+            fill_word_cnt       <= '0;
+            fill_req_word_off_r <= req_word_off;
         end else if (state == S_CMO_SCAN &&
                      (cmo_op_r == CMO_FLUSH_ALL || cmo_op_r == CMO_FLUSH || cmo_op_r == CMO_CLEAN) &&
                      valid_array[cmo_scan_way][cmo_scan_set] &&
@@ -633,6 +724,83 @@ module kv32_dcache #(
             fill_active_r <= 1'b1;
         else if (axi_rvalid && axi_rready && axi_rlast)
             fill_active_r <= 1'b0;
+    end
+
+    // Track that the bypass AR has been accepted so ARVALID can deassert
+    // (AXI spec: once ARVALID is asserted it must remain until ARREADY).
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            bypass_ar_sent_r <= 1'b0;
+        else if (state == S_BYPASS_RD && axi_arvalid && axi_arready)
+            bypass_ar_sent_r <= 1'b1;
+        else if (state != S_BYPASS_RD)
+            bypass_ar_sent_r <= 1'b0;
+    end
+
+    // =========================================================================
+    // Fill-pending state registers
+    //   Manages a single in-flight same-line load request accepted while a
+    //   burst fill is active (S_FILL_RESP back-to-back or S_FILL_REST).
+    //   Data is captured directly from the AXI bus (no SRAM read conflict)
+    //   and served via core_resp_valid in S_FILL_REST.
+    //
+    //   State transitions:
+    //     IDLE → REQ_WAIT : request accepted, beat not yet on bus
+    //     IDLE → RESP_RDY : request accepted and matching beat on bus same cycle
+    //     REQ_WAIT → RESP_RDY : tracked beat arrives on AXI bus
+    //     RESP_RDY → IDLE : core consumes fill_pend response (core_resp_ready)
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            fill_pend_req_r    <= 1'b0;
+            fill_pend_burst_r  <= '0;
+            fill_pend_resp_r   <= 1'b0;
+            fill_pend_data_r   <= '0;
+            fill_pend_error_r  <= 1'b0;
+        end else begin
+            // ---- Accept a new same-line load request while fill is active ----
+            // Fires in S_FILL_RESP+fill (back-to-back: primary resp consumed this
+            // same cycle) or S_FILL_REST (subsequent beats already draining).
+            if (((state == S_FILL_RESP && fill_active_r && core_resp_ready) ||
+                  state == S_FILL_REST) &&
+                    core_req_valid && core_req_ready && fill_pend_can_accept) begin
+                if (fill_pend_beat_now && axi_rready) begin
+                    // Needed beat is on the bus right now — register for next cycle.
+                    fill_pend_resp_r  <= 1'b1;
+                    fill_pend_data_r  <= axi_rdata;
+                    fill_pend_error_r <= (axi_rresp != 2'b00);
+                    // fill_pend_req_r stays 0: no future beat tracking needed.
+                    `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] fill_pend ACCEPT+CAPTURE: state=%0d fill_word_cnt=%0d burst_comb=%0d axi_rdata=0x%h addr=0x%h", state, fill_word_cnt, fill_pend_burst_comb, axi_rdata, core_req_addr));
+                end else begin
+                    // Beat not yet arrived → record burst index and wait.
+                    fill_pend_req_r   <= 1'b1;
+                    fill_pend_burst_r <= fill_pend_burst_comb;
+                    `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] fill_pend ACCEPT+WAIT: state=%0d fill_word_cnt=%0d burst_comb=%0d addr=0x%h", state, fill_word_cnt, fill_pend_burst_comb, core_req_addr));
+                end
+            end
+
+            // ---- Capture when the tracked beat arrives ----
+            if (fill_pend_beat_for_req) begin
+                fill_pend_req_r   <= 1'b0;
+                fill_pend_resp_r  <= 1'b1;
+                fill_pend_data_r  <= axi_rdata;
+                fill_pend_error_r <= (axi_rresp != 2'b00);
+                `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] fill_pend CAPTURE: fill_word_cnt=%0d burst_r=%0d axi_rdata=0x%h", fill_word_cnt, fill_pend_burst_r, axi_rdata));
+            end
+
+            // ---- Clear when fill-pending response is consumed by core ----
+            if (fill_pend_resp_r && core_resp_ready &&
+                    (state == S_FILL_REST ||
+                     (state == S_FILL_RESP && fill_active_r))) begin
+                fill_pend_resp_r <= 1'b0;
+            end
+
+            // ---- Safety reset when both fill and pipeline are quiescent ----
+            if (state == S_IDLE) begin
+                fill_pend_req_r  <= 1'b0;
+                fill_pend_resp_r <= 1'b0;
+            end
+        end
     end
 
     // =========================================================================
@@ -673,9 +841,16 @@ module kv32_dcache #(
                 dirty_array[fill_way][req_index] <= 1'b1;
             end
 
-            // EVICT B response: clear dirty (line has been written back)
-            if ((state == S_EVICT_B || state == S_CMO_WB_B) && axi_bvalid && axi_bready) begin
+            // EVICT B response: clear dirty (line has been written back to memory)
+            // Only for fill-eviction path (S_EVICT_B). CMO writebacks (S_CMO_WB_B) are
+            // handled separately below with the correct cmo_scan_set index.
+            if (state == S_EVICT_B && axi_bvalid && axi_bready) begin
                 dirty_array[fill_way][req_index] <= 1'b0;
+            end
+
+            // CMO CLEAN after WB: clear dirty but leave valid (line stays cached, now clean)
+            if (state == S_CMO_WB_B && axi_bvalid && axi_bready && cmo_op_r == CMO_CLEAN) begin
+                dirty_array[cmo_scan_way][cmo_scan_set] <= 1'b0;
             end
 
             // CMO INVAL: target set/way
@@ -831,6 +1006,19 @@ module kv32_dcache #(
     assign wb_way = (state == S_CMO_WB_AW || state == S_CMO_WB_W || state == S_CMO_WB_B)
                     ? cmo_scan_way : fill_way;
 
+    // Write-alloc fill merge: at beat 0 of a write-alloc store fill, merge the
+    // pending store bytes into the incoming AXI fill data.  Beat 0 of the WRAP
+    // burst always lands at {req_index, req_word_off} (critical word), which is
+    // exactly the word the store targets, so merging here is always correct.
+    logic [31:0] fill_wr_merged;
+    always_comb begin : l_fill_wr_merge
+        fill_wr_merged = axi_rdata;
+        if (req_we_r[0]) fill_wr_merged[ 7: 0] = req_wdata_r[ 7: 0];
+        if (req_we_r[1]) fill_wr_merged[15: 8] = req_wdata_r[15: 8];
+        if (req_we_r[2]) fill_wr_merged[23:16] = req_wdata_r[23:16];
+        if (req_we_r[3]) fill_wr_merged[31:24] = req_wdata_r[31:24];
+    end
+
     // SRAM CE/WE/addr/wdata
     for (genvar w = 0; w < DCACHE_WAYS; w++) begin : l_g_sram_ctrl
 
@@ -855,7 +1043,7 @@ module kv32_dcache #(
             (data_hit_we && hit_way == WAY_BITS'(w))
                 ? DATA_SRAM_ADDR_BITS'({req_index, req_word_off})
                 : (data_fill_we && fill_way == WAY_BITS'(w))
-                    ? DATA_SRAM_ADDR_BITS'({req_index, WORD_OFFSET_BITS'(req_word_off + fill_word_cnt)})
+                    ? DATA_SRAM_ADDR_BITS'({req_index, WORD_OFFSET_BITS'(fill_req_word_off_r + fill_word_cnt)})
                     : (evict_read_en && wb_way == WAY_BITS'(w))
                         ? DATA_SRAM_ADDR_BITS'({evict_read_index, evict_read_word})
                         : DATA_SRAM_ADDR_BITS'({sram_read_index, sram_read_word_off});
@@ -871,7 +1059,14 @@ module kv32_dcache #(
             if (req_we_r[3]) hit_wr_merged[31:24] = req_wdata_r[31:24];
         end
 
-        assign data_sram_wdata[w] = data_hit_we ? hit_wr_merged : axi_rdata;
+        // For write-alloc store fills, merge the store bytes into beat 0
+        // (the critical word) so the filled line immediately contains the
+        // correct store data without a separate read-modify-write cycle.
+        assign data_sram_wdata[w] = data_hit_we ? hit_wr_merged :
+            ((data_fill_we && (fill_way == WAY_BITS'(w)) &&
+              req_we_r != 4'b0000 && DCACHE_WRITE_ALLOC &&
+              fill_word_cnt == '0)
+             ? fill_wr_merged : axi_rdata);
     end
 
     // =========================================================================
@@ -908,7 +1103,8 @@ module kv32_dcache #(
     // =========================================================================
     // AXI: Read address channel (fills and bypass reads)
     // =========================================================================
-    assign axi_arvalid = (state == S_FILL_AR) || (state == S_BYPASS_RD);
+    assign axi_arvalid = (state == S_FILL_AR) ||
+                          (state == S_BYPASS_RD && !bypass_ar_sent_r);
     assign axi_araddr  = (state == S_FILL_AR)
                          ? {req_addr_r[31:2], 2'b00}     // CWF: start at critical word
                          : {req_addr_r[31:2], 2'b00};    // bypass: word-aligned
@@ -964,9 +1160,14 @@ module kv32_dcache #(
             evict_wbeat_cnt <= evict_wbeat_cnt + 1'b1;
     end
 
+    // For single-beat writes (WT / bypass), assert wvalid in the AW state too so that
+    // AW and W are presented simultaneously.  Only burst evictions/CMO-WB need to keep
+    // wvalid strictly in their own W state because SRAM data isn't ready yet.
     assign axi_wvalid  = (state == S_EVICT_W) ||
-                         (state == S_WT_W) ||
-                         (state == S_BYPASS_WR_W) ||
+                         (state == S_WT_AW)  ||   // simultaneous with AW (single-beat)
+                         (state == S_WT_W)   ||   // fallback if awready delayed
+                         (state == S_BYPASS_WR_AW) ||  // simultaneous with AW
+                         (state == S_BYPASS_WR_W) ||   // fallback if awready delayed
                          (state == S_CMO_WB_W);
 
     assign axi_wdata   = (state == S_EVICT_W || state == S_CMO_WB_W)
@@ -1047,8 +1248,17 @@ module kv32_dcache #(
     // =========================================================================
     // Core handshake outputs
     // =========================================================================
-    // Accept new request in S_IDLE
-    assign core_req_ready = (state == S_IDLE) && !cmo_valid_i;
+    // Accept new requests:
+    //   S_IDLE              – baseline
+    //   S_FILL_RESP (+fill) – fill-pending: back-to-back; primary resp consumed
+    //                         simultaneously (core_resp_ready) + same-line load
+    //   S_FILL_REST         – fill-pending: drain phase; same-line load
+    assign core_req_ready = ((state == S_IDLE) && !cmo_valid_i) ||
+                            // Fill-pending back-to-back: primary resp consumed this cycle
+                            (state == S_FILL_RESP && fill_active_r &&
+                             core_resp_ready && fill_pend_can_accept && !cmo_valid_i) ||
+                            // Fill-pending during burst drain
+                            (state == S_FILL_REST && fill_pend_can_accept && !cmo_valid_i);
 
     // Response valid
     assign core_resp_valid =
@@ -1058,8 +1268,12 @@ module kv32_dcache #(
         (state == S_HIT_WR) ||
         // Fill resp registered
         (state == S_FILL_RESP) ||
+        // Fill-pending: same-line load served directly from AXI bus (CWF beats 1+)
+        (state == S_FILL_REST && fill_pend_resp_r) ||
         // Hit read fallback when registered
         (state == S_HIT_RD) ||
+        // Bypass read: deliver response as soon as R data arrives (in-line path)
+        (state == S_BYPASS_RD && axi_rvalid && axi_rready && axi_rlast) ||
         // Bypass write done
         (state == S_BYPASS_WR_B && axi_bvalid && axi_bready) ||
         // WT write done
@@ -1067,19 +1281,39 @@ module kv32_dcache #(
 
     assign core_resp_data =
         (state == S_LOOKUP && use_dcache && cache_hit && req_we_r == 4'b0000)
-        ? hit_data : resp_data_r;
+        ? hit_data
+        : (state == S_FILL_REST && fill_pend_resp_r)
+          ? fill_pend_data_r    // CWF beat 1+: direct from AXI capture
+          : (state == S_BYPASS_RD && axi_rvalid)
+            ? axi_rdata         // Bypass read: forward directly from AXI bus
+            : resp_data_r;
 
     assign core_resp_error =
         (state == S_LOOKUP && use_dcache && cache_hit && req_we_r == 4'b0000)
-        ? 1'b0 : resp_error_r;
+        ? 1'b0
+        : (state == S_HIT_WR)
+          ? 1'b0   // cache hit write: SRAM stores never fail
+        : (state == S_FILL_REST && fill_pend_resp_r)
+          ? fill_pend_error_r
+          : (state == S_BYPASS_RD && axi_rvalid)
+            ? (axi_rresp != 2'b00)
+            : ((state == S_BYPASS_WR_B || state == S_WT_B) && axi_bvalid && axi_bready)
+              ? (axi_bresp != 2'b00)   // inline: bypass/WT write SLVERR visible same cycle as core_resp_valid
+              : resp_error_r;
 
     assign core_resp_is_write =
         (state == S_HIT_WR || state == S_BYPASS_WR_B || state == S_WT_B)
-        ? 1'b1 : resp_is_write_r;
+        ? 1'b1
+        : (state == S_LOOKUP && use_dcache && cache_hit && req_we_r == 4'b0000)
+          ? 1'b0    // load hit: always a read response, not a store completion
+        : (state == S_BYPASS_RD)
+          ? 1'b0    // bypass read: always a load response, never a write
+        : (state == S_FILL_REST && fill_pend_resp_r)
+          ? 1'b0    // fill-pend: always a load response
+          : resp_is_write_r;
 
     // CMO ready
-    assign cmo_ready_o = (state == S_CMO_DONE) ||
-                         (state == S_IDLE);
+    assign cmo_ready_o = (state == S_IDLE);
 
     // D-cache idle: no AXI transaction in-flight
     assign dcache_idle_o = (state == S_IDLE);
@@ -1099,12 +1333,16 @@ module kv32_dcache #(
                     `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] HIT addr=0x%h way=%0d %s",
                         req_addr_r, hit_way, (req_we_r != 4'b0000) ? "WR" : "RD"));
                 end else if (use_dcache && !cache_hit) begin
-                    `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] MISS addr=0x%h victim_way=%0d dirty=%b",
-                        req_addr_r, victim_way, victim_dirty));
+                    `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] MISS addr=0x%h we=0x%h victim_way=%0d dirty=%b",
+                        req_addr_r, req_we_r, victim_way, victim_dirty));
                 end else begin
                     `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] BYPASS addr=0x%h %s",
                         req_addr_r, (req_we_r != 4'b0000) ? "WR" : "RD"));
                 end
+            end
+            if (state == S_BYPASS_RD) begin
+                `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] S_BYPASS_RD: arvalid=%b arready=%b rvalid=%b rready=%b rlast=%b bypass_ar_sent=%b addr=0x%h",
+                    axi_arvalid, axi_arready, axi_rvalid, axi_rready, axi_rlast, bypass_ar_sent_r, req_addr_r));
             end
             if (state == S_FILL_AR && axi_arvalid && axi_arready) begin
                 `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] FILL AR addr=0x%h len=%0d", axi_araddr, axi_arlen));
@@ -1116,12 +1354,28 @@ module kv32_dcache #(
                 `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] FILL COMMIT way=%0d index=%0d tag=0x%h",
                     fill_way, req_index, req_tag));
             end
+            if (state == S_IDLE && cmo_valid_i && cmo_ready_o) begin
+                `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] CMO ACCEPTED(IDLE) addr=0x%h set=%0d op=%0d",
+                    cmo_addr_i,
+                    cmo_addr_i[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS],
+                    cmo_op_i));
+            end
+            if (state == S_CMO_DONE && cmo_valid_i && cmo_ready_o) begin
+                `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] CMO ACCEPTED(DONE) addr=0x%h set=%0d op=%0d",
+                    cmo_addr_i,
+                    cmo_addr_i[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS],
+                    cmo_op_i));
+            end
             if (state == S_CMO_SCAN) begin
                 `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] CMO_SCAN set=%0d way=%0d dirty=%b op=%0d",
                     cmo_scan_set, cmo_scan_way,
                     valid_array[cmo_scan_way][cmo_scan_set] &&
                     dirty_array[cmo_scan_way][cmo_scan_set],
                     cmo_op_r));
+            end
+            if (state == S_CMO_WB_AW && axi_awvalid && axi_awready) begin
+                `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] CMO_WB_AW addr=0x%h set=%0d way=%0d",
+                    axi_awaddr, cmo_scan_set, cmo_scan_way));
             end
             if (state == S_CMO_DONE) begin
                 `DEBUG2(`DBG_GRP_DCACHE, ("[DCACHE] CMO DONE op=%0d", cmo_op_r));
@@ -1164,6 +1418,38 @@ module kv32_dcache #(
 `endif
 
     // =========================================================================
+    // Debug probes: track set=55 operations (tohost @ 0x80010EE0 = {set=55,word=0})
+    // Enable with:  make DEBUG=1 rtl-coremark
+    // Filter:       make DEBUG=2 DEBUG_GROUP=0x40000 rtl-coremark
+    // =========================================================================
+`ifdef DEBUG
+    always_ff @(posedge clk) begin : dbg_set55
+        // Probe 1: any write to SRAM word-0 of set 55 (the tohost word position)
+        for (int dbg_w = 0; dbg_w < DCACHE_WAYS; dbg_w++) begin
+            if (data_sram_we[dbg_w] &&
+                data_sram_addr[dbg_w] == DATA_SRAM_ADDR_BITS'({6'd55, 3'd0})) begin
+                `DEBUG1(("[DCACHE-DBG] SRAM{55,0} way=%0d val=0x%08h hit=%b fill=%b cnt=%0d st=%0d req=0x%08h we=%b wdat=0x%08h fill_wo=%0d",
+                    dbg_w, data_sram_wdata[dbg_w],
+                    data_hit_we, data_fill_we, fill_word_cnt, state,
+                    req_addr_r, req_we_r, req_wdata_r, fill_req_word_off_r));
+            end
+        end
+        // Probe 2: every eviction beat from set=55 (shows what goes to AXI at tohost addr)
+        if ((state == S_EVICT_W) && axi_wvalid && axi_wready &&
+            req_index == 6'd55) begin
+            `DEBUG1(("[DCACHE-DBG] EVICT55 beat=%0d data=0x%08h evict_base=0x%08h way=%0d",
+                evict_wbeat_cnt, axi_wdata, evict_base_addr, wb_way_r));
+        end
+        // Probe 3: every fill beat into set=55 (shows what gets stored in SRAM)
+        if (data_fill_we && req_index == 6'd55) begin
+            `DEBUG1(("[DCACHE-DBG] FILL55 way=%0d cnt=%0d sram_val=0x%08h req=0x%08h we=%b wdat=0x%08h fill_wo=%0d",
+                fill_way, fill_word_cnt, data_sram_wdata[fill_way],
+                req_addr_r, req_we_r, req_wdata_r, fill_req_word_off_r));
+        end
+    end
+`endif // DEBUG
+
+    // =========================================================================
     // Formal / simulation assertions
     // =========================================================================
 `ifndef NO_ASSERTION
@@ -1198,7 +1484,10 @@ module kv32_dcache #(
 
     property p_no_multi_way_hit;
         @(posedge clk) disable iff (!rst_n)
-        $onehot0(way_hit);
+        // tag_sram_rdata is only consistent with req_index in S_LOOKUP (SRAM was
+        // read at new_req_index in S_IDLE; all other states may drive a different
+        // read address, e.g. cmo_scan_set during S_CMO_SCAN, causing false hits).
+        (state == S_LOOKUP) |-> $onehot0(way_hit);
     endproperty
     assert property (p_no_multi_way_hit)
         else $error("[DCACHE] Multiple ways hit simultaneously – tag aliasing!");
