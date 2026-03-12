@@ -39,11 +39,17 @@ foreach rtl_file $yosys_rtl_files {
 yosys read_verilog -sv -D SYNTHESIS -D NO_ASSERTION -D GENERIC_SRAM {*}$yosys_rtl_files
 
 puts "\n\[2/6\] Applying top parameters..."
-yosys chparam -set FAST_DIV          $FAST_DIV          $TOP_MODULE
-yosys chparam -set ICACHE_EN        $ICACHE_EN        $TOP_MODULE
-yosys chparam -set ICACHE_SIZE      $ICACHE_SIZE      $TOP_MODULE
-yosys chparam -set ICACHE_LINE_SIZE $ICACHE_LINE_SIZE $TOP_MODULE
-yosys chparam -set ICACHE_WAYS      $ICACHE_WAYS      $TOP_MODULE
+yosys chparam -set FAST_DIV           $FAST_DIV           $TOP_MODULE
+yosys chparam -set ICACHE_EN          $ICACHE_EN          $TOP_MODULE
+yosys chparam -set ICACHE_SIZE        $ICACHE_SIZE        $TOP_MODULE
+yosys chparam -set ICACHE_LINE_SIZE   $ICACHE_LINE_SIZE   $TOP_MODULE
+yosys chparam -set ICACHE_WAYS        $ICACHE_WAYS        $TOP_MODULE
+yosys chparam -set DCACHE_EN          $DCACHE_EN          $TOP_MODULE
+yosys chparam -set DCACHE_SIZE        $DCACHE_SIZE        $TOP_MODULE
+yosys chparam -set DCACHE_LINE_SIZE   $DCACHE_LINE_SIZE   $TOP_MODULE
+yosys chparam -set DCACHE_WAYS        $DCACHE_WAYS        $TOP_MODULE
+yosys chparam -set DCACHE_WRITE_BACK  $DCACHE_WRITE_BACK  $TOP_MODULE
+yosys chparam -set DCACHE_WRITE_ALLOC $DCACHE_WRITE_ALLOC $TOP_MODULE
 
 puts "\n\[3/6\] Hierarchy and checks..."
 yosys hierarchy -check -top $TOP_MODULE

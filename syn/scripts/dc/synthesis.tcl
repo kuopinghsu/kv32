@@ -29,11 +29,17 @@ set_app_var link_library   [concat * $TECH_LIB_FILES]
 
 # Apply top-level parameter overrides before analysis
 set_app_var hdl_parameter_override_list [list \
-    FAST_DIV          $FAST_DIV \
-    ICACHE_EN         $ICACHE_EN \
-    ICACHE_SIZE       $ICACHE_SIZE \
-    ICACHE_LINE_SIZE  $ICACHE_LINE_SIZE \
-    ICACHE_WAYS       $ICACHE_WAYS \
+    FAST_DIV           $FAST_DIV \
+    ICACHE_EN          $ICACHE_EN \
+    ICACHE_SIZE        $ICACHE_SIZE \
+    ICACHE_LINE_SIZE   $ICACHE_LINE_SIZE \
+    ICACHE_WAYS        $ICACHE_WAYS \
+    DCACHE_EN          $DCACHE_EN \
+    DCACHE_SIZE        $DCACHE_SIZE \
+    DCACHE_LINE_SIZE   $DCACHE_LINE_SIZE \
+    DCACHE_WAYS        $DCACHE_WAYS \
+    DCACHE_WRITE_BACK  $DCACHE_WRITE_BACK \
+    DCACHE_WRITE_ALLOC $DCACHE_WRITE_ALLOC \
 ]
 
 # Read RTL

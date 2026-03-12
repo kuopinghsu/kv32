@@ -54,6 +54,7 @@ set RTL_FILES [list \
     "$RTL_ROOT/mem_axi.sv" \
     "$RTL_ROOT/mem_axi_ro.sv" \
     "$RTL_ROOT/kv32_icache.sv" \
+    "$RTL_ROOT/kv32_dcache.sv" \
     "$RTL_ROOT/kv32_pm.sv" \
     "$RTL_ROOT/kv32_dtm.sv" \
     "$RTL_ROOT/jtag/jtag_tap.sv" \
@@ -67,6 +68,14 @@ set ICACHE_EN         1
 set ICACHE_SIZE       4096
 set ICACHE_LINE_SIZE  32
 set ICACHE_WAYS       2
+
+# D-Cache synthesis parameters (match RTL defaults in kv32_soc.sv)
+set DCACHE_EN          1
+set DCACHE_SIZE        4096
+set DCACHE_LINE_SIZE   32
+set DCACHE_WAYS        2
+set DCACHE_WRITE_BACK  1
+set DCACHE_WRITE_ALLOC 1
 
 # RTL synthesis parameters
 set FAST_DIV          0     ;# 0=serial divider, 1=combinatorial single-cycle
@@ -83,6 +92,18 @@ set DATA_SRAM_DEPTH [expr {$_num_sets * $_wpl}]
 set DATA_SRAM_WIDTH 32
 set OPENRAM_TAG_NAME  "sram_1rw_${TAG_SRAM_DEPTH}x${TAG_SRAM_WIDTH}"
 set OPENRAM_DATA_NAME "sram_1rw_${DATA_SRAM_DEPTH}x${DATA_SRAM_WIDTH}"
+
+# Derived D-cache SRAM dimensions — must match the D-cache parameters above.
+set _dcache_num_sets      [expr {$DCACHE_SIZE / ($DCACHE_LINE_SIZE * $DCACHE_WAYS)}]
+set _dcache_wpl           [expr {$DCACHE_LINE_SIZE / 4}]
+set _dcache_byte_off_bits [expr {int(log(double($DCACHE_LINE_SIZE)) / log(2.0))}]
+set _dcache_index_bits    [expr {int(log(double($_dcache_num_sets)) / log(2.0))}]
+set DCACHE_TAG_SRAM_DEPTH  $_dcache_num_sets
+set DCACHE_TAG_SRAM_WIDTH  [expr {32 - $_dcache_byte_off_bits - $_dcache_index_bits}]
+set DCACHE_DATA_SRAM_DEPTH [expr {$_dcache_num_sets * $_dcache_wpl}]
+set DCACHE_DATA_SRAM_WIDTH 32
+set OPENRAM_DCACHE_TAG_NAME  "sram_1rw_${DCACHE_TAG_SRAM_DEPTH}x${DCACHE_TAG_SRAM_WIDTH}"
+set OPENRAM_DCACHE_DATA_NAME "sram_1rw_${DCACHE_DATA_SRAM_DEPTH}x${DCACHE_DATA_SRAM_WIDTH}"
 
 # Flow outputs (tool-specific scripts can override to subdirs)
 set RESULTS_DIR [file join "results"]
@@ -207,7 +228,8 @@ proc kv32_resolve_openram_libs_for_corner {corner} {
     }
     set pfx [dict get $corner_map $corner]
     set result {}
-    foreach mem_name [list $OPENRAM_TAG_NAME $OPENRAM_DATA_NAME] {
+    foreach mem_name [list $OPENRAM_TAG_NAME $OPENRAM_DATA_NAME \
+                           $OPENRAM_DCACHE_TAG_NAME $OPENRAM_DCACHE_DATA_NAME] {
         set candidates [glob -nocomplain \
             [file join $OPENRAM_DIR "${mem_name}_${pfx}_*.lib"]]
         if {[llength $candidates] == 0} {
@@ -239,7 +261,8 @@ set OPENRAM_DIR_FALLBACK [file normalize $SYN_LIB_ROOT]
 set OPENRAM_RTL_FILES {}
 
 # Verilog functional models (needed by Yosys; Liberty-based tools use .lib).
-foreach mem_name [list $OPENRAM_TAG_NAME $OPENRAM_DATA_NAME] {
+foreach mem_name [list $OPENRAM_TAG_NAME $OPENRAM_DATA_NAME \
+                       $OPENRAM_DCACHE_TAG_NAME $OPENRAM_DCACHE_DATA_NAME] {
     set vlog_f [file join $OPENRAM_DIR "${mem_name}.v"]
     if {![file exists $vlog_f]} {
         set vlog_f [file join $OPENRAM_DIR_FALLBACK "${mem_name}.v"]
@@ -267,8 +290,10 @@ puts "  Target: $TARGET_FREQ_MHZ MHz (period=${CLOCK_PERIOD}ns)"
 puts "  PDK: $PDK ($PROCESS_NODE nm, $CELL_LIBRARY)"
 puts "  Active corner: $ACTIVE_CORNER"
 puts "  SRAM macros:"
-puts "    tag  SRAM: $OPENRAM_TAG_NAME  (${TAG_SRAM_DEPTH}x${TAG_SRAM_WIDTH})"
-puts "    data SRAM: $OPENRAM_DATA_NAME (${DATA_SRAM_DEPTH}x${DATA_SRAM_WIDTH})"
+puts "    I$ tag  SRAM: $OPENRAM_TAG_NAME  (${TAG_SRAM_DEPTH}x${TAG_SRAM_WIDTH})"
+puts "    I$ data SRAM: $OPENRAM_DATA_NAME (${DATA_SRAM_DEPTH}x${DATA_SRAM_WIDTH})"
+puts "    D$ tag  SRAM: $OPENRAM_DCACHE_TAG_NAME  (${DCACHE_TAG_SRAM_DEPTH}x${DCACHE_TAG_SRAM_WIDTH})"
+puts "    D$ data SRAM: $OPENRAM_DCACHE_DATA_NAME (${DCACHE_DATA_SRAM_DEPTH}x${DCACHE_DATA_SRAM_WIDTH})"
 if {[llength $OPENRAM_LIB_FILES] > 0} {
     puts "    OpenRAM libs: [llength $OPENRAM_LIB_FILES] file(s) found"
 } else {

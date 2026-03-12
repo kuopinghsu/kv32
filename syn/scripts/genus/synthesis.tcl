@@ -168,11 +168,17 @@ proc kv32_build_param_list {sv_file overrides} {
 # Synthesis overrides — only list parameters that differ from the RTL defaults.
 # Adding/removing/reordering parameters in kv32_soc.sv requires NO change here.
 set _param_overrides [dict create \
-    FAST_DIV         $FAST_DIV         \
-    ICACHE_EN        $ICACHE_EN        \
-    ICACHE_SIZE      $ICACHE_SIZE      \
-    ICACHE_LINE_SIZE $ICACHE_LINE_SIZE \
-    ICACHE_WAYS      $ICACHE_WAYS      \
+    FAST_DIV          $FAST_DIV          \
+    ICACHE_EN         $ICACHE_EN         \
+    ICACHE_SIZE       $ICACHE_SIZE       \
+    ICACHE_LINE_SIZE  $ICACHE_LINE_SIZE  \
+    ICACHE_WAYS       $ICACHE_WAYS       \
+    DCACHE_EN         $DCACHE_EN         \
+    DCACHE_SIZE       $DCACHE_SIZE       \
+    DCACHE_LINE_SIZE  $DCACHE_LINE_SIZE  \
+    DCACHE_WAYS       $DCACHE_WAYS       \
+    DCACHE_WRITE_BACK  $DCACHE_WRITE_BACK  \
+    DCACHE_WRITE_ALLOC $DCACHE_WRITE_ALLOC \
 ]
 
 set _top_sv [file join [file normalize [file join $SYN_DIR .. rtl]] "kv32_soc.sv"]

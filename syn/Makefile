@@ -28,6 +28,11 @@ ICACHE_SIZE      ?= 4096
 ICACHE_LINE_SIZE ?= 32
 ICACHE_WAYS      ?= 2
 
+# D-cache parameters forwarded to gen-mem (must match syn/common/design.tcl)
+DCACHE_SIZE      ?= 4096
+DCACHE_LINE_SIZE ?= 32
+DCACHE_WAYS      ?= 2
+
 # Tool binaries (override in env.config if needed)
 YOSYS ?= yosys
 GENUS ?= genus
@@ -143,6 +148,9 @@ gen-mem:
 	@echo "  ICACHE_SIZE:      $(ICACHE_SIZE)"
 	@echo "  ICACHE_LINE_SIZE: $(ICACHE_LINE_SIZE)"
 	@echo "  ICACHE_WAYS:      $(ICACHE_WAYS)"
+	@echo "  DCACHE_SIZE:      $(DCACHE_SIZE)"
+	@echo "  DCACHE_LINE_SIZE: $(DCACHE_LINE_SIZE)"
+	@echo "  DCACHE_WAYS:      $(DCACHE_WAYS)"
 	@echo "========================================"
 	@if [ ! -d "$(OPENRAM)" ]; then \
 	  echo "ERROR: OPENRAM not found at '$(OPENRAM)'"; \
@@ -159,6 +167,9 @@ gen-mem:
 	  --icache-size $(ICACHE_SIZE) \
 	  --icache-line-size $(ICACHE_LINE_SIZE) \
 	  --icache-ways $(ICACHE_WAYS) \
+	  --dcache-size $(DCACHE_SIZE) \
+	  --dcache-line-size $(DCACHE_LINE_SIZE) \
+	  --dcache-ways $(DCACHE_WAYS) \
 	  --pdk $(PDK) \
 	  --output-dir lib/openram
 	@if [ ! -f "$(VENV_DIR)/bin/activate" ]; then \
@@ -178,6 +189,18 @@ gen-mem:
 	  OPENRAM_HOME=$(OPENRAM)/compiler OPENRAM_TECH=$(OPENRAM)/technology \
 	  PYTHONPATH=$(OPENRAM)/compiler \
 	  python3 $(OPENRAM)/sram_compiler.py openram_data_sram.py
+	@echo "Running OpenRAM for D-cache tag SRAM..."
+	@cd lib/openram && \
+	  . $(VENV_DIR)/bin/activate && \
+	  OPENRAM_HOME=$(OPENRAM)/compiler OPENRAM_TECH=$(OPENRAM)/technology \
+	  PYTHONPATH=$(OPENRAM)/compiler \
+	  python3 $(OPENRAM)/sram_compiler.py openram_dcache_tag_sram.py
+	@echo "Running OpenRAM for D-cache data SRAM..."
+	@cd lib/openram && \
+	  . $(VENV_DIR)/bin/activate && \
+	  OPENRAM_HOME=$(OPENRAM)/compiler OPENRAM_TECH=$(OPENRAM)/technology \
+	  PYTHONPATH=$(OPENRAM)/compiler \
+	  python3 $(OPENRAM)/sram_compiler.py openram_dcache_data_sram.py
 	@echo "========================================"
 	@echo "OpenRAM macros generated in lib/openram/"
 	@echo "Run 'make synth' to use the generated macros."
@@ -232,7 +255,8 @@ help:
 	@echo "  LIB_ROOT      = pdk (default)"
 	@echo "  OPENRAM       = /opt/OpenRAM (default; set in env.config)"
 	@echo "  VENV_DIR      = $(VENV_DIR) (local venv, created by openram-setup)"
-	@echo "  ICACHE_SIZE / ICACHE_LINE_SIZE / ICACHE_WAYS  (for gen-mem)"
+	@echo "  ICACHE_SIZE / ICACHE_LINE_SIZE / ICACHE_WAYS  (for gen-mem, I-cache)"
+	@echo "  DCACHE_SIZE / DCACHE_LINE_SIZE / DCACHE_WAYS  (for gen-mem, D-cache)"
 	@echo ""
 	@echo "Notes:"
 	@echo "  - Use build/reports/<tool>/ and build/results/<tool>/ for outputs"
