@@ -80,18 +80,18 @@ set DCACHE_WRITE_ALLOC 1
 # RTL synthesis parameters
 set FAST_DIV          0     ;# 0=serial divider, 1=combinatorial single-cycle
 
-# Derived SRAM dimensions — must match the I-cache parameters above.
+# Derived I-cache SRAM dimensions — must match the I-cache parameters above.
 # Used to locate OpenRAM-generated macro files and select the correct wrapper.
-set _num_sets      [expr {$ICACHE_SIZE / ($ICACHE_LINE_SIZE * $ICACHE_WAYS)}]
-set _wpl           [expr {$ICACHE_LINE_SIZE / 4}]
-set _byte_off_bits [expr {int(log(double($ICACHE_LINE_SIZE)) / log(2.0))}]
-set _index_bits    [expr {int(log(double($_num_sets))        / log(2.0))}]
-set TAG_SRAM_DEPTH  $_num_sets
-set TAG_SRAM_WIDTH  [expr {32 - $_byte_off_bits - $_index_bits}]
-set DATA_SRAM_DEPTH [expr {$_num_sets * $_wpl}]
-set DATA_SRAM_WIDTH 32
-set OPENRAM_TAG_NAME  "sram_1rw_${TAG_SRAM_DEPTH}x${TAG_SRAM_WIDTH}"
-set OPENRAM_DATA_NAME "sram_1rw_${DATA_SRAM_DEPTH}x${DATA_SRAM_WIDTH}"
+set _icache_num_sets      [expr {$ICACHE_SIZE / ($ICACHE_LINE_SIZE * $ICACHE_WAYS)}]
+set _icache_wpl           [expr {$ICACHE_LINE_SIZE / 4}]
+set _icache_byte_off_bits [expr {int(log(double($ICACHE_LINE_SIZE)) / log(2.0))}]
+set _icache_index_bits    [expr {int(log(double($_icache_num_sets)) / log(2.0))}]
+set ICACHE_TAG_SRAM_DEPTH  $_icache_num_sets
+set ICACHE_TAG_SRAM_WIDTH  [expr {32 - $_icache_byte_off_bits - $_icache_index_bits}]
+set ICACHE_DATA_SRAM_DEPTH [expr {$_icache_num_sets * $_icache_wpl}]
+set ICACHE_DATA_SRAM_WIDTH 32
+set OPENRAM_ICACHE_TAG_NAME  "sram_1rw_${ICACHE_TAG_SRAM_DEPTH}x${ICACHE_TAG_SRAM_WIDTH}"
+set OPENRAM_ICACHE_DATA_NAME "sram_1rw_${ICACHE_DATA_SRAM_DEPTH}x${ICACHE_DATA_SRAM_WIDTH}"
 
 # Derived D-cache SRAM dimensions — must match the D-cache parameters above.
 set _dcache_num_sets      [expr {$DCACHE_SIZE / ($DCACHE_LINE_SIZE * $DCACHE_WAYS)}]
@@ -221,14 +221,14 @@ proc kv32_available_corners {} {
 # Used by all Liberty-based tool flows (Genus, DC) for both the active corner
 # and per-corner MCMM timing sweeps.
 proc kv32_resolve_openram_libs_for_corner {corner} {
-    global OPENRAM_TAG_NAME OPENRAM_DATA_NAME OPENRAM_DIR OPENRAM_DIR_FALLBACK
+    global OPENRAM_ICACHE_TAG_NAME OPENRAM_ICACHE_DATA_NAME OPENRAM_DIR OPENRAM_DIR_FALLBACK
     set corner_map {tt TT  ss SS  ff FF}
     if {![dict exists $corner_map $corner]} {
         error "kv32_resolve_openram_libs_for_corner: unknown corner '$corner'"
     }
     set pfx [dict get $corner_map $corner]
     set result {}
-    foreach mem_name [list $OPENRAM_TAG_NAME $OPENRAM_DATA_NAME \
+    foreach mem_name [list $OPENRAM_ICACHE_TAG_NAME $OPENRAM_ICACHE_DATA_NAME \
                            $OPENRAM_DCACHE_TAG_NAME $OPENRAM_DCACHE_DATA_NAME] {
         set candidates [glob -nocomplain \
             [file join $OPENRAM_DIR "${mem_name}_${pfx}_*.lib"]]
@@ -261,7 +261,7 @@ set OPENRAM_DIR_FALLBACK [file normalize $SYN_LIB_ROOT]
 set OPENRAM_RTL_FILES {}
 
 # Verilog functional models (needed by Yosys; Liberty-based tools use .lib).
-foreach mem_name [list $OPENRAM_TAG_NAME $OPENRAM_DATA_NAME \
+foreach mem_name [list $OPENRAM_ICACHE_TAG_NAME $OPENRAM_ICACHE_DATA_NAME \
                        $OPENRAM_DCACHE_TAG_NAME $OPENRAM_DCACHE_DATA_NAME] {
     set vlog_f [file join $OPENRAM_DIR "${mem_name}.v"]
     if {![file exists $vlog_f]} {
@@ -290,8 +290,8 @@ puts "  Target: $TARGET_FREQ_MHZ MHz (period=${CLOCK_PERIOD}ns)"
 puts "  PDK: $PDK ($PROCESS_NODE nm, $CELL_LIBRARY)"
 puts "  Active corner: $ACTIVE_CORNER"
 puts "  SRAM macros:"
-puts "    I$ tag  SRAM: $OPENRAM_TAG_NAME  (${TAG_SRAM_DEPTH}x${TAG_SRAM_WIDTH})"
-puts "    I$ data SRAM: $OPENRAM_DATA_NAME (${DATA_SRAM_DEPTH}x${DATA_SRAM_WIDTH})"
+    puts "    I$ tag  SRAM: $OPENRAM_ICACHE_TAG_NAME  (${ICACHE_TAG_SRAM_DEPTH}x${ICACHE_TAG_SRAM_WIDTH})"
+    puts "    I$ data SRAM: $OPENRAM_ICACHE_DATA_NAME (${ICACHE_DATA_SRAM_DEPTH}x${ICACHE_DATA_SRAM_WIDTH})"
 puts "    D$ tag  SRAM: $OPENRAM_DCACHE_TAG_NAME  (${DCACHE_TAG_SRAM_DEPTH}x${DCACHE_TAG_SRAM_WIDTH})"
 puts "    D$ data SRAM: $OPENRAM_DCACHE_DATA_NAME (${DCACHE_DATA_SRAM_DEPTH}x${DCACHE_DATA_SRAM_WIDTH})"
 if {[llength $OPENRAM_LIB_FILES] > 0} {
