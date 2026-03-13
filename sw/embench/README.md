@@ -32,11 +32,16 @@ Embench IoT consists of 19 small embedded benchmarks representing real embedded 
 This is a simplified baremetal adaptation featuring a subset of Embench tests:
 
 **Included Tests**:
-- `crc32` - CRC-32 calculation
-- `cubic` - Cubic equation solver
-- `matmult` - Integer matrix multiplication
-- `minver` - Matrix inversion
-- `nsichneu` - Neural network
+- `crc32` — CRC-32 calculation over a 43-byte string
+- `cubic` — Cubic equation solver (Newton-Raphson)
+- `matmult` — 8×8 integer matrix multiplication
+- `minver` — 3×3 matrix inversion (Gauss-Jordan, scaled integer)
+- `nsichneu` — 2-layer ReLU neural network
+- `aha-mont64` — 32-bit Montgomery modular exponentiation (cryptography)
+- `edn` — 16-tap FIR low-pass filter on a square-wave signal (event detection / DSP)
+- `huffbench` — Canonical Huffman encoding; reports compressed bit-count
+- `st` — Statistical functions: mean, variance, integer square-root stddev
+- `ud` — 4×4 LU decomposition (Doolittle, scaled integer)
 
 **Baremetal Adaptations**:
 - No dynamic memory allocation

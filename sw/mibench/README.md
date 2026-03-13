@@ -20,10 +20,13 @@ This is a simplified baremetal adaptation featuring a subset of MiBench:
 
 **Included Benchmarks**:
 - **qsort**: Quicksort algorithm (automotive)
-- **dijkstra**: Shortest path algorithm (network)
-- **blowfish**: Encryption (security)
-- **crc**: CRC calculation (telecom)
-- **fft**: Fast Fourier Transform (telecom)
+- **dijkstra**: Shortest path algorithm — 16-node graph (network)
+- **blowfish**: Blowfish block cipher encryption (security)
+- **fft**: Integer butterfly FFT (telecomm)
+- **sha1**: SHA-1 cryptographic hash — verified against golden digest (security)
+- **bitcount**: Bit population count — 3 methods: shift, Wegner, parallel (automotive)
+- **adpcm**: IMA-ADPCM audio codec — encode + decode roundtrip (telecomm)
+- **stringsearch**: Knuth-Morris-Pratt exact pattern match — 7 patterns (office)
 
 **Baremetal Adaptations**:
 - No file I/O - data embedded in code

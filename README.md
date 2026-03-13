@@ -154,12 +154,12 @@ kv32/
 │   ├── trace_compare.py    # Compare RTL vs software simulator traces
 │   ├── trace_resync.py     # Re-synchronise diverged traces
 │   ├── parse_call_trace.py # Parse call-graph traces
-│   ├── cache_benchmark.sh  # I-cache / D-cache benchmark runner
+│   ├── cache_benchmark_v2.sh # I-cache / D-cache benchmark sweep
 │   └── doxygen_sv_filter.py # Doxygen pre-filter for SystemVerilog
 ├── docs/                   # Documentation
 │   ├── pipeline_architecture.md   # 5-stage pipeline design
 │   ├── cache_architecture.md      # I-cache and D-cache architecture
-│   ├── icache_benchmark_report.md # I-cache benchmark results
+│   ├── cache_benchmark_report.md  # I-cache + D-cache benchmark results
 │   ├── jtag_cjtag_integration.md  # JTAG/cJTAG debug interface guide
 │   ├── kv32_soc_datasheet.adoc    # SoC datasheet (register maps, parameters)
 │   └── sdk_api_reference.adoc     # Software SDK API reference
@@ -444,7 +444,7 @@ Detailed documentation is available in the [docs/](docs/) directory:
 
 - **[Pipeline Architecture](docs/pipeline_architecture.md)**: 5-stage pipeline, data forwarding, hazard handling, pipeline registers, performance characteristics
 - **[Cache Architecture](docs/cache_architecture.md)**: I-cache and D-cache design — parameters, address decomposition, state machines, CMO, PMA, FENCE.I
-- **[I-Cache Benchmark Report](docs/icache_benchmark_report.md)**: Hit-rate and performance measurements across test programs
+- **[Cache Benchmark Report](docs/cache_benchmark_report.md)**: I-cache + D-cache hit-rate and CPI measurements across SRAM/DDR4 memory types
 - **[JTAG/cJTAG Integration](docs/jtag_cjtag_integration.md)**: Debug interface architecture, DTM register map, abstract commands, SBA, OpenOCD/GDB setup
 - **[SoC Datasheet](docs/kv32_soc_datasheet.adoc)**: Full register maps, peripheral descriptions, SoC parameters
 - **[SDK API Reference](docs/sdk_api_reference.adoc)**: Software driver API for all on-chip peripherals

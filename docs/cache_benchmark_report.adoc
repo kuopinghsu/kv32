@@ -1,25 +1,42 @@
 = KV32 Cache Hierarchy Benchmark Report
+KV32 Architecture Team
 :doctype: article
-:toc: left
-:toclevels: 3
-:icons: font
+:revnumber: 1.0
 :revdate: 2026-03-12
+:revremark: Initial Release
 :description: KV32 RISC-V processor — comprehensive I-cache / D-cache benchmark technical guide
-:nofooter:
+:toc: macro
+:toc-title: Table of Contents
+:toclevels: 3
+:sectnums:
+:sectanchors:
+:icons: font
 :imagesdir: images
 :chart-on-error: log
+:pdf-page-size: A4
+:title-page:
 
-[NOTE]
-====
-Charts in this document require `asciidoctor-diagram`:
+[abstract]
+== Abstract
 
-  gem install asciidoctor-diagram
-  npm install -g vega-lite vega-cli
-  asciidoctor-pdf -r asciidoctor-diagram cache_benchmark_report.adoc
+This report presents a comprehensive benchmarking study of the I-cache and
+D-cache hierarchy of the KV32 RV32IMAC in-order processor.  Thirteen cache
+configurations spanning 4 KB to 32 KB total capacity were evaluated across
+six benchmarks and three memory back-ends (SRAM, DDR4-1600, DDR4-3200) for a
+total of 234 simulation runs.  The key finding is that IC-8K+DC-8K (16 KB
+symmetric, 2-way LRU) is the recommended default: it eliminates 90%+ of the
+no-cache penalty on DDR4 and provides the best balance of performance, silicon
+area, and workload generality.  Configurations below 4K+4K are not
+recommended; configurations above 8K+8K yield diminishing returns for most
+embedded workloads.
 
-Raw data: `build/cache_bench_v2/results.csv` (234 runs, all PASS).
-====
+[%autowidth,stripes=even]
+|===
+| Revision | Date       | Author                 | Changes
+| 1.0      | 2026-03-12 | KV32 Architecture Team | Initial release — 234-run full sweep, 13 configurations, 3 memory back-ends
+|===
 
+toc::[]
 
 == Overview
 
@@ -80,8 +97,8 @@ parameterised at synthesis time via three top-level RTL parameters:
 |===
 
 The number of sets and tag-bit width are derived as:
-`NUM_SETS = CACHE_SIZE / (CACHE_LINE_SIZE × CACHE_WAYS)` and
-`TAG_BITS = 32 − log₂(NUM_SETS) − 5` (where 5 = log₂(32) byte-offset bits).
+`NUM_SETS = CACHE_SIZE / (CACHE_LINE_SIZE * CACHE_WAYS)` and
+`TAG_BITS = 32 - log~2~(NUM_SETS) - 5` (where 5 = log~2~(32) byte-offset bits).
 
 [cols="3,1,1,1,1",options="header",stripes=even]
 |===
@@ -97,8 +114,8 @@ The number of sets and tag-bit width are derived as:
 *I-Cache State Machine (read-only, no writeback):*
 
 ----
-S_IDLE → S_LOOKUP → S_HIT_RD                              (hit: data forwarded next cycle)
-                  ↘ S_FILL_AR → S_FILL_R → S_IDLE         (miss: WRAP8 AXI read burst)
+S_IDLE → S_LOOKUP → S_HIT_RD                       (hit: data forwarded next cycle)
+                  → S_FILL_AR → S_FILL_R → S_IDLE  (miss: WRAP8 AXI read burst)
 ----
 
 On a miss the cache controller issues an 8-beat WRAP burst anchored at the
@@ -313,7 +330,7 @@ artefacts that could introduce cross-configuration measurement noise.
 
 | `dhry`
 | Dhrystone 2.1; 500 000 iterations; cycle count from RISC-V `mcycle` CSR;
-  compiled text footprint ≈ 3-4 KB; data working set < 1 KB.
+  compiled text footprint ~3-4 KB; data working set < 1 KB.
 
 | `coremark`
 | CoreMark v1.0; `TOTAL_DATA_SIZE=2000` bytes; static working set;
@@ -321,7 +338,7 @@ artefacts that could introduce cross-configuration measurement noise.
 
 | `embench`
 | EMBench benchmark suite; kernels compiled `--without-libm`;
-  individual data arrays ≤ 2 KB; full code footprint fits in IC-4K.
+  individual data arrays <=2 KB; full code footprint fits in IC-4K.
 
 | `mibench`
 | Selected subset: `basicmath`, `bitcount`, `qsort`, `susan`;
@@ -332,7 +349,7 @@ artefacts that could introduce cross-configuration measurement noise.
   div/mul under preemption); supervisor task (prio 2) plus up to 4
   concurrent sub-tasks spawned sequentially (`MRTOS_MAX_TASKS=8`);
   all TCBs/stacks statically allocated; tick tuned per memory back-end
-  for Test 4 stress tick: SRAM dual-port = `5000 × MEM_READ_LATENCY`
+  for Test 4 stress tick: SRAM dual-port = `5000 * MEM_READ_LATENCY`
   mtime ticks, DDR4 = 50 000-75 000 mtime ticks, to prevent
   ISR flood from masking cache behaviour.
 
@@ -371,7 +388,7 @@ catastrophic: CPI reaches 16-19x because every instruction fetch and every
 load/store must pay the full DDR row-access penalty.  At these CPI values,
 the processor is stalled for more than 90% of all cycles.
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "title": "No-Cache CPI by Memory Back-End",
@@ -430,7 +447,6 @@ DDR4-1600 without caches costs approximately 10x as many cycles compared
 with the same memory with IC-8K+DC-8K.  The die area for an 8 KB SRAM is
 recovered in milliseconds of typical runtime at these performance penalties.
 
-
 == Cache Performance by Configuration
 
 === CPI for Symmetric Cache Configurations (SRAM)
@@ -455,7 +471,7 @@ This non-linearity is the knee-of-the-curve effect: the most commonly
 reused cache lines already fit in 4 KB; larger caches capture only
 infrequently reused long-tail lines.
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -527,7 +543,7 @@ baseline.
 | IC-16K+DC-16K  | 1.48 |     1.53 | 1.20 |       1.32 |    1.30 |    1.36
 |===
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -594,7 +610,7 @@ more than raw cache size once the hot working set is fully captured.
 | IC-16K+DC-16K  |  99.88 |    99.88 |  99.92 |      99.99 |   99.33 |   99.79
 |===
 
-All benchmarks achieve ≥ 99% I-cache hit rate even at the smallest IC-4K
+All benchmarks achieve >=99% I-cache hit rate even at the smallest IC-4K
 configuration.  Instruction-dominated workloads (`dhry`, `cachebench`) are
 essentially fully captured at 4 KB already.  `rtos` benefits the most from a
 larger I-cache: the kernel code (scheduler, context-switch handlers) spans
@@ -623,67 +639,6 @@ capacity is needed.
 `cachebench` improves from 94.18% at DC-4K to 97.47% at DC-16K because the
 8 KB and 16 KB dataset sweeps fit progressively better in the larger D-cache,
 reducing the conflict-miss fraction for those size points.
-
-[vegalite, format=svg]
-----
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "title": "I-Cache and D-Cache Hit Rate by Configuration (SRAM, 2-Way)",
-  "facet": {"field": "type", "type": "nominal", "title": "Cache Type"},
-  "data": {
-    "values": [
-      {"benchmark": "dhry",       "config": "IC-4K+DC-4K",   "type": "I-Cache", "hit": 99.88},
-      {"benchmark": "coremark",   "config": "IC-4K+DC-4K",   "type": "I-Cache", "hit": 99.55},
-      {"benchmark": "rtos",       "config": "IC-4K+DC-4K",   "type": "I-Cache", "hit": 99.26},
-      {"benchmark": "cachebench", "config": "IC-4K+DC-4K",   "type": "I-Cache", "hit": 99.99},
-      {"benchmark": "embench",    "config": "IC-4K+DC-4K",   "type": "I-Cache", "hit": 99.27},
-      {"benchmark": "mibench",    "config": "IC-4K+DC-4K",   "type": "I-Cache", "hit": 99.77},
-      {"benchmark": "dhry",       "config": "IC-8K+DC-8K",   "type": "I-Cache", "hit": 99.88},
-      {"benchmark": "coremark",   "config": "IC-8K+DC-8K",   "type": "I-Cache", "hit": 99.76},
-      {"benchmark": "rtos",       "config": "IC-8K+DC-8K",   "type": "I-Cache", "hit": 99.89},
-      {"benchmark": "cachebench", "config": "IC-8K+DC-8K",   "type": "I-Cache", "hit": 99.99},
-      {"benchmark": "embench",    "config": "IC-8K+DC-8K",   "type": "I-Cache", "hit": 99.33},
-      {"benchmark": "mibench",    "config": "IC-8K+DC-8K",   "type": "I-Cache", "hit": 99.79},
-      {"benchmark": "dhry",       "config": "IC-16K+DC-16K", "type": "I-Cache", "hit": 99.88},
-      {"benchmark": "coremark",   "config": "IC-16K+DC-16K", "type": "I-Cache", "hit": 99.88},
-      {"benchmark": "rtos",       "config": "IC-16K+DC-16K", "type": "I-Cache", "hit": 99.92},
-      {"benchmark": "cachebench", "config": "IC-16K+DC-16K", "type": "I-Cache", "hit": 99.99},
-      {"benchmark": "embench",    "config": "IC-16K+DC-16K", "type": "I-Cache", "hit": 99.33},
-      {"benchmark": "mibench",    "config": "IC-16K+DC-16K", "type": "I-Cache", "hit": 99.79},
-      {"benchmark": "dhry",       "config": "IC-4K+DC-4K",   "type": "D-Cache", "hit": 93.46},
-      {"benchmark": "coremark",   "config": "IC-4K+DC-4K",   "type": "D-Cache", "hit": 99.49},
-      {"benchmark": "rtos",       "config": "IC-4K+DC-4K",   "type": "D-Cache", "hit": 96.36},
-      {"benchmark": "cachebench", "config": "IC-4K+DC-4K",   "type": "D-Cache", "hit": 94.18},
-      {"benchmark": "embench",    "config": "IC-4K+DC-4K",   "type": "D-Cache", "hit": 88.03},
-      {"benchmark": "mibench",    "config": "IC-4K+DC-4K",   "type": "D-Cache", "hit": 92.38},
-      {"benchmark": "dhry",       "config": "IC-8K+DC-8K",   "type": "D-Cache", "hit": 93.46},
-      {"benchmark": "coremark",   "config": "IC-8K+DC-8K",   "type": "D-Cache", "hit": 99.52},
-      {"benchmark": "rtos",       "config": "IC-8K+DC-8K",   "type": "D-Cache", "hit": 96.56},
-      {"benchmark": "cachebench", "config": "IC-8K+DC-8K",   "type": "D-Cache", "hit": 95.82},
-      {"benchmark": "embench",    "config": "IC-8K+DC-8K",   "type": "D-Cache", "hit": 88.06},
-      {"benchmark": "mibench",    "config": "IC-8K+DC-8K",   "type": "D-Cache", "hit": 92.66},
-      {"benchmark": "dhry",       "config": "IC-16K+DC-16K", "type": "D-Cache", "hit": 93.46},
-      {"benchmark": "coremark",   "config": "IC-16K+DC-16K", "type": "D-Cache", "hit": 99.55},
-      {"benchmark": "rtos",       "config": "IC-16K+DC-16K", "type": "D-Cache", "hit": 96.63},
-      {"benchmark": "cachebench", "config": "IC-16K+DC-16K", "type": "D-Cache", "hit": 97.47},
-      {"benchmark": "embench",    "config": "IC-16K+DC-16K", "type": "D-Cache", "hit": 88.06},
-      {"benchmark": "mibench",    "config": "IC-16K+DC-16K", "type": "D-Cache", "hit": 92.66}
-    ]
-  },
-  "spec": {
-    "width": 340,
-    "height": 200,
-    "mark": "bar",
-    "encoding": {
-      "x":       {"field": "benchmark", "type": "nominal",      "title": "Benchmark"},
-      "xOffset": {"field": "config",    "type": "nominal"},
-      "y":       {"field": "hit",       "type": "quantitative", "title": "Hit Rate (%)",
-                   "scale": {"zero": false, "domain": [85, 100]}},
-      "color":   {"field": "config",    "type": "nominal",      "title": "Config"}
-    }
-  }
-}
-----
 
 == Benchmark-by-Benchmark Cache Behaviour Analysis
 
@@ -825,7 +780,6 @@ and FFT twiddle tables exercise slightly larger data sets.
 *Recommendation:* IC-4K+DC-8K is a cost-effective split, improving D-cache
 hit rate from 88% to ~88%, a slight improvement in conflict misses.
 
-
 == Impact of Memory Back-End
 
 The CPI values reported so far use SRAM as the memory back-end.  Real
@@ -864,10 +818,10 @@ memory controller must follow this sequence:
   follow at one beat per DDR4 clock
 
 The composite row-open latency is `READ_LAT = tRCD_cycles + CL_cycles`.  For
-DDR4-3200, `tRCD` in DDR4 cycles is 23 (= ⌈14 ns / 0.625 ns/cycle⌉) and
+DDR4-3200, `tRCD` in DDR4 cycles is 23 (= ceil(14 ns / 0.625 ns/cycle)) and
 CL = 22 cycles, giving READ_LAT = 45 DDR4 cycles.  Although CL doubles in
 cycles from DDR4-1600 to DDR4-3200, the absolute latency in nanoseconds is
-unchanged (CL × tCK = 11 × 1.25 ns ≈ 22 × 0.625 ns ≈ 13.75 ns): DDR4-3200
+unchanged (CL x tCK = 11 x 1.25 ns ~ 22 x 0.625 ns ~ 13.75 ns): DDR4-3200
 runs its DRAM clock twice as fast, so the same physical latency demands twice
 as many cycles.
 
@@ -879,7 +833,7 @@ for DDR4-1600 and DDR4-3200 differs by less than 0.2 CPI in all benchmarks.
 *Key takeaway:* On DDR4, the tRCD + CL + 8-beat burst dominates every miss.
 This makes the miss *rate*, not the DDR4 speed grade, the primary lever for
 improving DDR4-attached performance -- and is the reason caches provide a
-9-10× speedup on DDR4 but only a 1.3-1.5× speedup on SRAM.
+9-10x speedup on DDR4 but only a 1.3-1.5x speedup on SRAM.
 
 === CPI with IC-16K+DC-16K by Memory Back-End
 
@@ -901,7 +855,7 @@ regime.  At 99%+ hit rates, the few remaining misses that reach DRAM are rare
 enough that the difference in raw bandwidth between 1600 and 3200 makes no
 measurable difference at the 2-decimal CPI granularity.
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -952,7 +906,7 @@ expressed as the ratio of the no-cache DDR4 CPI to the IC-8K+DC-8K DDR4 CPI.
 | DDR4-3200     |  9.61 |    10.15 | 9.08 |       9.03 |    8.71 |   10.01
 |===
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -994,7 +948,7 @@ most compelling argument for mandatory caches in any DDR4-attached design.
 
 The following table shows CPI for the three symmetric 2-way configurations
 alongside the no-cache baseline on DDR4-1600.  The no-cache column makes the
-9-10× benefit of caches on DDR4 visually clear.
+9-10x benefit of caches on DDR4 visually clear.
 
 [cols="2,1,1,1,1,1,1",options="header",stripes=even]
 |===
@@ -1005,58 +959,10 @@ alongside the no-cache baseline on DDR4-1600.  The no-cache column makes the
 | IC-16K+DC-16K      |  1.780 |    1.610 |  2.010 |      1.840 |   1.800 |   1.770
 |===
 
-Adding even the smallest 4K+4K cache yields a 7-10× reduction in CPI
+Adding even the smallest 4K+4K cache yields a 7-10x reduction in CPI
 compared to the uncached DDR4 baseline.  The improvement from 4K+4K to
 16K+16K is modest (0.05-0.24 CPI), confirming that the *presence* of any
 cache matters far more than its size when attached to DDR4.
-
-[vegalite, format=svg]
-----
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "title": "CPI by Cache Configuration on DDR4-1600 (log scale)",
-  "width": 430,
-  "height": 280,
-  "data": {
-    "values": [
-      {"benchmark": "dhry",       "config": "No cache",      "cpi": 17.69},
-      {"benchmark": "coremark",   "config": "No cache",      "cpi": 16.81},
-      {"benchmark": "rtos",       "config": "No cache",      "cpi": 18.82},
-      {"benchmark": "cachebench", "config": "No cache",      "cpi": 17.93},
-      {"benchmark": "embench",    "config": "No cache",      "cpi": 15.73},
-      {"benchmark": "mibench",    "config": "No cache",      "cpi": 17.77},
-      {"benchmark": "dhry",       "config": "IC-4K+DC-4K",   "cpi": 1.87},
-      {"benchmark": "coremark",   "config": "IC-4K+DC-4K",   "cpi": 1.70},
-      {"benchmark": "rtos",       "config": "IC-4K+DC-4K",   "cpi": 2.26},
-      {"benchmark": "cachebench", "config": "IC-4K+DC-4K",   "cpi": 2.08},
-      {"benchmark": "embench",    "config": "IC-4K+DC-4K",   "cpi": 1.82},
-      {"benchmark": "mibench",    "config": "IC-4K+DC-4K",   "cpi": 1.82},
-      {"benchmark": "dhry",       "config": "IC-8K+DC-8K",   "cpi": 1.83},
-      {"benchmark": "coremark",   "config": "IC-8K+DC-8K",   "cpi": 1.65},
-      {"benchmark": "rtos",       "config": "IC-8K+DC-8K",   "cpi": 2.05},
-      {"benchmark": "cachebench", "config": "IC-8K+DC-8K",   "cpi": 1.97},
-      {"benchmark": "embench",    "config": "IC-8K+DC-8K",   "cpi": 1.80},
-      {"benchmark": "mibench",    "config": "IC-8K+DC-8K",   "cpi": 1.77},
-      {"benchmark": "dhry",       "config": "IC-16K+DC-16K", "cpi": 1.78},
-      {"benchmark": "coremark",   "config": "IC-16K+DC-16K", "cpi": 1.61},
-      {"benchmark": "rtos",       "config": "IC-16K+DC-16K", "cpi": 2.01},
-      {"benchmark": "cachebench", "config": "IC-16K+DC-16K", "cpi": 1.84},
-      {"benchmark": "embench",    "config": "IC-16K+DC-16K", "cpi": 1.80},
-      {"benchmark": "mibench",    "config": "IC-16K+DC-16K", "cpi": 1.77}
-    ]
-  },
-  "mark": "bar",
-  "encoding": {
-    "x":       {"field": "benchmark", "type": "nominal",      "title": "Benchmark"},
-    "xOffset": {"field": "config",    "type": "nominal"},
-    "y":       {"field": "cpi",       "type": "quantitative",
-                 "title": "CPI (log scale)",
-                 "scale": {"type": "log", "base": 10}},
-    "color":   {"field": "config",    "type": "nominal",      "title": "Configuration",
-                 "scale": {"scheme": "category10"}}
-  }
-}
-----
 
 === Stall Fraction Analysis
 
@@ -1072,7 +978,7 @@ much performance is left on the table.
 | IC-16K+DC-16K  | 40.4% |    35.2% | 49.0% |      40.3% |   38.2% |   39.8%
 |===
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1154,7 +1060,7 @@ benefit dominates for data-intensive or linked-structure workloads
 larger than either single-sided benefit, confirming the complementary nature
 of the two caches.
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1198,7 +1104,7 @@ With a fixed 12 KB total cache budget, which split is better?
 | IC-4K+DC-8K      | 1.690 |    1.570 | 2.030 |      1.700 |   1.620 |   1.660
 |===
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1257,7 +1163,7 @@ With a 24 KB total cache budget the two natural splits are IC-16K+DC-8K
 | IC-8K+DC-16K     | 1.680 |    1.550 | 1.960 |      1.670 |   1.620 |   1.660
 |===
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1319,7 +1225,7 @@ cache level.
 | 8K+8K to 16K+16K| 0.010 |    0.010 | 0.010 |      0.030 |   0.000 |   0.000
 |===
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1384,7 +1290,7 @@ of total cache: (Speedup over no-cache) / (total KB).
 | IC-16K+DC-16K  | 0.046 |    0.048 | 0.037 |      0.041 |   0.041 |   0.042
 |===
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1429,7 +1335,6 @@ configuration by a significant margin.  This is the "knee of the curve":
 for applications where die cost or power are constrained, IC-4K+DC-4K
 delivers the best performance per unit silicon area.
 
-
 == Associativity: 2-Way vs. 4-Way
 
 Set-associative caches use multiple ways to reduce *conflict misses* -- the
@@ -1461,7 +1366,7 @@ KV32 workloads.
 | IC-16K+DC-16K |      1.620 |      1.620 |      1.660 |      1.660
 |===
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=100%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1551,7 +1456,7 @@ On DDR4-1600, `rtos` at IC-4K+DC-4K improves by 5.3% with 4-way (2.260 →
 miss penalty because each resolved conflict miss at DDR4 latency saves more
 cycles.
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1600,7 +1505,7 @@ small:
 | mibench    | 99.77% | 99.78% | 92.38% | 92.44%
 |===
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=90%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1654,7 +1559,7 @@ small:
 }
 ----
 
-The I-cache hit rates are already ≥ 99.26% at 2-way.  Conflict misses in a
+The I-cache hit rates are already >=99.26% at 2-way.  Conflict misses in a
 2-way 4K I-cache occur when two hot loops map to the same set and thrash each
 other.  For these benchmarks the hot code footprints are small enough that
 this rarely happens.  The `rtos` entry is the exception: the Mini-RTOS context
@@ -1689,7 +1594,6 @@ cycles per miss), the same improvement would save substantially more cycles
   misses -- are dominant.  Doubling the cache size (e.g., 4K to 8K) eliminates
   far more misses than quadrupling the associativity.
 
-
 == Configuration Recommendations
 
 The following decision table maps deployment scenarios to recommended
@@ -1712,7 +1616,7 @@ area constraints.
 
 === Average CPI by Config (SRAM, 6-Benchmark Geomean)
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1787,7 +1691,7 @@ DDR4 relative to SRAM for the same IC-8K+DC-8K configuration.
 | DDR4-3200 overhead | +8.3% | +6.5% | +4.1% | +15.9% | +11.1% | +6.6%
 |===
 
-[vegalite, format=svg]
+[vegalite, format=svg, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1838,6 +1742,46 @@ mt/s creates no measurable benefit.  System designers can choose DDR4-1600
 without a performance penalty for these workloads when caches are sized at
 IC-8K+DC-8K or larger.
 
+== Conclusions
+
+. *Caches are mandatory for DDR4 systems.* Without caches, DDR4 CPI is
+  15-19x.  Even IC-4K+DC-4K brings DDR4 performance within 35-50% of SRAM
+  performance; IC-8K+DC-8K achieves within 5-16%.
+
+. *IC-4K+DC-4K is the performance knee.* The first 8 KB of cache (4K+4K)
+  eliminates 14-33% of the no-cache CPI on SRAM and is by far the most
+  area-efficient configuration.  This is the minimum recommended configuration
+  for any real deployment.
+
+. *IC-8K+DC-8K is the recommended default.* At 16 KB total, it provides
+  1-3% additional improvement over 4K+4K with well-characterised behaviour
+  across all workloads.  It balances performance, area, and generality.
+
+. *IC-16K+DC-16K offers marginal gains over 8K+8K.* The 8K to 16K doubling
+  yields less than 2% CPI improvement for most benchmarks.  It is only
+  justified when `cachebench`-like bandwidth workloads or large RTOS task sets
+  are representative of production use.
+
+. *Asymmetric splits provide no clear winner.* IC-8K+DC-4K and IC-4K+DC-8K
+  have essentially equal average CPI for these workloads.  Both are slightly
+  worse in average CPI than the symmetric IC-8K+DC-8K.  The symmetric
+  configuration is recommended unless the workload is known to be strongly
+  I-cache or D-cache bound.
+
+. *4-way associativity is rarely beneficial on SRAM.* With hit rates already
+  at 99%+ and an 8-cycle SRAM miss penalty, eliminating conflict misses via
+  4-way saves < 2% CPI across all benchmarks.  The one exception is `rtos` at
+  IC-4K+DC-4K, where 4-way resolves context-switch code conflicts for a 2%
+  improvement.  On DDR4, the `rtos` improvement reaches 5.3%, making 4-way
+  worth considering for RTOS-heavy DDR4 systems.
+
+. *Stall cycles never reach zero.* Even at IC-16K+DC-16K, 35-49% stall
+  fraction remains due to compulsory misses, AXI bus pipeline overhead, and
+  structural hazards.  Further reductions would require hardware prefetching,
+  non-blocking cache fills, or loop-body partitioning -- all beyond the scope
+  of this analysis.
+
+[appendix]
 == Test Methodology
 
 === Simulation Environment
@@ -1882,41 +1826,29 @@ All benchmarks were compiled with RISC-V GCC (riscv32-unknown-elf-gcc)
 targeting RV32IMAC with `-O2` optimisation.  The same binary was used for
 all cache configurations; no benchmark-specific tuning was applied.
 
-== Conclusions
+[appendix]
+== Build Instructions
 
-. *Caches are mandatory for DDR4 systems.* Without caches, DDR4 CPI is
-  15-19x.  Even IC-4K+DC-4K brings DDR4 performance within 35-50% of SRAM
-  performance; IC-8K+DC-8K achieves within 5-16%.
+=== Required Tools
 
-. *IC-4K+DC-4K is the performance knee.* The first 8 KB of cache (4K+4K)
-  eliminates 14-33% of the no-cache CPI on SRAM and is by far the most
-  area-efficient configuration.  This is the minimum recommended configuration
-  for any real deployment.
+[source,shell]
+----
+gem install asciidoctor-pdf asciidoctor-diagram
+npm install -g vega-lite vega-cli
+----
 
-. *IC-8K+DC-8K is the recommended default.* At 16 KB total, it provides
-  1-3% additional improvement over 4K+4K with well-characterised behaviour
-  across all workloads.  It balances performance, area, and generality.
+=== Generating the PDF
 
-. *IC-16K+DC-16K offers marginal gains over 8K+8K.* The 8K to 16K doubling
-  yields less than 2% CPI improvement for most benchmarks.  It is only
-  justified when `cachebench`-like bandwidth workloads or large RTOS task sets
-  are representative of production use.
+From the `docs/` directory:
 
-. *Asymmetric splits provide no clear winner.* IC-8K+DC-4K and IC-4K+DC-8K
-  have essentially equal average CPI for these workloads.  Both are slightly
-  worse in average CPI than the symmetric IC-8K+DC-8K.  The symmetric
-  configuration is recommended unless the workload is known to be strongly
-  I-cache or D-cache bound.
+[source,shell]
+----
+asciidoctor-pdf -r asciidoctor-diagram cache_benchmark_report.adoc
+----
 
-. *4-way associativity is rarely beneficial on SRAM.* With hit rates already
-  at 99%+ and an 8-cycle SRAM miss penalty, eliminating conflict misses via
-  4-way saves < 2% CPI across all benchmarks.  The one exception is `rtos` at
-  IC-4K+DC-4K, where 4-way resolves context-switch code conflicts for a 2%
-  improvement.  On DDR4, the `rtos` improvement reaches 5.3%, making 4-way
-  worth considering for RTOS-heavy DDR4 systems.
+The generated file is `cache_benchmark_report.pdf`.
+Chart images are cached in `docs/images/` and can be deleted once the PDF is built.
 
-. *Stall cycles never reach zero.* Even at IC-16K+DC-16K, 35-49% stall
-  fraction remains due to compulsory misses, AXI bus pipeline overhead, and
-  structural hazards.  Further reductions would require hardware prefetching,
-  non-blocking cache fills, or loop-body partitioning -- all beyond the scope
-  of this analysis.
+=== Raw Data
+
+Benchmark results are in `build/cache_bench_v2/results.csv` (234 runs, all PASS).
