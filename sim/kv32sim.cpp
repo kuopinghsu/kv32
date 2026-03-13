@@ -489,9 +489,20 @@ uint32_t KV32Simulator::read_csr(uint32_t csr) {
 
 void KV32Simulator::write_csr(uint32_t csr, uint32_t value) {
     switch (csr) {
-    case CSR_MSTATUS:
+    case CSR_MSTATUS: {
+        uint32_t old_mie = (csr_mstatus >> 3) & 1;
         csr_mstatus = value & 0x00001888;
-        break;     // Only writable bits
+        // When MIE transitions 0→1 (software explicitly re-enabling interrupts for
+        // a new nesting window, e.g. kv_irq_enable() before WFI), clear
+        // irq_before_wfi so that interrupts taken in a *prior* context do not
+        // cause the upcoming WFI to exit immediately as a NOP.  The RTL models
+        // the same behaviour: irq_was_pending is sampled at WFI's EX stage, which
+        // only sees the interrupt state at that moment — not historical state from
+        // before the MIE=1 write.
+        if (!old_mie && ((csr_mstatus >> 3) & 1))
+            irq_before_wfi = false;
+        break;
+    }
     case CSR_MIE:
         csr_mie = value & 0x888;
         break;
@@ -612,14 +623,15 @@ void KV32Simulator::take_trap(uint32_t cause, uint32_t tval) {
 // Check for pending interrupts
 void KV32Simulator::check_interrupts() {
     // ── PLIC: update IRQ sources from peripherals ──────────────────────────
-    // Sources: [1]=UART, [2]=SPI, [3]=I2C, [4]=DMA, [5]=GPIO, [6]=TIMER  (matches kv32_soc.sv wiring)
+    // Sources: [1]=UART, [2]=SPI, [3]=I2C, [4]=DMA, [5]=GPIO, [6-9]=TIMER0-3  (matches kv32_soc.sv wiring)
     uint32_t plic_src = 0;
     if (uart->get_irq()) plic_src |= (1u << 1);
     if (spi->get_irq())  plic_src |= (1u << 2);
     if (i2c->get_irq())  plic_src |= (1u << 3);
     if (dma->get_irq())  plic_src |= (1u << KV_PLIC_SRC_DMA);
     if (gpio->get_irq()) plic_src |= (1u << KV_PLIC_SRC_GPIO);
-    if (timer->get_irq()) plic_src |= (1u << KV_PLIC_SRC_TIMER);
+    for (int _ch = 0; _ch < 4; _ch++)
+        if (timer->get_irq_ch(_ch)) plic_src |= (1u << (KV_PLIC_SRC_TIMER0 + _ch));
     plic->update_irq_sources(plic_src);
 
     // ── Update MIP bits ───────────────────────────────────────────────────
@@ -1653,7 +1665,8 @@ void KV32Simulator::step() {
                         if (i2c->get_irq())   ps |= (1u << 3);
                         if (dma->get_irq())   ps |= (1u << KV_PLIC_SRC_DMA);
                         if (gpio->get_irq())  ps |= (1u << KV_PLIC_SRC_GPIO);
-                        if (timer->get_irq()) ps |= (1u << KV_PLIC_SRC_TIMER);
+                        for (int _ch = 0; _ch < 4; _ch++)
+                            if (timer->get_irq_ch(_ch)) ps |= (1u << (KV_PLIC_SRC_TIMER0 + _ch));
                         plic->update_irq_sources(ps);
                     }
                     if (clint->get_timer_interrupt())

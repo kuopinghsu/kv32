@@ -55,10 +55,56 @@
 - [ ] Bring the Zephyr port up to date with the latest kernel version.
 - [ ] Resolve any outstanding porting issues.
 
-### 3. GitHub CI Workflow
-**Priority: LOW** — Improves project hygiene; no functional dependency.
-- [ ] Add a GitHub Actions workflow that builds the simulator, runs lint, and
-  executes the regression suite on every push and pull request.
+### 3. Hardware Watchdog Peripheral (axi_wdt) + user_hook System
+**Priority: MEDIUM** — Enables firmware timeout detection without shell wrappers.
+
+#### Register Map (`KV_WDT_BASE = 0x2006_0000`, PLIC src = 7)
+| Offset | Name    | Access | Description                                     |
+|--------|---------|--------|-------------------------------------------------|
+| 0x00   | CTRL    | R/W    | [0]=EN, [1]=INTR_EN (0=panic/exit, 1=IRQ only)  |
+| 0x04   | LOAD    | R/W    | Reload value written to COUNT on kick           |
+| 0x08   | COUNT   | RO     | Countdown value; decrements each cycle when EN  |
+| 0x0C   | KICK    | WO     | Write any value to reload COUNT from LOAD       |
+| 0x10   | STATUS  | R/W1C  | [0]=WDT_INT (expired)                           |
+| 0x14   | CAP     | RO     | [31:16]=version=1, [7:0]=width=32               |
+| >0x17  | —       | —      | **Bus error (SLVERR)**                          |
+
+#### Phase 1 — Platform definitions
+- [ ] `sw/include/kv_platform.h`: add `KV_WDT_BASE=0x20060000`, `KV_WDT_SIZE`, `KV_PLIC_SRC_WDT=7`, all `KV_WDT_*_OFF` offsets and bit masks.
+- [ ] `sw/include/kv_wdt.h`: replace software watchdog stub with hardware driver — `kv_wdt_start(load)`, `kv_wdt_kick()`, `kv_wdt_stop()` inline functions using MMIO macros.
+
+#### Phase 2 — RTL
+- [ ] `rtl/axi_wdt.sv`: AXI4-Lite WDT peripheral (model after `axi_timer.sv`). COUNT decrements each clock cycle when EN=1. On COUNT==0: INTR_EN=0 → DPI-C `sim_request_exit(2)` (`ifndef SYNTHESIS`); INTR_EN=1 → set STATUS[0] and assert `wdt_irq`. KICK write reloads COUNT. SLVERR for offset > 0x17.
+- [ ] `rtl/axi_xbar.sv`: extend from 10 to 11 slaves — add `s10_axi_*` ports, `sel_s10_aw/ar` decode (`addr[31:16]==16'h2006`), AR-ID FIFO, and all mux cases.
+- [ ] `rtl/kv32_soc.sv`: declare `wdt_axi_*` signals and `wdt_irq`; wire slave 10 in xbar instantiation; instantiate `axi_wdt u_wdt`; change `PLIC_NUM_IRQ` from 7 to 8; assign `plic_irq_src[7] = wdt_irq`.
+
+#### Phase 3 — Software simulator (kv32sim)
+- [ ] `sim/device.h`: add `WatchdogDevice` class (same structure as `TimerDevice`); add `WDT_BASE`/`WDT_SIZE` aliases.
+- [ ] `sim/device.cpp`: implement `WatchdogDevice::read()`, `write()`, `tick()`, `reset()`; SLVERR for offset > 0x17; `consume_expiry()` helper for kv32sim polling.
+- [ ] `sim/kv32sim.h`: add `WatchdogDevice* wdt` field.
+- [ ] `sim/kv32sim.cpp`: construct and register WDT device; poll `wdt->consume_expiry()` in run loop; poll `wdt->get_irq()` to drive PLIC source 7.
+
+#### Phase 4 — Spike plugin
+- [ ] `spike/plugin_wdt.cc`: WDT Spike plugin (model after `plugin_timer.cc`); `load()`/`store()` return false for addr > `KV_WDT_CAP_OFF + 3`; `tick()` implements countdown; expiry calls `sim->exit(2)` when INTR_EN=0.
+- [ ] `spike/Makefile`: add `plugin_wdt` build rule.
+
+#### Phase 5 — Firmware user_hook
+- [ ] `sw/common/user_hook.c`: default weak `user_hook()` — starts axi_timer ch0 (period=2000, PLIC src 6), ISR kicks HW WDT via `kv_wdt_kick()` (heartbeat; runs indefinitely). Starts WDT with LOAD=20000 (10x timer period safety margin).
+- [ ] `sw/common/start.S`: add `call user_hook` immediately before `call main`.
+- [ ] `Makefile`: append `$(SW_DIR)/common/user_hook.c` to `COMMON_SRCS`.
+
+#### Phase 6 — RTOS strict watchdog
+- [ ] `sw/rtos/rtos_test.c`: add strong `void user_hook(void)` override — timer ISR does NOT kick WDT; starts WDT with INTR_EN=0 and LOAD=100000 (direct exit on expiry). Supervisor task calls `kv_wdt_kick()` after each of the 4 test evaluation blocks.
+
+#### Phase 7 — bus_err test
+- [ ] `sw/bus_err/bus_err.c`: insert `test_peripheral(9, "WDT", (volatile uint32_t *)(KV_WDT_BASE + 0x018UL))` before the NULL-pointer tests; renumber subsequent tests (old 9→10, old 19→21).
+
+#### Phase 8 — Documentation
+- [ ] `README.md`: add WDT row to peripheral table (`0x2006_0000 | Watchdog Timer | 64 KB | PLIC src 7`); add `## Simulation Timeout / Watchdog` section.
+- [ ] `docs/sdk_api_reference.adoc`: add `== Watchdog Timer (axi_wdt)` section with register table, driver API, and usage example.
+- [ ] `docs/kv32_soc_datasheet.adoc`: add WDT to memory map table and peripheral description section; update peripheral count in Abstract.
+- [ ] `docs/kv32_soc_block_diagram.svg`: add `WDT (0x2006_0000)` block to peripheral bus cluster, wired to AXI xbar and PLIC.
+- [ ] `.github/copilot-instructions.md`: append `## Simulation Timeout / Watchdog` section explaining `user_hook` default heartbeat vs. RTOS strict mode; note that `--timeout`/`MAX_CYCLES` wrappers are unnecessary.
 
 ### 4. Google RISCV-DV Integration
 **Priority: LOW** — Broad verification; high effort, no prerequisite blockers.
@@ -308,3 +354,14 @@ Final AXI slave assignment:
 - Checked actual latency model in `testbench/ddr4_axi4_slave.sv` (read/write state machine cycles, burst timing).
 - Determined minimum timer period for `MEM_TYPE=ddr4-1866 ICACHE_EN=0` so the WFI stall window is long enough.
 - Fixed `sw/wfi/wfi.c` TEST 2 (and timing-sensitive tests) to use DDR4-adjusted periods when I-cache is disabled.
+
+### ~~C22. Timer Per-Channel IRQ → PLIC + Nested Interrupt Test~~
+- Changed `rtl/axi_timer.sv` `irq` port from scalar to `[3:0]`; added per-channel `assign irq[i] = int_status_r[i] & int_enable_r[i]`.
+- Updated `rtl/kv32_soc.sv`: replaced `pwm_timer_irq` with `logic [3:0] timer_ch_irq`; increased `PLIC_NUM_IRQ` from 7 to 10; wired `plic_irq_src[6..9] = timer_ch_irq[0..3]`.
+- Updated `sw/include/kv_platform.h`: replaced `KV_PLIC_SRC_TIMER` with `KV_PLIC_SRC_TIMER0–3` (sources 6–9); updated `sw/timer/timer.c` accordingly.
+- Extended `sim/device.h`/`device.cpp` with `get_irq_ch(ch)` on `TimerDevice`; updated `sim/kv32sim.cpp` with a 4-channel PLIC source loop.
+- Updated `spike/plugin_timer.cc` `update_meip()` to loop over channels 0–3.
+- Added `sw/nested_irq/nested_irq.c`: Timer0 (period 200000, PLIC prio=1) nests Timer1 (period 1000, PLIC prio=2) via WFI+`kv_irq_enable()` in the Timer0 ISR; verifies `nested_detected=1` and `t1_count >= 4`.
+- Fixed `sim/kv32sim.cpp` `write_csr(CSR_MSTATUS)`: clear `irq_before_wfi` on MIE 0→1 transition so WFI is not a NOP when a new nesting window is opened.
+- `TIMER1_PERIOD` set to 1000 cycles (≈622-cycle margin after ~378-cycle ISR) to prevent cascade stack overflow in RTL.
+- All three simulators pass 4/4: `make sim-nested_irq`, `make spike-nested_irq`, `make rtl-nested_irq`.

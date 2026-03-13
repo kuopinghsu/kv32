@@ -90,8 +90,19 @@ __dso_handle:
     .section .text.init
     .align 4
 trap_vector:
-    // Save context
-    addi sp, sp, -128
+    // Step 1: Save general-purpose registers x1-x31
+    // Step 2: Save trap CSRs (mepc and mstatus) — REQUIRED for nested interrupts.
+    //         A nested interrupt overwrites these CSRs; without saving them the
+    //         outer handler's mret will return to the wrong PC.
+    //         Frame layout (136 bytes):
+    //           [sp+0]   unused
+    //           [sp+4]   x1 (ra)
+    //           [sp+8]   x2 (sp, pre-adjust)
+    //           ...
+    //           [sp+124] x31 (t6)
+    //           [sp+128] mepc
+    //           [sp+132] mstatus
+    addi sp, sp, -136
     sw x1, 4(sp)
     sw x2, 8(sp)
     sw x3, 12(sp)
@@ -123,6 +134,10 @@ trap_vector:
     sw x29, 116(sp)
     sw x30, 120(sp)
     sw x31, 124(sp)
+    csrr x1, mepc           // use x1 as scratch (already saved above)
+    sw x1, 128(sp)          // save mepc
+    csrr x1, mstatus
+    sw x1, 132(sp)          // save mstatus
 
     // Call C trap handler
     csrr a0, mcause
@@ -130,7 +145,15 @@ trap_vector:
     csrr a2, mtval
     call trap_handler
 
-    // Restore context
+    // Step 6: Restore trap CSRs first (use x1 as scratch before it is restored).
+    //         Restoring mstatus replaces the (potentially modified) in-handler
+    //         mstatus with the value from trap entry: MIE=0, MPIE=outer-MIE.
+    //         mret will then correctly set MIE←MPIE and jump to the saved mepc.
+    lw x1, 132(sp)
+    csrw mstatus, x1        // restore mstatus (MIE=0, MPIE=outer-MIE)
+    lw x1, 128(sp)
+    csrw mepc, x1           // restore outer return address
+    // Restore general-purpose registers
     lw x1, 4(sp)
     lw x2, 8(sp)
     lw x3, 12(sp)
@@ -162,6 +185,6 @@ trap_vector:
     lw x29, 116(sp)
     lw x30, 120(sp)
     lw x31, 124(sp)
-    addi sp, sp, 128
+    addi sp, sp, 136
 
     mret

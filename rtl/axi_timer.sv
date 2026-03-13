@@ -111,8 +111,8 @@ module axi_timer (
     output logic        axi_rvalid,
     input  logic        axi_rready,
 
-    // Interrupt output
-    output logic        irq,
+    // Interrupt outputs (one per channel — each mapped to a separate PLIC source)
+    output logic [3:0]  irq,
 
     // PWM outputs
     output logic [3:0]  pwm_o
@@ -305,7 +305,12 @@ module axi_timer (
         end
     end
 
-    assign irq = |(int_status_r & int_enable_r);
+    // Per-channel IRQ outputs — each mapped to an individual PLIC source
+    generate
+        for (genvar gi = 0; gi < 4; gi++) begin : g_irq
+            assign irq[gi] = int_status_r[gi] & int_enable_r[gi];
+        end
+    endgenerate
 
     // ========================================================================
     // AXI4-Lite Interface

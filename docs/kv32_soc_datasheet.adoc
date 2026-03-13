@@ -1910,7 +1910,7 @@ COMPARE2: period end (counter auto-reloads to 0) and IRQ
 |Active-high or active-low (via CTRL[4]); duty set by COMPARE1/COMPARE2 ratio
 
 |Interrupt
-|Per-channel interrupt enable (CTRL[3]); aggregated IRQ to PLIC source 6
+|Per-channel interrupt enable (CTRL[3]); individual IRQ per channel to PLIC sources 6–9 (KV_PLIC_SRC_TIMER0–KV_PLIC_SRC_TIMER3)
 
 |Capability Register
 |`{VERSION[31:16], NUM_CHANNELS[15:8], COUNTER_WIDTH[7:0]}` = `0x0001_0420`
@@ -2014,7 +2014,7 @@ CTRL = EN | PWM_EN | PWM_POL | INT_EN
 * Each channel's interrupt is enabled by both CTRL[3] (channel) and INT_ENABLE[ch] (global)
 * INT_STATUS bit is set on COMPARE1 match (if dual mode) or COMPARE2 match
 * Write-1-to-clear INT_STATUS[ch] in ISR; timer continues running
-* All channel IRQs are OR-aggregated to a single PLIC source (ID 6)
+* Each channel has an independent PLIC source: channel N maps to PLIC source `KV_PLIC_SRC_TIMER0 + N` (sources 6–9)
 
 ==== External Pins
 
@@ -2220,10 +2220,22 @@ The following peripherals are connected to the PLIC:
 |GPIO pin interrupt (any bank, W1C per-pin)
 
 |6
-|Timer
-|Timer channel interrupt (any channel, W1C per-channel)
+|Timer0
+|Timer channel 0 compare match (`KV_PLIC_SRC_TIMER0`)
 
-|7-31
+|7
+|Timer1
+|Timer channel 1 compare match (`KV_PLIC_SRC_TIMER1`)
+
+|8
+|Timer2
+|Timer channel 2 compare match (`KV_PLIC_SRC_TIMER2`)
+
+|9
+|Timer3
+|Timer channel 3 compare match (`KV_PLIC_SRC_TIMER3`)
+
+|10-31
 |Reserved
 |Future peripheral expansion
 |===

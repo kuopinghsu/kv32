@@ -1266,7 +1266,7 @@ The Timer (`axi_timer.sv`) provides 4 independent 32-bit up-counters with PWM ou
 prescaler, dual compare, and per-channel interrupt support.
 
 Base Address:: `0x2004_0000` (KV_TIMER_BASE)
-PLIC Source:: 6 (KV_PLIC_SRC_TIMER)
+PLIC Sources:: 6–9 (`KV_PLIC_SRC_TIMER0` through `KV_PLIC_SRC_TIMER3` — one per channel)
 Header:: `kv_timer.h`
 
 === Register Map
@@ -1422,8 +1422,8 @@ int main(void) {
     kv_timer_init_irq(0x1);       // Enable channel 0 global IRQ
     kv_timer_start(0, 50000, 0);  // period=50000 ticks
 
-    kv_plic_set_priority(KV_PLIC_SRC_TIMER, 1);
-    kv_plic_enable_source(KV_PLIC_SRC_TIMER);
+    kv_plic_set_priority(KV_PLIC_SRC_TIMER0, 1);
+    kv_plic_enable_source(KV_PLIC_SRC_TIMER0);
     kv_irq_enable();
 
     while (ticks < 100) {}        // Wait for 100 ms
@@ -1581,8 +1581,20 @@ Base Address:: `0x0C00_0000` (KV_PLIC_BASE)
 | GPIO pin interrupt (any bank)
 
 | 6
-| Timer
-| Timer channel interrupt (any channel)
+| Timer0
+| Timer channel 0 compare match (`KV_PLIC_SRC_TIMER0`)
+
+| 7
+| Timer1
+| Timer channel 1 compare match (`KV_PLIC_SRC_TIMER1`)
+
+| 8
+| Timer2
+| Timer channel 2 compare match (`KV_PLIC_SRC_TIMER2`)
+
+| 9
+| Timer3
+| Timer channel 3 compare match (`KV_PLIC_SRC_TIMER3`)
 |===
 
 === API Functions

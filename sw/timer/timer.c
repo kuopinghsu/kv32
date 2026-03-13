@@ -32,7 +32,7 @@ static void timer_mei_handler(uint32_t cause)
 {
     (void)cause;
     uint32_t src = kv_plic_claim();
-    if (src == (uint32_t)KV_PLIC_SRC_TIMER) {
+    if (src == (uint32_t)KV_PLIC_SRC_TIMER0) {
         uint32_t status = kv_timer_get_int_status();
         g_timer_irq_status = status;
         g_timer_irq_fired = 1;
@@ -47,7 +47,7 @@ static void timer_mei_handler(uint32_t cause)
 static void timer_setup_irq(void)
 {
     kv_irq_register(KV_CAUSE_MEI, timer_mei_handler);
-    kv_plic_init_source(KV_PLIC_SRC_TIMER, 1);
+    kv_plic_init_source(KV_PLIC_SRC_TIMER0, 1);
     kv_irq_enable();
 }
 

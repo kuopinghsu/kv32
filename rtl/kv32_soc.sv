@@ -537,7 +537,7 @@ module kv32_soc #(
     logic        i2c_irq;             // I2C  FIFO interrupt → PLIC source 3
     logic        dma_irq;             // DMA interrupt → PLIC source 4
     logic        gpio_irq;            // GPIO interrupt → PLIC source 5
-    logic        pwm_timer_irq;       // Timer/PWM interrupt → PLIC source 6
+    logic [3:0]  timer_ch_irq;        // Timer per-channel IRQs → PLIC sources 6–9
 
     // ========================================================================
     // Debug Interface Signals
@@ -1479,7 +1479,7 @@ module kv32_soc #(
     // ========================================================================
     // Base address: 0x0C00_0000 - 0x0FFF_FFFF
     // Interrupt sources (1..NUM_IRQ) - extend when peripherals gain IRQ outputs
-    localparam int unsigned PLIC_NUM_IRQ = 7;
+    localparam int unsigned PLIC_NUM_IRQ = 10;
     logic [PLIC_NUM_IRQ:0] plic_irq_src;
     // PLIC interrupt source assignment:
     //   [1] = UART RX-not-empty / TX-empty
@@ -1487,16 +1487,22 @@ module kv32_soc #(
     //   [3] = I2C  RX-not-empty / TX-empty / STOP-done
     //   [4] = DMA  transfer done / error
     //   [5] = GPIO edge/level interrupts
-    //   [6] = Timer/PWM compare match
-    //   [7]   = reserved (tied 0)
+    //   [6] = Timer channel 0 compare match  (KV_PLIC_SRC_TIMER0)
+    //   [7] = Timer channel 1 compare match  (KV_PLIC_SRC_TIMER1)
+    //   [8] = Timer channel 2 compare match  (KV_PLIC_SRC_TIMER2)
+    //   [9] = Timer channel 3 compare match  (KV_PLIC_SRC_TIMER3)
+    //   [10]  = reserved (tied 0)
     assign plic_irq_src[0]   = 1'b0;      // source 0 reserved
     assign plic_irq_src[1]   = uart_irq;
     assign plic_irq_src[2]   = spi_irq;
     assign plic_irq_src[3]   = i2c_irq;
     assign plic_irq_src[4]   = dma_irq;
     assign plic_irq_src[5]   = gpio_irq;
-    assign plic_irq_src[6]   = pwm_timer_irq;
-    assign plic_irq_src[7]   = 1'b0;
+    assign plic_irq_src[6]   = timer_ch_irq[0];
+    assign plic_irq_src[7]   = timer_ch_irq[1];
+    assign plic_irq_src[8]   = timer_ch_irq[2];
+    assign plic_irq_src[9]   = timer_ch_irq[3];
+    assign plic_irq_src[10]  = 1'b0;
 
     axi_plic #(
         .NUM_IRQ(PLIC_NUM_IRQ)
@@ -1788,7 +1794,7 @@ module kv32_soc #(
         .axi_rvalid(timer_axi_rvalid),
         .axi_rready(timer_axi_rready),
 
-        .irq(pwm_timer_irq),
+        .irq(timer_ch_irq),
 
         .pwm_o(pwm_o)
     );

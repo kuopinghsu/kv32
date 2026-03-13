@@ -362,21 +362,21 @@ private:
 
 // PLIC Device Driver
 // Base address: 0x0C000000
-// Implements standard SiFive PLIC register layout (7 sources, 1 context = hart 0 M-mode).
-// Matches RTL axi_plic.sv:
-//   priority[i] at PLIC_BASE + 4*i          (i = 1..7, 4-bit: 0=disabled, 1-15=priority)
-//   pending     at PLIC_BASE + 0x001000      (bits [7:1])
-//   enable      at PLIC_BASE + 0x002000      (bits [7:1], context 0)
+// Implements standard SiFive PLIC register layout (10 sources, 1 context = hart 0 M-mode).
+// Matches RTL axi_plic.sv (PLIC_NUM_IRQ=10):
+//   priority[i] at PLIC_BASE + 4*i          (i = 1..10, 4-bit: 0=disabled, 1-15=priority)
+//   pending     at PLIC_BASE + 0x001000      (bits [10:1])
+//   enable      at PLIC_BASE + 0x002000      (bits [10:1], context 0)
 //   threshold   at PLIC_BASE + 0x200000      (context 0, 4-bit)
 //   claim/cmplt at PLIC_BASE + 0x200004      (context 0)
 class PLICDevice : public Device {
 private:
-    static const int NUM_IRQ = 7;
+    static const int NUM_IRQ = 10;  // must match PLIC_NUM_IRQ in kv32_soc.sv
 
-    uint32_t priority_r[NUM_IRQ + 1];  // [0] unused; [1..7] per-source priority
-    bool     enable_r  [NUM_IRQ + 1];  // [1..7] enable for context 0
-    bool     pending_r [NUM_IRQ + 1];  // [1..7] pending bits
-    bool     claimed_r [NUM_IRQ + 1];  // [1..7] claimed (between claim and complete)
+    uint32_t priority_r[NUM_IRQ + 1];  // [0] unused; [1..10] per-source priority
+    bool     enable_r  [NUM_IRQ + 1];  // [1..10] enable for context 0
+    bool     pending_r [NUM_IRQ + 1];  // [1..10] pending bits
+    bool     claimed_r [NUM_IRQ + 1];  // [1..10] claimed (between claim and complete)
     uint32_t threshold_r;              // context 0 threshold
     uint32_t irq_src_mask;             // current raw IRQ input mask [7:1]
 
@@ -572,6 +572,9 @@ public:
 
     // IRQ: asserted when (int_status_r & int_enable_r) != 0
     bool get_irq() const;
+
+    // Per-channel IRQ: asserted when both int_status and int_enable are set for channel ch
+    bool get_irq_ch(int ch) const;
 
     // Get PWM output state (for testing)
     bool get_pwm_output(int timer_num) const;

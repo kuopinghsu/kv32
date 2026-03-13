@@ -56,7 +56,10 @@
 #define KV_PLIC_SRC_I2C     3
 #define KV_PLIC_SRC_DMA     4
 #define KV_PLIC_SRC_GPIO    5
-#define KV_PLIC_SRC_TIMER   6
+#define KV_PLIC_SRC_TIMER0  6   /* Timer channel 0 compare match */
+#define KV_PLIC_SRC_TIMER1  7   /* Timer channel 1 compare match */
+#define KV_PLIC_SRC_TIMER2  8   /* Timer channel 2 compare match */
+#define KV_PLIC_SRC_TIMER3  9   /* Timer channel 3 compare match */
 
 /* ═══════════════════════════════════════════════════════════════════
  * UART  (0x2001_0000, 64 KB)

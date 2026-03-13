@@ -1451,6 +1451,11 @@ bool TimerDevice::get_irq() const {
     return (int_status_r & int_enable_r) != 0;
 }
 
+bool TimerDevice::get_irq_ch(int ch) const {
+    if (ch < 0 || ch >= NUM_TIMERS) return false;
+    return ((int_status_r >> ch) & 1u) && ((int_enable_r >> ch) & 1u);
+}
+
 bool TimerDevice::get_pwm_output(int timer_num) const {
     if (timer_num < 0 || timer_num >= NUM_TIMERS)
         return false;

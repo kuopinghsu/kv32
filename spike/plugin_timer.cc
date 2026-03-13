@@ -123,9 +123,11 @@ private:
     {
 #ifdef SPIKE_INCLUDE
         if (!sim_) return;
-        const bool pending = (int_status_ & int_enable_) != 0;
-        sim_->get_intctrl()->set_interrupt_level(
-            (uint32_t)KV_PLIC_SRC_TIMER, pending ? 1 : 0);
+        for (uint32_t ch = 0; ch < TIMER_NUM_CH; ++ch) {
+            const bool pending = ((int_status_ >> ch) & 1u) && ((int_enable_ >> ch) & 1u);
+            sim_->get_intctrl()->set_interrupt_level(
+                (uint32_t)(KV_PLIC_SRC_TIMER0 + ch), pending ? 1 : 0);
+        }
 #endif
     }
     sim_t   *sim_;

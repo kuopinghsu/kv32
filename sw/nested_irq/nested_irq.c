@@ -5,7 +5,21 @@
 //
 // Test design:
 //   Timer 0: period N = 200000 cycles, PLIC source 6 (KV_PLIC_SRC_TIMER0), priority 1
-//   Timer 1: period N/5 = 40000 cycles, PLIC source 7 (KV_PLIC_SRC_TIMER1), priority 2
+//   Timer 1: period N/200 = 1000 cycles, PLIC source 7 (KV_PLIC_SRC_TIMER1), priority 2
+//
+// Nesting mechanism — WFI-based (simulator-agnostic):
+//   The timer0 ISR raises the PLIC threshold to 1 (blocking timer0 self-preemption but
+//   allowing timer1 prio=2), re-enables MIE, then executes WFI.  The CPU suspends until
+//   timer1 fires.  The nested timer1 ISR runs and returns; MRET wakes the CPU at the
+//   instruction after WFI.  csrrci then atomically closes the nesting window.
+//
+//   Why WFI instead of a spin loop:
+//     In RTL simulation each timer1 ISR takes ~380 cycles (AXI pipeline stalls for PLIC
+//     claim/complete and timer register accesses).  With TIMER1_PERIOD=1000 this leaves
+//     ~620 cycles of margin after the nested ISR completes and csrrci can commit before
+//     the next timer1 fire — safe on all three simulators.
+//     With TIMER1_PERIOD=400 the margin shrinks to ~20 cycles, which is not enough when
+//     AXI stall counts vary, causing a cascade of nested traps that overflows the stack.
 //
 // Both TIMER0 and TIMER1 interrupts arrive as MEI (Machine External Interrupt,
 // cause 11).  A single mei_handler dispatches based on the PLIC claim result.
@@ -13,9 +27,9 @@
 // Timer 0 ISR path (lower-priority):
 //   1. Claim PLIC → src 6; clear timer0 INT_STATUS; t0_entry_count++
 //   2. Raise PLIC threshold to 1 (blocks timer0 re-entry; timer1 prio=2 still passes)
-//   3. Re-enable global MIE → timer1 can now preempt (re-enters mei_handler via nesting)
-//   4. Spin for ~80000 nops so timer1 expires during this window
-//   5. Disable MIE; t0_exit_count++
+//   3. Re-enable global MIE → timer1 can now preempt
+//   4. WFI — CPU suspends until timer1 fires; nested timer1 ISR runs and returns
+//   5. Disable MIE (csrrci); t0_exit_count++
 //   6. Restore threshold=0; complete source 6
 //
 // Timer 1 ISR path (higher-priority, may be nested inside timer 0):
@@ -39,7 +53,7 @@
 
 // ── Timer periods ──────────────────────────────────────────────────────────
 #define TIMER0_PERIOD   200000u   // low-priority timer
-#define TIMER1_PERIOD    40000u   // high-priority timer  (TIMER0_PERIOD / 5)
+#define TIMER1_PERIOD     1000u   // high-priority timer  (TIMER0_PERIOD / 200)
 
 // ── Shared state (touched by ISRs) ────────────────────────────────────────
 static volatile uint32_t t0_entry_count = 0;
@@ -68,17 +82,16 @@ static void mei_handler(uint32_t cause)
         // Re-enable global MIE: opens the nested-interrupt window.
         kv_irq_enable();
 
-        // Spin long enough for timer1 to expire at least once.
-        // Timer1 period = 40000 cycles.  Each simulator instruction ~= 1 timer
-        // tick; each nop loop iteration costs ~5 instructions, so 20000 iters
-        // ~= 100000 ticks.  That is > timer1_period (timer1 fires ~2 times)
-        // and < timer0_period (200000), so timer0 does NOT re-fire here.
-        for (volatile uint32_t i = 0; i < 20000u; i++)
-            asm volatile("nop");
+        // WFI: suspend until timer1 fires.  The CPU halts here; when
+        // timer1's MEI arrives the nested timer1 ISR runs and returns
+        // via MRET to the instruction after this WFI.  No spin loop
+        // is needed — one WFI catches exactly one timer1 event,
+        // regardless of the ISR/period ratio in each simulator.
+        asm volatile("wfi");
 
         // Close the preemption window before updating the exit counter.
-        // Use a single atomic CSR instruction (no 2-cycle window) so no
-        // extra timer0 ISR can slip in between the read and clear phases.
+        // Use a single atomic CSR instruction so no extra interrupt can
+        // slip in between the read and clear phases.
         asm volatile("csrrci zero, mstatus, 8");
         t0_exit_count++;
 
