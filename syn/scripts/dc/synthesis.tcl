@@ -120,6 +120,9 @@ kv32_try_cmds_to_report $CHECK_DETAIL_RPT "Unused / unconnected ports" [list \
     "check_design -unloaded" \
 ]
 
+# Preserve hierarchy during synthesis so area can be reported per module.
+set_app_var compile_auto_ungroup none
+
 # Compile
 set_fix_hold [get_clocks core_clk]
 compile_ultra -gate_clock
@@ -152,43 +155,55 @@ proc kv32_find_nand2_area {} {
     return $best
 }
 
-proc kv32_count_leaf_cells {leaf_cells nand2_area} {
-    set area 0.0
-    set gates 0
-    set seq 0
-    set comb 0
+# Build a flat Tcl list of all leaf instances: {{full_path area is_seq} ...}
+# Traverses the design once; all per-hierarchy queries filter this list in Tcl.
+proc kv32_build_leaf_list {} {
+    set result {}
+    set all_leafs [get_cells -hierarchical -filter "is_hierarchical == false"]
+    foreach_in_collection c $all_leafs {
+        set cname     [get_object_name $c]
+        set cell_area 0.0
+        set is_seq    0
 
-    foreach_in_collection c $leaf_cells {
-        incr gates
         set ref ""
         catch { set ref [get_attribute $c ref_name] }
-
-        set cell_area 0.0
-        set is_seq 0
-
         if {$ref ne ""} {
             set lc [get_lib_cells */$ref]
             if {[sizeof_collection $lc] > 0} {
                 set lc0 [index_collection $lc 0]
                 catch { set cell_area [get_attribute $lc0 area] }
-                catch { set is_seq [get_attribute $lc0 is_sequential] }
+                set s ""
+                catch { set s [get_attribute $lc0 is_sequential] }
+                if {$s eq "true" || $s eq "1" || $s == 1} { set is_seq 1 }
             }
         }
+        if {$cell_area <= 0.0} { catch { set cell_area [get_attribute $c area] } }
 
-        if {$cell_area <= 0.0} {
-            catch { set cell_area [get_attribute $c area] }
-        }
+        lappend result [list $cname $cell_area $is_seq]
+    }
+    return $result
+}
 
-        set area [expr {$area + $cell_area}]
-
-        if {$is_seq eq "true" || $is_seq eq "1" || $is_seq == 1} {
-            incr seq
-        } else {
-            incr comb
+# Sum leaf entries whose full path starts with <prefix>/.
+# prefix "/" means sum ALL leaves (top level).
+proc kv32_sum_for_prefix {leaf_list prefix nand2_area} {
+    set area  0.0
+    set gates 0
+    set seq   0
+    set comb  0
+    # Escape square brackets so that array-generate instance names like
+    # l_g_sram[0] are not mis-interpreted as Tcl character-class patterns
+    # in string match (e.g. [0] would otherwise match only digit "0").
+    set esc_prefix [string map [list {[} {\[} {]} {\]}] $prefix]
+    foreach entry $leaf_list {
+        lassign $entry lname larea lis_seq
+        if {$prefix eq "/" || [string match "${esc_prefix}/*" $lname]} {
+            set area [expr {$area + $larea}]
+            incr gates
+            if {$lis_seq} { incr seq } else { incr comb }
         }
     }
-
-    set nand2eq [expr {$area / $nand2_area}]
+    set nand2eq [expr {$nand2_area > 0 ? $area / $nand2_area : 0.0}]
     return [list $area $gates $seq $comb $nand2eq]
 }
 
@@ -201,6 +216,10 @@ proc kv32_trunc {s maxlen} {
 
 proc kv32_write_formatted_area_gate_report {report_file top_module} {
     set nand2_area [kv32_find_nand2_area]
+
+    puts "Collecting leaf instances for area report..."
+    set leaf_list [kv32_build_leaf_list]
+    puts [format "  %d leaf cells collected." [llength $leaf_list]]
 
     # Column widths: Hierarchy=48, Module=32, numeric cols unchanged.
     # Total line width: 48+1+32+1+12+1+12+1+12+1+12+1+14 = 148 chars.
@@ -216,22 +235,25 @@ proc kv32_write_formatted_area_gate_report {report_file top_module} {
         "Hierarchy" "Module" "Area" "GateCnt" "SeqCnt" "CombCnt" "NAND2Eq"]
     puts $fp [string repeat "-" 148]
 
-    # Top summary row
-    set top_leafs [get_cells -hierarchical -filter "is_hierarchical == false"]
-    lassign [kv32_count_leaf_cells $top_leafs $nand2_area] t_area t_gates t_seq t_comb t_n2
+    # Top summary row (all leaves)
+    lassign [kv32_sum_for_prefix $leaf_list "/" $nand2_area] t_area t_gates t_seq t_comb t_n2
     puts $fp [format "%-${H_W}s %-${M_W}s %12.3f %12d %12d %12d %14.3f" \
         "/" [kv32_trunc $top_module $M_W] $t_area $t_gates $t_seq $t_comb $t_n2]
 
-    # Per-hierarchy-module rows
+    # Per-hierarchy-module rows, sorted by instance path
     set hmods [get_cells -hierarchical -filter "is_hierarchical == true"]
+    set hmod_names {}
     foreach_in_collection h $hmods {
         set hname [get_object_name $h]
         set mname ""
         catch { set mname [get_attribute $h ref_name] }
+        lappend hmod_names [list $hname $mname]
+    }
+    set hmod_names [lsort -index 0 $hmod_names]
 
-        set leafs [get_cells -hierarchical -of_objects $h -filter "is_hierarchical == false"]
-        lassign [kv32_count_leaf_cells $leafs $nand2_area] area gates seq comb n2
-
+    foreach entry $hmod_names {
+        lassign $entry hname mname
+        lassign [kv32_sum_for_prefix $leaf_list $hname $nand2_area] area gates seq comb n2
         puts $fp [format "%-${H_W}s %-${M_W}s %12.3f %12d %12d %12d %14.3f" \
             [kv32_trunc $hname $H_W] [kv32_trunc $mname $M_W] \
             $area $gates $seq $comb $n2]
@@ -263,11 +285,12 @@ if {[catch {
 # Multi-corner timing reports if enabled
 if {$ENABLE_MCMM} {
     foreach c $available_corners {
+        puts "Generating timing report for corner: $c"
         # Include OpenRAM libs for this corner so SRAM timing is correct.
-        set libs [kv32_resolve_all_libs_for_corner $c]
+        set corner_libs [kv32_resolve_all_libs_for_corner $c]
         if {[catch {
-            set_app_var target_library $libs
-            set_app_var link_library [concat * $libs]
+            set_app_var target_library $corner_libs
+            set_app_var link_library [concat * $corner_libs]
             link
             report_timing -max_paths 20 > "$REPORTS_DIR/synth_timing_${c}.rpt"
         } err]} {

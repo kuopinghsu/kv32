@@ -221,7 +221,9 @@ proc kv32_available_corners {} {
 # Used by all Liberty-based tool flows (Genus, DC) for both the active corner
 # and per-corner MCMM timing sweeps.
 proc kv32_resolve_openram_libs_for_corner {corner} {
-    global OPENRAM_ICACHE_TAG_NAME OPENRAM_ICACHE_DATA_NAME OPENRAM_DIR OPENRAM_DIR_FALLBACK
+    global OPENRAM_ICACHE_TAG_NAME OPENRAM_ICACHE_DATA_NAME \
+           OPENRAM_DCACHE_TAG_NAME OPENRAM_DCACHE_DATA_NAME \
+           OPENRAM_DIR OPENRAM_DIR_FALLBACK
     set corner_map {tt TT  ss SS  ff FF}
     if {![dict exists $corner_map $corner]} {
         error "kv32_resolve_openram_libs_for_corner: unknown corner '$corner'"
