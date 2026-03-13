@@ -24,6 +24,23 @@
 #include "mrtos.h"
 #include "mrtos_port.h"
 #include "kv_platform.h"
+#include "kv_wdt.h"
+
+/* ════════════════════════════════════════════════════════════════════
+ * WDT keep-alive: strong override of the default weak user_hook().
+ *
+ * The RTOS supervisor task calls kv_wdt_kick() after each test block,
+ * so the WDT is only reset if the scheduler is making forward progress.
+ * Use hardware-reset mode (INTR_EN=0) so a stall causes the simulator
+ * to exit(2) rather than merely asserting an IRQ.
+ *
+ * LOAD = 200000 cycles — large enough that even the slowest test block
+ * (mutex priority-inheritance) completes well within the budget.
+ * ═══════════════════════════════════════════════════════════════════ */
+void user_hook(void)
+{
+    kv_wdt_start(200000u, 0);   /* INTR_EN=0: hardware reset on expiry */
+}
 
 /* ════════════════════════════════════════════════════════════════════
  * Test infrastructure
@@ -377,6 +394,7 @@ static void supervisor_task(void *arg)
         TEST_FAIL(1, "One or both tasks starved");
         printf("  t1a_runs=%d  t1b_runs=%d\n", t1a_runs, t1b_runs);
     }
+    kv_wdt_kick(); /* Test 1 complete: pet the WDT */
 
     /* ── Test 2: semaphore ──────────────────────────────────────── */
     printf("\n[TEST 2] Semaphore producer / consumer\n");
@@ -404,6 +422,7 @@ static void supervisor_task(void *arg)
         TEST_FAIL(2, "Not all consumers woken");
         printf("  c1_woke=%d  c2_woke=%d\n", t2_c1_woke, t2_c2_woke);
     }
+    kv_wdt_kick(); /* Test 2 complete: pet the WDT */
 
     /* ── Test 3: priority inheritance ──────────────────────────── */
     printf("\n[TEST 3] Mutex priority inheritance (anti-inversion)\n");
@@ -452,6 +471,7 @@ static void supervisor_task(void *arg)
      * a bounded number of times while LOW held the mutex. */
     printf("  MED ran %d time(s) while LOW held mutex\n",
             t3_med_runs_while_lo_holds);
+    kv_wdt_kick(); /* Test 3 complete: pet the WDT */
 
     /* ── Test 4: mul/div under frequent preemptions ───────────────── */
     printf("\n[TEST 4] Mul/div correctness under frequent preemptions\n");
@@ -489,6 +509,7 @@ static void supervisor_task(void *arg)
         TEST_FAIL(4, "div/mul result corrupted by context switch");
         printf("  div_fail=%d  mul_fail=%d\n", t4_div_fail, t4_mul_fail);
     }
+    kv_wdt_kick(); /* Test 4 complete: pet the WDT */
 
     /* ── Summary ────────────────────────────────────────────────── */
     printf("\n========================================\n");

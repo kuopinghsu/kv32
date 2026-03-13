@@ -177,6 +177,7 @@ KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
     );
     gpio = new GPIODevice();
     timer = new TimerDevice();
+    wdt = new WatchdogDevice();
 
     // Register universal slave interface windows
     register_device_slave(mem_base, mem_size, memory, "RAM");
@@ -189,6 +190,7 @@ KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
     register_device_slave(KV_DMA_BASE, KV_DMA_SIZE, dma, "DMA");
     register_device_slave(GPIO_BASE, GPIO_SIZE, gpio, "GPIO");
     register_device_slave(TIMER_BASE, TIMER_SIZE, timer, "TIMER");
+    register_device_slave(KV_WDT_BASE, KV_WDT_SIZE, wdt, "WDT");
 }
 
 KV32Simulator::~KV32Simulator() {
@@ -202,6 +204,7 @@ KV32Simulator::~KV32Simulator() {
     delete dma;
     delete gpio;
     delete timer;
+    delete wdt;
     slaves.clear();
 
     delete memory;
@@ -623,7 +626,7 @@ void KV32Simulator::take_trap(uint32_t cause, uint32_t tval) {
 // Check for pending interrupts
 void KV32Simulator::check_interrupts() {
     // ── PLIC: update IRQ sources from peripherals ──────────────────────────
-    // Sources: [1]=UART, [2]=SPI, [3]=I2C, [4]=DMA, [5]=GPIO, [6-9]=TIMER0-3  (matches kv32_soc.sv wiring)
+    // Sources: [1]=UART, [2]=SPI, [3]=I2C, [4]=DMA, [5]=GPIO, [6-9]=TIMER0-3, [10]=WDT  (matches kv32_soc.sv wiring)
     uint32_t plic_src = 0;
     if (uart->get_irq()) plic_src |= (1u << 1);
     if (spi->get_irq())  plic_src |= (1u << 2);
@@ -632,6 +635,8 @@ void KV32Simulator::check_interrupts() {
     if (gpio->get_irq()) plic_src |= (1u << KV_PLIC_SRC_GPIO);
     for (int _ch = 0; _ch < 4; _ch++)
         if (timer->get_irq_ch(_ch)) plic_src |= (1u << (KV_PLIC_SRC_TIMER0 + _ch));
+    if (wdt->get_irq()) plic_src |= (1u << KV_PLIC_SRC_WDT);
+    if (wdt->consume_reset()) { exit(2); }
     plic->update_irq_sources(plic_src);
 
     // ── Update MIP bits ───────────────────────────────────────────────────
@@ -1667,6 +1672,8 @@ void KV32Simulator::step() {
                         if (gpio->get_irq())  ps |= (1u << KV_PLIC_SRC_GPIO);
                         for (int _ch = 0; _ch < 4; _ch++)
                             if (timer->get_irq_ch(_ch)) ps |= (1u << (KV_PLIC_SRC_TIMER0 + _ch));
+                        if (wdt->get_irq()) ps |= (1u << KV_PLIC_SRC_WDT);
+                        if (wdt->consume_reset()) { exit(2); }
                         plic->update_irq_sources(ps);
                     }
                     if (clint->get_timer_interrupt())

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <svg
-   viewBox="0 0 1360 772"
+   viewBox="0 0 1360 842"
    width="1360"
-   height="772"
+   height="842"
    font-family="'Segoe UI', Arial, sans-serif"
    version="1.1"
    id="svg119"
@@ -109,7 +109,7 @@
      x="5.0063887"
      y="5.5653276"
      width="1350"
-     height="762"
+     height="832"
      rx="8"
      fill="#f8fafc"
      stroke="#1e293b"
@@ -744,7 +744,7 @@
      text-anchor="middle"
      font-size="10px"
      fill="#b45309"
-     id="text43">1 master · 10 slaves</text>
+     id="text43">1 master · 11 slaves</text>
   <text
      x="455.47382"
      y="348.69022"
@@ -765,12 +765,12 @@
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!--  VERTICAL AXI BUS BAR                                              -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <!-- Bus bar: covers center-y of all 10 slaves (65 to 695) -->
+  <!-- Bus bar: covers center-y of all 11 slaves (65 to 765) -->
   <line
      x1="600"
      y1="65"
      x2="600"
-     y2="695"
+     y2="765"
      stroke="#6B7280"
      stroke-width="3"
      id="line45" />
@@ -874,6 +874,15 @@
      stroke="#6b7280"
      stroke-width="2.09408"
      id="line57" />
+  <!-- S10 WDT  center y=765 -->
+  <line
+     x1="598.50824"
+     y1="765"
+     x2="614.25275"
+     y2="765"
+     stroke="#6b7280"
+     stroke-width="2.09408"
+     id="line58" />
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!--  SLAVE 0: RAM (2MB)                                               -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
@@ -1062,7 +1071,7 @@
      y="295"
      font-size="9"
      fill="#DB2777"
-     id="text74">Priority/Enable/Claim/Complete · srcs: UART(1) SPI(2) I2C(3) DMA(4) GPIO(5) TMR(6)</text>
+     id="text74">Priority/Enable/Claim/Complete · srcs: UART(1) SPI(2) I2C(3) DMA(4) GPIO(5) TMR(6-9) WDT(10)</text>
   <!-- ext_irq output label -->
   <text
      x="1058"
@@ -1359,107 +1368,162 @@
      font-family="'Courier New', monospace"
      id="text105">↔ gpio_out/in/oe[127:0]</text>
   <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!--  SLAVE 10: WDT                                                     -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <rect
+     x="615"
+     y="735"
+     width="440"
+     height="60"
+     rx="4"
+     fill="#F5F3FF"
+     stroke="#A78BFA"
+     stroke-width="1.5"
+     id="rect105" />
+  <text
+     x="625"
+     y="757"
+     font-size="12"
+     font-weight="bold"
+     fill="#4C1D95"
+     id="text106a">Slave 10: Watchdog Timer (WDT)</text>
+  <text
+     x="625"
+     y="771"
+     font-size="9"
+     fill="#6D28D9"
+     font-family="'Courier New', monospace"
+     id="text107a">0x2006_0000 – 0x2006_FFFF</text>
+  <text
+     x="625"
+     y="785"
+     font-size="9"
+     fill="#7C3AED"
+     id="text108a">32-bit countdown · KICK reload · INTR_EN: IRQ or reset · PLIC src 10</text>
+  <!-- pin label -->
+  <text
+     x="1058"
+     y="757"
+     font-size="9"
+     fill="#4C1D95"
+     font-weight="bold"
+     font-family="'Courier New', monospace"
+     id="text109a">→ wdt_reset_o</text>
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!--  EXTERNAL PINS LEGEND (bottom)                                     -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <line
      x1="15"
-     y1="740"
+     y1="810"
      x2="1345"
-     y2="740"
+     y2="810"
      stroke="#CBD5E1"
      stroke-width="1"
      stroke-dasharray="6,4"
      id="line105" />
   <text
      x="20"
-     y="754"
+     y="824"
      font-size="9"
      font-weight="bold"
      fill="#475569"
      id="text106">External Pins:  </text>
   <text
      x="108"
-     y="754"
+     y="824"
      font-size="9"
      fill="#475569"
      font-family="'Courier New', monospace"
      id="text107">clk, rst_n</text>
   <text
      x="193"
-     y="754"
+     y="824"
      font-size="9"
      fill="#475569"
      id="text108">  |  </text>
   <text
      x="215"
-     y="754"
+     y="824"
      font-size="9"
      fill="#166534"
      font-family="'Courier New', monospace"
      id="text109">uart_tx/rx</text>
   <text
      x="302"
-     y="754"
+     y="824"
      font-size="9"
      fill="#475569"
      id="text110">  |  </text>
   <text
      x="322"
-     y="754"
+     y="824"
      font-size="9"
      fill="#166534"
      font-family="'Courier New', monospace"
      id="text111">spi_sclk/mosi/miso/cs_n[3:0]</text>
   <text
      x="558"
-     y="754"
+     y="824"
      font-size="9"
      fill="#475569"
      id="text112">  |  </text>
   <text
      x="578"
-     y="754"
+     y="824"
      font-size="9"
      fill="#166534"
      font-family="'Courier New', monospace"
      id="text113">i2c_scl/sda (o/i/oe)</text>
   <text
      x="756"
-     y="754"
+     y="824"
      font-size="9"
      fill="#475569"
      id="text114">  |  </text>
   <text
      x="776"
-     y="754"
+     y="824"
      font-size="9"
      fill="#991B1B"
      font-family="'Courier New', monospace"
      id="text115">gpio_out/in/oe[127:0]</text>
   <text
      x="975"
-     y="754"
+     y="824"
      font-size="9"
      fill="#475569"
      id="text116">  |  </text>
   <text
      x="995"
-     y="754"
+     y="824"
      font-size="9"
      fill="#92400E"
      font-family="'Courier New', monospace"
      id="text117">pwm_out[3:0]</text>
   <text
      x="1090"
-     y="754"
+     y="824"
      font-size="9"
      fill="#475569"
      id="text118">  |  </text>
   <text
      x="1110"
-     y="754"
+     y="824"
      font-size="9"
      fill="#3730A3"
      font-family="'Courier New', monospace"
      id="text119">m_axi_* (ext RAM)</text>
+  <text
+     x="1218"
+     y="824"
+     font-size="9"
+     fill="#475569"
+     id="text120">  |  </text>
+  <text
+     x="1238"
+     y="824"
+     font-size="9"
+     fill="#4C1D95"
+     font-family="'Courier New', monospace"
+     id="text121">wdt_reset_o</text>
 </svg>

@@ -198,6 +198,7 @@ public:
     DMADevice* dma;
     GPIODevice* gpio;
     TimerDevice* timer;
+    WatchdogDevice* wdt;
 
     uint32_t tohost_addr;
     std::ofstream trace_file;

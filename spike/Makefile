@@ -62,7 +62,8 @@ PLUGINS = \
   $(BUILD_DIR)/spike_plugin_spi.so    \
   $(BUILD_DIR)/spike_plugin_dma.so    \
   $(BUILD_DIR)/spike_plugin_gpio.so   \
-  $(BUILD_DIR)/spike_plugin_timer.so
+  $(BUILD_DIR)/spike_plugin_timer.so  \
+  $(BUILD_DIR)/spike_plugin_wdt.so
 
 .PHONY: all clean
 

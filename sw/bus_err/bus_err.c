@@ -1,20 +1,20 @@
 // ============================================================================
 // File: bus_err.c
 // Project: KV32 RISC-V Processor
-// Description: AXI slave bus-error (SLVERR) test for 8 peripheral slaves
+// Description: AXI slave bus-error (SLVERR) test for 9 peripheral slaves
 //              plus null-address accesses on data and instruction paths.
 //
-// Peripheral slave tests (tests 1-16):
+// Peripheral slave tests (tests 1-18):
 //   Verifies that a load/store to an out-of-range address within each
 //   AXI peripheral raises the correct access-fault exception (cause 5 or 7)
 //   and that the exception handler can resume execution at mepc+4.
 //
-// Null-address tests (tests 17-19):
-//   Tests 17-18: Load/store to virtual address 0x0 via the data AXI bus.
+// Null-address tests (tests 19-21):
+//   Tests 19-20: Load/store to virtual address 0x0 via the data AXI bus.
 //     Address 0 is unmapped on the data path (the sole AXI memory slave
 //     lives at 0x8000_0000), so the arbiter returns DECERR → SLVERR,
 //     raising LOAD_FAULT (5) or STORE_FAULT (7) respectively.
-//   Test 19: Function call through a NULL pointer.
+//   Test 21: Function call through a NULL pointer.
 //     The JALR redirects the PC to 0x0; the instruction fetch from 0x0
 //     returns SLVERR on the instruction AXI port, raising INSN_FAULT (1).
 //     Because mepc = 0 after the fault, the handler cannot use mepc+4 to
@@ -176,14 +176,18 @@ int main(void)
     test_peripheral(8, "Magic",
                     (volatile uint32_t *)(KV_MAGIC_BASE + 0x0008UL));
 
+    /* WDT: registers end at offset 0x14 (CAP); probe offset 0x18 → SLVERR */
+    test_peripheral(9, "WDT",
+                    (volatile uint32_t *)(KV_WDT_BASE   + 0x018UL));
+
     /* ── Null-address tests ── */
-    /* Tests 17 & 18: data load/store to address 0x0.
+    /* Tests 19 & 20: data load/store to address 0x0.
      * Address 0 is not mapped on the data AXI path (only slave at
      * 0x8000_0000), so the arbiter returns DECERR → load/store access fault. */
-    test_peripheral(9, "NULL ptr (data)",
+    test_peripheral(10, "NULL ptr (data)",
                     (volatile uint32_t *)0);
 
-    /* Test 19: function call through NULL pointer.
+    /* Test 21: function call through NULL pointer.
      * JALR redirects PC to 0x0; instruction fetch from 0x0 returns SLVERR
      * on the instruction AXI port, raising instruction access fault (cause 1).
      * mepc = 0x0 after the fault so the handler uses a pre-stored resume
@@ -196,7 +200,7 @@ int main(void)
      *   "la %0, 1f"  – loads the address of forward label 1: into resume
      *   "1:"         – marks the instruction immediately after the null call
      * Both asm statements are volatile so GCC cannot reorder them. */
-    printf("[TEST 19] NULL function call -> instruction access fault\n");
+    printf("[TEST 21] NULL function call -> instruction access fault\n");
     g_bus_err_caught = 0;
     g_bus_err_mcause = 0xFFFFFFFFu;
 
@@ -214,13 +218,13 @@ int main(void)
     }
 
     if (!g_bus_err_caught) {
-        TEST_FAIL(19, "NULL call produced no exception");
+        TEST_FAIL(21, "NULL call produced no exception");
     } else if ((g_bus_err_mcause & 0x1Fu) != KV_EXC_INSN_FAULT) {
-        printf("[TEST 19] FAIL: wrong cause %u (expected %u)\n",
+        printf("[TEST 21] FAIL: wrong cause %u (expected %u)\n",
                (unsigned)(g_bus_err_mcause & 0x1Fu), KV_EXC_INSN_FAULT);
         g_fail++;
     } else {
-        TEST_PASS(19);
+        TEST_PASS(21);
     }
 
     /* ── summary ── */

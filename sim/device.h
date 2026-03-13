@@ -580,6 +580,45 @@ public:
     bool get_pwm_output(int timer_num) const;
 };
 
+// ── Watchdog Timer Device ─────────────────────────────────────────────────
+// Base address: KV_WDT_BASE (0x2006_0000).  Matches RTL axi_wdt.sv.
+//
+// Register map:
+//   0x00  CTRL    [0]=EN, [1]=INTR_EN (1=IRQ, 0=hardware reset)
+//   0x04  LOAD    Reload value (written before enable)
+//   0x08  COUNT   Current count (RO)
+//   0x0C  KICK    WO: any write reloads COUNT from LOAD
+//   0x10  STATUS  [0]=WDT_INT (W1C)
+//   0x14  CAP     RO capability word (0x0001_0020)
+//
+// On expiry (EN=1, COUNT reaches 0):
+//   INTR_EN=1 → STATUS[0] set, IRQ asserted via PLIC src KV_PLIC_SRC_WDT
+//   INTR_EN=0 → consume_reset() returns true → simulator calls exit(2)
+class WatchdogDevice : public Device {
+private:
+    uint32_t ctrl_r;        // [0]=EN, [1]=INTR_EN
+    uint32_t load_r;        // Reload value
+    uint32_t count_r;       // Current countdown value
+    uint32_t status_r;      // [0]=WDT_INT (W1C)
+    bool     reset_pending; // Hardware reset pending (INTR_EN=0 expiry)
+
+public:
+    WatchdogDevice();
+    virtual ~WatchdogDevice() {}
+
+    virtual uint32_t read(uint32_t offset, int size) override;
+    virtual void write(uint32_t offset, uint32_t value, int size) override;
+    virtual const char* name() const override { return "WDT"; }
+    virtual void tick() override;
+    virtual void reset() override;
+
+    // IRQ asserted when STATUS[0]=1 and INTR_EN=1.
+    bool get_irq() const;
+
+    // Returns true (and clears flag) if a hardware reset is pending.
+    bool consume_reset();
+};
+
 /** @} */ /* end group devices */
 
 #endif // DEVICE_H

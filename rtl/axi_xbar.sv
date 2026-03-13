@@ -1,9 +1,9 @@
 // ============================================================================
 // File: axi_xbar.sv
 // Project: KV32 RISC-V Processor
-// Description: AXI4 1-to-10 Crossbar (Interconnect)
+// Description: AXI4 1-to-11 Crossbar (Interconnect)
 //
-// Routes AXI4 transactions from a single master to ten slave devices:
+// Routes AXI4 transactions from a single master to eleven slave devices:
 //   - Slave 0: Main RAM       (0x8000_0000 - 0x801F_FFFF)
 //   - Slave 1: Magic Device   (0x4000_0000 - 0x4000_FFFF)
 //   - Slave 2: CLINT Timer    (0x0200_0000 - 0x020B_FFFF)
@@ -14,6 +14,7 @@
 //   - Slave 7: SPI            (0x2003_0000 - 0x2003_FFFF)
 //   - Slave 8: Timer/PWM      (0x2004_0000 - 0x2004_FFFF)
 //   - Slave 9: GPIO           (0x2005_0000 - 0x2005_FFFF)
+//   - Slave 10: WDT           (0x2006_0000 - 0x2006_FFFF)
 //
 // Handles address decoding, channel routing with ID support, and error
 // responses for unmapped addresses. Supports multiple outstanding transactions
@@ -21,7 +22,7 @@
 // ============================================================================
 
 /**
- * @brief AXI4-Lite 1×10 crossbar interconnect.
+ * @brief AXI4-Lite 1×11 crossbar interconnect.
  *
  * Routes a single AXI master to up to 10 slaves via address decoding.
  * Handles read and write channel arbitration, SLVERR for unmapped
@@ -305,12 +306,35 @@ module axi_xbar (
     input  logic [31:0] s9_axi_rdata,
     input  logic [1:0]  s9_axi_rresp,
     input  logic        s9_axi_rvalid,
-    output logic        s9_axi_rready
+    output logic        s9_axi_rready,
+
+    // Slave 10: WDT (0x2006_0000 - 0x2006_FFFF)
+    output logic [31:0] s10_axi_awaddr,
+    output logic        s10_axi_awvalid,
+    input  logic        s10_axi_awready,
+
+    output logic [31:0] s10_axi_wdata,
+    output logic [3:0]  s10_axi_wstrb,
+    output logic        s10_axi_wvalid,
+    input  logic        s10_axi_wready,
+
+    input  logic [1:0]  s10_axi_bresp,
+    input  logic        s10_axi_bvalid,
+    output logic        s10_axi_bready,
+
+    output logic [31:0] s10_axi_araddr,
+    output logic        s10_axi_arvalid,
+    input  logic        s10_axi_arready,
+
+    input  logic [31:0] s10_axi_rdata,
+    input  logic [1:0]  s10_axi_rresp,
+    input  logic        s10_axi_rvalid,
+    output logic        s10_axi_rready
 );
 
     // Address decode
-    logic sel_s0_aw, sel_s1_aw, sel_s2_aw, sel_s3_aw, sel_s4_aw, sel_s5_aw, sel_s6_aw, sel_s7_aw, sel_s8_aw, sel_s9_aw;
-    logic sel_s0_ar, sel_s1_ar, sel_s2_ar, sel_s3_ar, sel_s4_ar, sel_s5_ar, sel_s6_ar, sel_s7_ar, sel_s8_ar, sel_s9_ar;
+    logic sel_s0_aw, sel_s1_aw, sel_s2_aw, sel_s3_aw, sel_s4_aw, sel_s5_aw, sel_s6_aw, sel_s7_aw, sel_s8_aw, sel_s9_aw, sel_s10_aw;
+    logic sel_s0_ar, sel_s1_ar, sel_s2_ar, sel_s3_ar, sel_s4_ar, sel_s5_ar, sel_s6_ar, sel_s7_ar, sel_s8_ar, sel_s9_ar, sel_s10_ar;
 
     // ID FIFOs per slave to correctly handle multiple outstanding reads.
     // A single register was insufficient: if IMEM and DMEM both issue ARs to the
@@ -340,6 +364,8 @@ module axi_xbar (
     logic [$clog2(AR_ID_FIFO_DEPTH):0] s8_ar_id_wr_ptr, s8_ar_id_rd_ptr;
     logic [axi_pkg::AXI_ID_WIDTH-1:0] s9_ar_id_fifo [0:AR_ID_FIFO_DEPTH-1];
     logic [$clog2(AR_ID_FIFO_DEPTH):0] s9_ar_id_wr_ptr, s9_ar_id_rd_ptr;
+    logic [axi_pkg::AXI_ID_WIDTH-1:0] s10_ar_id_fifo [0:AR_ID_FIFO_DEPTH-1];
+    logic [$clog2(AR_ID_FIFO_DEPTH):0] s10_ar_id_wr_ptr, s10_ar_id_rd_ptr;
 
     // Decode error handling for unmapped read addresses
     localparam int DECODE_ERR_FIFO_DEPTH = 8;
@@ -370,6 +396,7 @@ module axi_xbar (
             s7_ar_id_wr_ptr <= '0; s7_ar_id_rd_ptr <= '0;
             s8_ar_id_wr_ptr <= '0; s8_ar_id_rd_ptr <= '0;
             s9_ar_id_wr_ptr <= '0; s9_ar_id_rd_ptr <= '0;
+            s10_ar_id_wr_ptr <= '0; s10_ar_id_rd_ptr <= '0;
         end else begin
             // Push: AR accepted to each slave
             if (m_axi_arvalid && s0_axi_arready && sel_s0_ar) begin
@@ -412,6 +439,10 @@ module axi_xbar (
                 s9_ar_id_fifo[s9_ar_id_wr_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]] <= m_axi_arid;
                 s9_ar_id_wr_ptr <= s9_ar_id_wr_ptr + 1;
             end
+            if (m_axi_arvalid && s10_axi_arready && sel_s10_ar) begin
+                s10_ar_id_fifo[s10_ar_id_wr_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]] <= m_axi_arid;
+                s10_ar_id_wr_ptr <= s10_ar_id_wr_ptr + 1;
+            end
             // Pop: R handshake completes for each slave
             // Slave 0 may return multi-beat bursts – only pop FIFO on the last beat.
             if (s0_axi_rvalid && s0_axi_rready && s0_axi_rlast) s0_ar_id_rd_ptr <= s0_ar_id_rd_ptr + 1;
@@ -424,12 +455,13 @@ module axi_xbar (
             if (s7_axi_rvalid && s7_axi_rready) s7_ar_id_rd_ptr <= s7_ar_id_rd_ptr + 1;
             if (s8_axi_rvalid && s8_axi_rready) s8_ar_id_rd_ptr <= s8_ar_id_rd_ptr + 1;
             if (s9_axi_rvalid && s9_axi_rready) s9_ar_id_rd_ptr <= s9_ar_id_rd_ptr + 1;
+            if (s10_axi_rvalid && s10_axi_rready) s10_ar_id_rd_ptr <= s10_ar_id_rd_ptr + 1;
         end
     end
 
     // Decode error FIFO for unmapped read addresses
     assign decode_err_push = m_axi_arvalid && m_axi_arready &&
-                            !(sel_s0_ar | sel_s1_ar | sel_s2_ar | sel_s3_ar | sel_s4_ar | sel_s5_ar | sel_s6_ar | sel_s7_ar | sel_s8_ar | sel_s9_ar);
+                            !(sel_s0_ar | sel_s1_ar | sel_s2_ar | sel_s3_ar | sel_s4_ar | sel_s5_ar | sel_s6_ar | sel_s7_ar | sel_s8_ar | sel_s9_ar | sel_s10_ar);
     assign decode_err_pending = (decode_err_wr_ptr != decode_err_rd_ptr);
     // 1-cycle delay: only drive rvalid/pop after pending has been registered,
     // preventing the push and pop from firing in the same simulation delta cycle.
@@ -469,7 +501,7 @@ module axi_xbar (
     assign decode_err_beat_accepted = decode_err_valid && m_axi_rready && decode_err_s0_ok &&
                             !(s0_axi_rvalid | s1_axi_rvalid | s2_axi_rvalid | s3_axi_rvalid |
                               s4_axi_rvalid | s5_axi_rvalid | s6_axi_rvalid | s7_axi_rvalid |
-                              s8_axi_rvalid | s9_axi_rvalid);
+                              s8_axi_rvalid | s9_axi_rvalid | s10_axi_rvalid);
     // Pop the FIFO entry only after all arlen+1 beats have been delivered
     assign decode_err_pop = decode_err_beat_accepted &&
                             (decode_err_beat_cnt == decode_err_len_fifo[decode_err_rd_ptr[$clog2(DECODE_ERR_FIFO_DEPTH)-1:0]]);
@@ -572,6 +604,7 @@ module axi_xbar (
         sel_s7_aw = (m_axi_awaddr[31:16] == 16'h2003);   // SPI
         sel_s8_aw = (m_axi_awaddr[31:16] == 16'h2004);   // Timer/PWM
         sel_s9_aw = (m_axi_awaddr[31:16] == 16'h2005);   // GPIO
+        sel_s10_aw = (m_axi_awaddr[31:16] == 16'h2006);  // WDT
     end
 
     // Read address decode
@@ -586,6 +619,7 @@ module axi_xbar (
         sel_s7_ar = (m_axi_araddr[31:16] == 16'h2003);  // SPI (64 KB)
         sel_s8_ar = (m_axi_araddr[31:16] == 16'h2004);  // Timer/PWM (64 KB)
         sel_s9_ar = (m_axi_araddr[31:16] == 16'h2005);  // GPIO (64 KB)
+        sel_s10_ar = (m_axi_araddr[31:16] == 16'h2006); // WDT (64 KB)
     end
 
     // Forward declarations needed by debug always block and W-channel routing below
@@ -595,12 +629,12 @@ module axi_xbar (
 
     always_ff @(posedge clk) begin
         if (m_axi_arvalid) begin
-            `DEBUG2(`DBG_GRP_AXI, ("[XBAR][%0t] AR: addr=0x%h arready=%b sel=%b%b%b%b%b%b%b%b%b%b",
-                $time, m_axi_araddr, m_axi_arready, sel_s9_ar, sel_s8_ar, sel_s7_ar, sel_s6_ar, sel_s5_ar, sel_s4_ar, sel_s3_ar, sel_s2_ar, sel_s1_ar, sel_s0_ar));
+            `DEBUG2(`DBG_GRP_AXI, ("[XBAR][%0t] AR: addr=0x%h arready=%b sel=%b%b%b%b%b%b%b%b%b%b%b",
+                $time, m_axi_araddr, m_axi_arready, sel_s10_ar, sel_s9_ar, sel_s8_ar, sel_s7_ar, sel_s6_ar, sel_s5_ar, sel_s4_ar, sel_s3_ar, sel_s2_ar, sel_s1_ar, sel_s0_ar));
         end
         if (m_axi_awvalid) begin
-            `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AW: addr=0x%h sel=%b%b%b%b%b%b%b%b%b%b awready=%b w_transaction_active=%b",
-                m_axi_awaddr, sel_s9_aw, sel_s8_aw, sel_s7_aw, sel_s6_aw, sel_s5_aw, sel_s4_aw, sel_s3_aw, sel_s2_aw, sel_s1_aw, sel_s0_aw,
+            `DEBUG2(`DBG_GRP_AXI, ("[XBAR] AW: addr=0x%h sel=%b%b%b%b%b%b%b%b%b%b%b awready=%b w_transaction_active=%b",
+                m_axi_awaddr, sel_s10_aw, sel_s9_aw, sel_s8_aw, sel_s7_aw, sel_s6_aw, sel_s5_aw, sel_s4_aw, sel_s3_aw, sel_s2_aw, sel_s1_aw, sel_s0_aw,
                 m_axi_awready, w_transaction_active));
         end
     end
@@ -650,6 +684,9 @@ module axi_xbar (
         s9_axi_awaddr  = m_axi_awaddr;
         s9_axi_awvalid = m_axi_awvalid && sel_s9_aw && !block_aw_active;
 
+        s10_axi_awaddr  = m_axi_awaddr;
+        s10_axi_awvalid = m_axi_awvalid && sel_s10_aw && !block_aw_active;
+
         if (block_aw_active) begin
             m_axi_awready = 1'b0;
         end else if (sel_s0_aw)
@@ -672,6 +709,8 @@ module axi_xbar (
             m_axi_awready = s8_axi_awready;
         else if (sel_s9_aw)
             m_axi_awready = s9_axi_awready;
+        else if (sel_s10_aw)
+            m_axi_awready = s10_axi_awready;
         else
             m_axi_awready = m_axi_wready;  // Decode error
     end
@@ -694,7 +733,8 @@ module axi_xbar (
         else if (sel_s7_aw) w_sel_next = 4'd7;
         else if (sel_s8_aw) w_sel_next = 4'd8;
         else if (sel_s9_aw) w_sel_next = 4'd9;
-        else                w_sel_next = 4'd10;  // decode error
+        else if (sel_s10_aw) w_sel_next = 4'd10;
+        else                w_sel_next = 4'd11;  // decode error
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -707,7 +747,7 @@ module axi_xbar (
             // to avoid w_transaction_active being incorrectly cleared.
             if (m_axi_bvalid && m_axi_bready) begin
                 // B response completing this cycle
-                if (w_sel == 4'd10) begin
+                if (w_sel == 4'd11) begin
                     write_decode_err_w_done <= 1'b0;
                 end
                 if (m_axi_awvalid && m_axi_awready) begin
@@ -716,7 +756,7 @@ module axi_xbar (
                     w_sel <= w_sel_next;
                     w_transaction_active <= 1'b1;
                     `DEBUG2(`DBG_GRP_AXI, ("[XBAR] B+AW simultaneous: w_sel=%0d addr=0x%h", w_sel_next, m_axi_awaddr));
-                    if (w_sel_next == 4'd10) begin
+                    if (w_sel_next == 4'd11) begin
                         write_decode_err_w_done <= 1'b0;
                     end
                 end else begin
@@ -728,13 +768,13 @@ module axi_xbar (
                 w_sel <= w_sel_next;
                 w_transaction_active <= 1'b1;
                 `DEBUG2(`DBG_GRP_AXI, ("[XBAR] Captured w_sel=%0d from AW addr=0x%h", w_sel_next, m_axi_awaddr));
-                if (w_sel_next == 4'd10) begin
+                if (w_sel_next == 4'd11) begin
                     write_decode_err_w_done <= 1'b0;
                 end
             end
 
             // Track W data received for decode error
-            if (m_axi_wvalid && m_axi_wready && active_w_dest == 4'd10) begin
+            if (m_axi_wvalid && m_axi_wready && active_w_dest == 4'd11) begin
                 write_decode_err_w_done <= 1'b1;
             end
         end
@@ -800,6 +840,10 @@ module axi_xbar (
         s9_axi_wstrb  = m_axi_wstrb;
         s9_axi_wvalid = m_axi_wvalid && (active_w_dest == 4'd9);
 
+        s10_axi_wdata  = m_axi_wdata;
+        s10_axi_wstrb  = m_axi_wstrb;
+        s10_axi_wvalid = m_axi_wvalid && (active_w_dest == 4'd10);
+
         case (active_w_dest)
             4'd0:    m_axi_wready = s0_axi_wready;
             4'd1:    m_axi_wready = s1_axi_wready;
@@ -811,6 +855,7 @@ module axi_xbar (
             4'd7:    m_axi_wready = s7_axi_wready;
             4'd8:    m_axi_wready = s8_axi_wready;
             4'd9:    m_axi_wready = s9_axi_wready;
+            4'd10:   m_axi_wready = s10_axi_wready;
             default: m_axi_wready = 1'b1;
         endcase
     end
@@ -827,6 +872,7 @@ module axi_xbar (
         s7_axi_bready = m_axi_bready && (w_sel == 4'd7);
         s8_axi_bready = m_axi_bready && (w_sel == 4'd8);
         s9_axi_bready = m_axi_bready && (w_sel == 4'd9);
+        s10_axi_bready = m_axi_bready && (w_sel == 4'd10);
 
         m_axi_bid = w_id_reg;
 
@@ -870,6 +916,10 @@ module axi_xbar (
             4'd9: begin
                 m_axi_bresp  = s9_axi_bresp;
                 m_axi_bvalid = s9_axi_bvalid;
+            end
+            4'd10: begin
+                m_axi_bresp  = s10_axi_bresp;
+                m_axi_bvalid = s10_axi_bvalid;
             end
             default: begin
                 m_axi_bresp  = 2'b11;  // DECERR
@@ -947,6 +997,9 @@ module axi_xbar (
         s9_axi_araddr  = m_axi_araddr;
         s9_axi_arvalid = m_axi_arvalid && sel_s9_ar;
 
+        s10_axi_araddr  = m_axi_araddr;
+        s10_axi_arvalid = m_axi_arvalid && sel_s10_ar;
+
         if (sel_s0_ar)
             m_axi_arready = s0_axi_arready;
         else if (sel_s1_ar)
@@ -967,6 +1020,8 @@ module axi_xbar (
             m_axi_arready = s8_axi_arready;
         else if (sel_s9_ar)
             m_axi_arready = s9_axi_arready;
+        else if (sel_s10_ar)
+            m_axi_arready = s10_axi_arready;
         else
             m_axi_arready = 1'b1;  // Decode error
     end
@@ -994,8 +1049,10 @@ module axi_xbar (
             r_sel_next = 4'd8;
         else if (sel_s9_ar)
             r_sel_next = 4'd9;
-        else
+        else if (sel_s10_ar)
             r_sel_next = 4'd10;
+        else
+            r_sel_next = 4'd11;
     end
 `endif // DEBUG
 
@@ -1014,6 +1071,7 @@ module axi_xbar (
         s7_axi_rready = 1'b0;
         s8_axi_rready = 1'b0;
         s9_axi_rready = 1'b0;
+        s10_axi_rready = 1'b0;
 
         m_axi_rdata  = 32'h0;
         m_axi_rresp  = 2'b00;
@@ -1092,6 +1150,13 @@ module axi_xbar (
             m_axi_rlast   = 1'b1;
             m_axi_rvalid  = 1'b1;
             m_axi_rid     = s9_ar_id_fifo[s9_ar_id_rd_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]];
+        end else if (s10_axi_rvalid) begin
+            s10_axi_rready = m_axi_rready;
+            m_axi_rdata   = s10_axi_rdata;
+            m_axi_rresp   = s10_axi_rresp;
+            m_axi_rlast   = 1'b1;
+            m_axi_rvalid  = 1'b1;
+            m_axi_rid     = s10_ar_id_fifo[s10_ar_id_rd_ptr[$clog2(AR_ID_FIFO_DEPTH)-1:0]];
         end else if (decode_err_valid && decode_err_s0_ok) begin
             // Generate decode error response for unmapped address.
             // Must send arlen+1 beats and assert RLAST only on the final beat
@@ -1223,14 +1288,14 @@ module axi_xbar (
     // Address Decode Correctness
     property p_address_decode_onehot;
         @(posedge clk) disable iff (!rst_n)
-        (m_axi_awvalid) |-> $onehot0({sel_s0_aw, sel_s1_aw, sel_s2_aw, sel_s3_aw, sel_s4_aw, sel_s5_aw, sel_s6_aw, sel_s7_aw, sel_s8_aw, sel_s9_aw});
+        (m_axi_awvalid) |-> $onehot0({sel_s0_aw, sel_s1_aw, sel_s2_aw, sel_s3_aw, sel_s4_aw, sel_s5_aw, sel_s6_aw, sel_s7_aw, sel_s8_aw, sel_s9_aw, sel_s10_aw});
     endproperty
     assert property (p_address_decode_onehot)
         else $error("[AXI_XBAR] Write address decode must be one-hot or zero (decode error)");
 
     property p_read_decode_onehot;
         @(posedge clk) disable iff (!rst_n)
-        (m_axi_arvalid) |-> $onehot0({sel_s0_ar, sel_s1_ar, sel_s2_ar, sel_s3_ar, sel_s4_ar, sel_s5_ar, sel_s6_ar, sel_s7_ar, sel_s8_ar, sel_s9_ar});
+        (m_axi_arvalid) |-> $onehot0({sel_s0_ar, sel_s1_ar, sel_s2_ar, sel_s3_ar, sel_s4_ar, sel_s5_ar, sel_s6_ar, sel_s7_ar, sel_s8_ar, sel_s9_ar, sel_s10_ar});
     endproperty
     assert property (p_read_decode_onehot)
         else $error("[AXI_XBAR] Read address decode must be one-hot or zero (decode error)");

@@ -1545,3 +1545,83 @@ void TimerDevice::write(uint32_t offset, uint32_t value, int size) {
     }
 }
 
+// ============================================================================
+// Watchdog Timer Device Implementation
+// ============================================================================
+
+WatchdogDevice::WatchdogDevice() {
+    reset();
+}
+
+void WatchdogDevice::reset() {
+    ctrl_r        = 0;
+    load_r        = 0xFFFFFFFFu;
+    count_r       = 0xFFFFFFFFu;
+    status_r      = 0;
+    reset_pending = false;
+}
+
+void WatchdogDevice::tick() {
+    if (!(ctrl_r & 1u)) return;  // EN=0: stopped
+    if (count_r == 0)   return;  // Already expired; latch held until KICK
+    count_r--;
+    if (count_r == 0) {
+        // Expiry event
+        if (ctrl_r & 2u) {
+            status_r |= 1u;     // INTR_EN=1: set WDT_INT
+        } else {
+            reset_pending = true; // INTR_EN=0: hardware reset
+        }
+    }
+}
+
+bool WatchdogDevice::get_irq() const {
+    return ((status_r & 1u) && (ctrl_r & 2u));
+}
+
+bool WatchdogDevice::consume_reset() {
+    bool v = reset_pending;
+    reset_pending = false;
+    return v;
+}
+
+uint32_t WatchdogDevice::read(uint32_t offset, int size) {
+    (void)size;
+    switch (offset) {
+    case KV_WDT_CTRL_OFF:   return ctrl_r;
+    case KV_WDT_LOAD_OFF:   return load_r;
+    case KV_WDT_COUNT_OFF:  return count_r;
+    case KV_WDT_KICK_OFF:   return 0u;          // WO: reads return 0
+    case KV_WDT_STATUS_OFF: return status_r;
+    case KV_WDT_CAP_OFF:    return 0x00010020u;  // version=1, width=32
+    default:
+        last_bus_error = true;
+        return 0u;
+    }
+}
+
+void WatchdogDevice::write(uint32_t offset, uint32_t value, int size) {
+    (void)size;
+    switch (offset) {
+    case KV_WDT_CTRL_OFF:
+        ctrl_r = value & 3u;    // Only bits [1:0] are writable
+        break;
+    case KV_WDT_LOAD_OFF:
+        load_r = value;
+        break;
+    case KV_WDT_COUNT_OFF:
+        break;                  // COUNT is RO
+    case KV_WDT_KICK_OFF:
+        count_r = load_r;       // Any write reloads COUNT from LOAD
+        break;
+    case KV_WDT_STATUS_OFF:
+        status_r &= ~value;     // W1C
+        break;
+    case KV_WDT_CAP_OFF:
+        break;                  // CAP is RO
+    default:
+        last_bus_error = true;
+        break;
+    }
+}
+

@@ -68,7 +68,9 @@ module tb_kv32_soc #(
     output logic [63:0] instret_count,
     output logic [63:0] stall_count,
     output logic [63:0] first_retire_cycle,
-    output logic [63:0] last_retire_cycle
+    output logic [63:0] last_retire_cycle,
+    // WDT hardware reset output (asserted on watchdog reset-mode expiry)
+    output logic        wdt_reset_o
 `ifndef SYNTHESIS
     ,output logic timeout_error
     // Trace-compare mode: when asserted (+TRACE active), cycle/time CSR reads in
@@ -233,7 +235,8 @@ module tb_kv32_soc #(
         .instret_count(instret_count),
         .stall_count(stall_count),
         .first_retire_cycle(first_retire_cycle),
-        .last_retire_cycle(last_retire_cycle)
+        .last_retire_cycle(last_retire_cycle),
+        .wdt_reset_o(wdt_reset_o)
 `ifndef SYNTHESIS
         ,.timeout_error(timeout_error)
         ,.trace_mode(trace_mode)
@@ -252,6 +255,17 @@ module tb_kv32_soc #(
         ,.dcache_perf_cmo_cnt   (dcache_perf_cmo_cnt)
 `endif
     );
+
+    // WDT reset monitor: stop simulation when WDT fires in reset mode (INTR_EN=0).
+    // In hardware wdt_reset_o feeds the system reset tree; here we halt simulation.
+`ifndef SYNTHESIS
+    always @(posedge clk) begin
+        if (wdt_reset_o) begin
+            $display("[TB] WDT RESET: watchdog expired in reset mode at time %0t", $time);
+            $finish(2);
+        end
+    end
+`endif
 
     // AXI write-channel monitor — detects tohost writes and exits simulation
     axi_monitor tohost_monitor (

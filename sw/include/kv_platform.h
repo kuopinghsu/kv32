@@ -60,6 +60,7 @@
 #define KV_PLIC_SRC_TIMER1  7   /* Timer channel 1 compare match */
 #define KV_PLIC_SRC_TIMER2  8   /* Timer channel 2 compare match */
 #define KV_PLIC_SRC_TIMER3  9   /* Timer channel 3 compare match */
+#define KV_PLIC_SRC_WDT     10  /* Hardware watchdog timer */
 
 /* ═══════════════════════════════════════════════════════════════════
  * UART  (0x2001_0000, 64 KB)
@@ -327,6 +328,27 @@
 #define KV_TIMER_CTRL_INT_EN_BIT  3       /* [3]: Interrupt enable */
 #define KV_TIMER_CTRL_PWM_POL_BIT 4       /* [4]: PWM polarity */
 /* [31:16]: Prescaler value */
+
+/* ═══════════════════════════════════════════════════════════════════
+ * WDT  (0x2006_0000, 64 KB)
+ * ══════════════════════════════════════════════════════════════════ */
+#define KV_WDT_BASE             0x20060000UL
+#define KV_WDT_SIZE             0x00010000UL
+
+/* Register offsets */
+#define KV_WDT_CTRL_OFF         0x00UL  /* [0]=EN, [1]=INTR_EN              */
+#define KV_WDT_LOAD_OFF         0x04UL  /* Reload value                     */
+#define KV_WDT_COUNT_OFF        0x08UL  /* Current count (RO)               */
+#define KV_WDT_KICK_OFF         0x0CUL  /* WO: reload count from LOAD       */
+#define KV_WDT_STATUS_OFF       0x10UL  /* [0]=WDT_INT (W1C)                */
+#define KV_WDT_CAP_OFF          0x14UL  /* RO: 0x0001_0020                  */
+
+/* CTRL bits */
+#define KV_WDT_CTRL_EN_BIT      0       /* [0]: WDT enable                  */
+#define KV_WDT_CTRL_INTR_EN_BIT 1       /* [1]: interrupt mode (0 = panic)  */
+
+/* STATUS bits */
+#define KV_WDT_STATUS_INT_BIT   0       /* [0]: WDT interrupt (W1C)         */
 
 /* ═══════════════════════════════════════════════════════════════════
  * Register accessor macro  (firmware only; not used by simulator)

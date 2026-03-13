@@ -1,7 +1,7 @@
 RISC-V 32-bit IMAC Processor
 ============================
 
-K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMAC_Zicsr support, featuring a 5-stage pipeline, instruction and data caches, a JTAG/cJTAG debug interface, a 1-to-10 AXI4-Lite interconnect with nine on-chip peripherals, and both RTL and functional simulators.
+K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMAC_Zicsr support, featuring a 5-stage pipeline, instruction and data caches, a JTAG/cJTAG debug interface, a 1-to-11 AXI4-Lite interconnect with ten on-chip peripherals, and both RTL and functional simulators.
 
 ## Features
 
@@ -15,7 +15,7 @@ K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IM
 - **Exceptions**: Illegal instruction, ECALL, EBREAK, load/store faults
 
 ### System Features
-- **Bus Interface**: AXI4-Lite 1-to-10 interconnect (single master, ten slaves)
+- **Bus Interface**: AXI4-Lite 1-to-11 interconnect (single master, eleven slaves)
 - **Memory**: 2MB RAM at `0x8000_0000` with DPI-C access for ELF loading
 - **Instruction Cache**: 2-way set-associative, 4 KB, 64-byte cache lines (configurable via `CACHE_SIZE`, `CACHE_LINE_SIZE`, `CACHE_WAYS`); controlled by `ICACHE_EN` parameter
 - **Data Cache**: configurable write-back/write-through, write-allocate/no-alloc, N-way set-associative, 4 KB 2-way default; critical-word-first AXI4 WRAP bursts; CMO (CBO.FLUSH/CBO.CLEAN/CBO.INVAL) and FENCE.I; PMA-based bypass for non-cacheable addresses; controlled by `DCACHE_EN` parameter
@@ -30,6 +30,7 @@ K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IM
   - GPIO — up to 128 configurable I/O pins
   - Timer/PWM — four independent 32-bit timers
   - DMA — memory-to-memory transfer engine
+  - Watchdog Timer (WDT) — hardware reset/interrupt on timeout
   - Magic — simulation console output and exit control
 - **RTOS**: FreeRTOS and Zephyr ports (`rtos/freertos/`, `rtos/zephyr/`)
 - **Simulation**:
@@ -54,6 +55,7 @@ K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IM
 | 7 | **SPI** | `0x2003_0000` | `0x2003_FFFF` | 64 KB | SPI master, 4 chip-selects |
 | 8 | **Timer/PWM** | `0x2004_0000` | `0x2004_FFFF` | 64 KB | Four independent 32-bit timers/PWM |
 | 9 | **GPIO** | `0x2005_0000` | `0x2005_FFFF` | 64 KB | Up to 128 configurable GPIO pins |
+| 10 | **WDT** | `0x2006_0000` | `0x2006_FFFF` | 64 KB | Hardware watchdog timer (reset or IRQ on timeout) |
 
 ### Magic Device Registers
 
@@ -88,7 +90,7 @@ kv32/
 │   │   └── sram_1rw.sv     # Single-port SRAM wrapper (used by caches)
 │   ├── kv32_soc.sv         # SoC top-level
 │   ├── axi_pkg.sv          # AXI definitions
-│   ├── axi_xbar.sv         # AXI crossbar / 1-to-10 interconnect
+│   ├── axi_xbar.sv         # AXI crossbar / 1-to-11 interconnect
 │   ├── axi_arbiter.sv      # AXI arbiter (instruction/data read channels)
 │   ├── kv32_icache.sv      # Instruction cache (configurable set-associative)
 │   ├── kv32_dcache.sv      # Data cache (write-back/write-through, CMO, PMA)
@@ -102,6 +104,7 @@ kv32/
 │   ├── axi_dma.sv          # DMA engine (memory-to-memory)
 │   ├── axi_gpio.sv         # GPIO controller (up to 128 pins)
 │   ├── axi_timer.sv        # Timer/PWM (4 independent 32-bit timers)
+│   ├── axi_wdt.sv          # Hardware watchdog timer
 │   ├── axi_magic.sv        # Simulation console, exit control, NCM region
 │   ├── mem_axi.sv          # Memory-to-AXI bridge (read/write)
 │   └── mem_axi_ro.sv       # Memory-to-AXI bridge (read-only, I-cache bypass)
@@ -357,7 +360,7 @@ The SoC uses AXI4-Lite for all peripheral accesses. The instruction-fetch and da
 - **Data Width**: 32 bits
 - **Byte Strobes**: 4 bits (byte/halfword/word access)
 - **Response Codes**: OKAY, DECERR (unmapped addresses), SLVERR (non-cacheable region in testbench)
-- **Topology**: single master → 10 slaves via `axi_xbar`
+- **Topology**: single master → 11 slaves via `axi_xbar`
 - **Bursts**: INCR/WRAP supported on the instruction port (I-cache line fills) and data port (D-cache critical-word-first fills and dirty-line evictions)
 
 ## Development

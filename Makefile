@@ -74,7 +74,8 @@ LDFLAGS += -Wl,--wrap=fflush
 LDFLAGS += -lc -lgcc -lm
 COMMON_SRCS = $(SW_DIR)/common/start.S $(SW_DIR)/common/syscall.c $(SW_DIR)/common/trap.c \
               $(SW_DIR)/common/kv_irq.c \
-              $(SW_DIR)/common/puts.c $(SW_DIR)/common/putc.c
+              $(SW_DIR)/common/puts.c $(SW_DIR)/common/putc.c \
+              $(SW_DIR)/common/user_hook.c
 
 # Optional per-test software makefile include.
 # Loaded only in recursive software build invocations that set TEST=<name>.
@@ -127,7 +128,8 @@ SPIKE_PLUGINS = \
 	$(BUILD_DIR)/spike_plugin_spi.so    \
 	$(BUILD_DIR)/spike_plugin_dma.so    \
 	$(BUILD_DIR)/spike_plugin_gpio.so   \
-	$(BUILD_DIR)/spike_plugin_timer.so
+	$(BUILD_DIR)/spike_plugin_timer.so  \
+	$(BUILD_DIR)/spike_plugin_wdt.so
 
 SPIKE_EXTLIBS  = $(patsubst %,--extlib=%,$(SPIKE_PLUGINS))
 SPIKE_DEVICES  = \
@@ -138,7 +140,8 @@ SPIKE_DEVICES  = \
 	--device=plugin_spi,0x20030000      \
 	--device=plugin_dma,0x20000000      \
 	--device=plugin_gpio,0x20050000     \
-	--device=plugin_timer,0x20040000
+	--device=plugin_timer,0x20040000     \
+	--device=plugin_wdt,0x20060000
 
 # Verilator settings
 VERILATOR ?= verilator

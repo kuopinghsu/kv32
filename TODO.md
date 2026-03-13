@@ -55,62 +55,11 @@
 - [ ] Bring the Zephyr port up to date with the latest kernel version.
 - [ ] Resolve any outstanding porting issues.
 
-### 3. Hardware Watchdog Peripheral (axi_wdt) + user_hook System
-**Priority: MEDIUM** — Enables firmware timeout detection without shell wrappers.
-
-#### Register Map (`KV_WDT_BASE = 0x2006_0000`, PLIC src = 7)
-| Offset | Name    | Access | Description                                     |
-|--------|---------|--------|-------------------------------------------------|
-| 0x00   | CTRL    | R/W    | [0]=EN, [1]=INTR_EN (0=panic/exit, 1=IRQ only)  |
-| 0x04   | LOAD    | R/W    | Reload value written to COUNT on kick           |
-| 0x08   | COUNT   | RO     | Countdown value; decrements each cycle when EN  |
-| 0x0C   | KICK    | WO     | Write any value to reload COUNT from LOAD       |
-| 0x10   | STATUS  | R/W1C  | [0]=WDT_INT (expired)                           |
-| 0x14   | CAP     | RO     | [31:16]=version=1, [7:0]=width=32               |
-| >0x17  | —       | —      | **Bus error (SLVERR)**                          |
-
-#### Phase 1 — Platform definitions
-- [ ] `sw/include/kv_platform.h`: add `KV_WDT_BASE=0x20060000`, `KV_WDT_SIZE`, `KV_PLIC_SRC_WDT=7`, all `KV_WDT_*_OFF` offsets and bit masks.
-- [ ] `sw/include/kv_wdt.h`: replace software watchdog stub with hardware driver — `kv_wdt_start(load)`, `kv_wdt_kick()`, `kv_wdt_stop()` inline functions using MMIO macros.
-
-#### Phase 2 — RTL
-- [ ] `rtl/axi_wdt.sv`: AXI4-Lite WDT peripheral (model after `axi_timer.sv`). COUNT decrements each clock cycle when EN=1. On COUNT==0: INTR_EN=0 → DPI-C `sim_request_exit(2)` (`ifndef SYNTHESIS`); INTR_EN=1 → set STATUS[0] and assert `wdt_irq`. KICK write reloads COUNT. SLVERR for offset > 0x17.
-- [ ] `rtl/axi_xbar.sv`: extend from 10 to 11 slaves — add `s10_axi_*` ports, `sel_s10_aw/ar` decode (`addr[31:16]==16'h2006`), AR-ID FIFO, and all mux cases.
-- [ ] `rtl/kv32_soc.sv`: declare `wdt_axi_*` signals and `wdt_irq`; wire slave 10 in xbar instantiation; instantiate `axi_wdt u_wdt`; change `PLIC_NUM_IRQ` from 7 to 8; assign `plic_irq_src[7] = wdt_irq`.
-
-#### Phase 3 — Software simulator (kv32sim)
-- [ ] `sim/device.h`: add `WatchdogDevice` class (same structure as `TimerDevice`); add `WDT_BASE`/`WDT_SIZE` aliases.
-- [ ] `sim/device.cpp`: implement `WatchdogDevice::read()`, `write()`, `tick()`, `reset()`; SLVERR for offset > 0x17; `consume_expiry()` helper for kv32sim polling.
-- [ ] `sim/kv32sim.h`: add `WatchdogDevice* wdt` field.
-- [ ] `sim/kv32sim.cpp`: construct and register WDT device; poll `wdt->consume_expiry()` in run loop; poll `wdt->get_irq()` to drive PLIC source 7.
-
-#### Phase 4 — Spike plugin
-- [ ] `spike/plugin_wdt.cc`: WDT Spike plugin (model after `plugin_timer.cc`); `load()`/`store()` return false for addr > `KV_WDT_CAP_OFF + 3`; `tick()` implements countdown; expiry calls `sim->exit(2)` when INTR_EN=0.
-- [ ] `spike/Makefile`: add `plugin_wdt` build rule.
-
-#### Phase 5 — Firmware user_hook
-- [ ] `sw/common/user_hook.c`: default weak `user_hook()` — starts axi_timer ch0 (period=2000, PLIC src 6), ISR kicks HW WDT via `kv_wdt_kick()` (heartbeat; runs indefinitely). Starts WDT with LOAD=20000 (10x timer period safety margin).
-- [ ] `sw/common/start.S`: add `call user_hook` immediately before `call main`.
-- [ ] `Makefile`: append `$(SW_DIR)/common/user_hook.c` to `COMMON_SRCS`.
-
-#### Phase 6 — RTOS strict watchdog
-- [ ] `sw/rtos/rtos_test.c`: add strong `void user_hook(void)` override — timer ISR does NOT kick WDT; starts WDT with INTR_EN=0 and LOAD=100000 (direct exit on expiry). Supervisor task calls `kv_wdt_kick()` after each of the 4 test evaluation blocks.
-
-#### Phase 7 — bus_err test
-- [ ] `sw/bus_err/bus_err.c`: insert `test_peripheral(9, "WDT", (volatile uint32_t *)(KV_WDT_BASE + 0x018UL))` before the NULL-pointer tests; renumber subsequent tests (old 9→10, old 19→21).
-
-#### Phase 8 — Documentation
-- [ ] `README.md`: add WDT row to peripheral table (`0x2006_0000 | Watchdog Timer | 64 KB | PLIC src 7`); add `## Simulation Timeout / Watchdog` section.
-- [ ] `docs/sdk_api_reference.adoc`: add `== Watchdog Timer (axi_wdt)` section with register table, driver API, and usage example.
-- [ ] `docs/kv32_soc_datasheet.adoc`: add WDT to memory map table and peripheral description section; update peripheral count in Abstract.
-- [ ] `docs/kv32_soc_block_diagram.svg`: add `WDT (0x2006_0000)` block to peripheral bus cluster, wired to AXI xbar and PLIC.
-- [ ] `.github/copilot-instructions.md`: append `## Simulation Timeout / Watchdog` section explaining `user_hook` default heartbeat vs. RTOS strict mode; note that `--timeout`/`MAX_CYCLES` wrappers are unnecessary.
-
-### 4. Google RISCV-DV Integration
+### 3. Google RISCV-DV Integration
 **Priority: LOW** — Broad verification; high effort, no prerequisite blockers.
 - [ ] Evaluate and run the Google RISC-V DV random instruction test suite against the kv32 RTL.
 
-### 5. FuseSoC Support
+### 4. FuseSoC Support
 **Priority: LOW** — Enables standard IP packaging and integration with third-party EDA flows.
 - [ ] Create a top-level `kv32_soc.core` FuseSoC core description file: declare all RTL source files (`rtl/`, `rtl/core/`, `rtl/jtag/`, `rtl/memories/`), testbench files (`testbench/`), and parameters (`CLK_FREQ`, `BAUD_RATE`, `ICACHE_EN`, `ICACHE_SIZE`, etc.).
 - [ ] Add a `fusesoc_libraries.conf` (or `fusesoc.conf`) at the repo root pointing to the local core library.
@@ -119,6 +68,8 @@
 - [ ] Add a `make fusesoc-sim` convenience target to the top-level `Makefile`.
 - [ ] Package peripheral cores (`axi_uart`, `axi_dma`, `axi_spi`, `axi_i2c`, `axi_gpio`, `axi_timer`, `axi_clint`, `axi_plic`) as individual `.core` files so they can be reused independently.
 - [ ] Document setup in a new `docs/fusesoc_integration.md`: installation, core file layout, available targets, and how to add a new peripheral core.
+
+### 5. ARM-style Cache Diagnostic CSRs
 
 ---
 
@@ -238,6 +189,25 @@ Final AXI slave assignment:
   value-pattern check `(data & 0xFE) == 0xA0` misidentified data bytes `0xA0/0xA1` (part of the
   default EEPROM fill pattern) as device-address bytes, corrupting test 8's writes. Replaced with
   a proper transaction-state machine (`IDLE → GOT_ADDR → DATA`) mirroring `spike/plugin_i2c.cc`.
+
+### ~~C23. Hardware Watchdog Peripheral (axi_wdt) + user_hook System~~
+- Implemented `rtl/axi_wdt.sv`: AXI4-Lite WDT at `0x2006_0000` (Slave 10); 32-bit countdown,
+  KICK reload, INTR_EN=1 → PLIC IRQ (src 10), INTR_EN=0 → `wdt_reset_o` hardware reset.
+- Extended `rtl/axi_xbar.sv` from 10 to 11 slaves; updated `rtl/kv32_soc.sv` (`PLIC_NUM_IRQ=11`,
+  `wdt_reset_o` port).
+- Added `WatchdogDevice` to `sim/device.h`/`device.cpp`; wired into `sim/kv32sim.cpp`
+  (`consume_reset()→exit(2)`, PLIC source loop).
+- Added `spike/plugin_wdt.cc` and built it in `spike/Makefile`.
+- Added `sw/include/kv_wdt.h` driver (`kv_wdt_start`, `kv_wdt_kick`, `kv_wdt_stop`,
+  `kv_wdt_clear_int`) and `sw/common/user_hook.c` (weak default: timer ch0 keeps WDT alive).
+- Called `user_hook()` from `sw/common/start.S` before `main`; added to `COMMON_SRCS`.
+- Added strong `user_hook()` override in `sw/rtos/rtos_test.c` (reset mode, LOAD=200000);
+  added `kv_wdt_kick()` after each of the 4 test eval blocks.
+- Added WDT SLVERR test (test 9) to `sw/bus_err/bus_err.c`.
+- Added `sw/wdt/wdt.c` test suite: 8 tests covering CAP, register access, countdown, KICK
+  reload, stop, IRQ expiry, STATUS W1C, and re-arm after expiry.
+- Updated `README.md`, `docs/kv32_soc_datasheet.adoc`, `docs/sdk_api_reference.adoc`,
+  `docs/kv32_soc_block_diagram.svg`, and `.github/copilot-instructions.md`.
 - Added `EepromTxState` enum, `eeprom_write_mode`, and `ACK_STRETCH` master state to
   `sim/device.h`; added `stretch_ticks_per_ack` / `stretch_remaining` fields for holding
   `BUSY=1` after each byte ACK (clock-stretch BUSY delay modeling in simulation).

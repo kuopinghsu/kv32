@@ -122,7 +122,7 @@ This datasheet is organized as follows:
     |  | (Execute)  | |                        +-------------+          |   |
     |  +-----+------+ |                        | AXI4-Lite   |          |   |
     |        |        |                        |  Crossbar   |          |   |
-    |  +-----v------+ |   +----------+         |  (1-to-10)  |          |   |
+    |  +-----v------+ |   +----------+         |  (1-to-11)  |          |   |
     |  |   MEM      |-+-->| D-Cache  |<------->+------+------+          |   |
     |  |  (Memory)  |<+---| (4KB/2W) |                |                 |   |
     |  +-----+------+ |   |write-back|                |                 |   |
@@ -192,6 +192,12 @@ This datasheet is organized as follows:
                           |   +--------------------------+              |   |
                           |   | 4 banks x 32 pins        |<-->gpio[127:0]|  |
                           |   | Dir/IRQ/edge/level       +-->gpio_irq   |   |
+                          |   +--------------------------+              |   |
+                          |                                             |   |
+                          | Slave 10: WDT     0x2006_0000-0x2006_FFFF   |   |
+                          |   +--------------------------+              |   |
+                          |   | 32-bit countdown timer   +-->wdt_reset_o|   |
+                          |   | IRQ or hw-reset on expiry+-->wdt_irq    |   |
                           |   +--------------------------+              |   |
                           +---------------------------------------------+   |
                                                                             |
@@ -268,7 +274,7 @@ The PMA subsystem provides per-region cacheability control at runtime:
 
 * **External RAM**: 2MB AXI4 SRAM at 0x8000_0000, supports burst reads/writes
 * **Instruction Arbiter**: Arbitrates between instruction fetch and data memory paths
-* **AXI Crossbar**: 1-to-10 interconnect routes transactions to appropriate slaves
+* **AXI Crossbar**: 1-to-11 interconnect routes transactions to appropriate slaves
 
 ==== Peripheral Subsystem
 
@@ -285,7 +291,7 @@ Seven peripheral slaves hang off the AXI crossbar:
 ==== Interrupt System
 
 * **CLINT**: Machine-mode timer (mtime/mtimecmp) and software interrupts (msip)
-* **PLIC**: Routes up to 31 external interrupt sources (UART, SPI, I2C, DMA, GPIO, Timer) with programmable priorities (0-15) and a configurable claim/complete handshake
+* **PLIC**: Routes up to 31 external interrupt sources (UART, SPI, I2C, DMA, GPIO, Timer, WDT) with programmable priorities (0-15) and a configurable claim/complete handshake
 * **Core Integration**: timer_irq, software_irq, external_irq inputs to core CSR unit
 
 ==== Power Manager (kv32_pm)
@@ -377,6 +383,11 @@ The RV32IMAC SoC implements a 32-bit address space (4GB) with the following allo
 |64KB
 |General-purpose I/O controller (4 banks × 32 pins)
 
+|0x2006_0000 - 0x2006_FFFF
+|WDT
+|64KB
+|Hardware watchdog timer (IRQ or hardware reset on timeout)
+
 |0x2004_0000 - 0x2004_FFFF
 |Timer
 |64KB
@@ -407,6 +418,7 @@ The AXI crossbar (`axi_xbar`) decodes addresses based on the high-order bits:
 * **Slave 7 (SPI)**: `addr[31:16] == 16'h2003` (0x2003_0000)
 * **Slave 8 (Timer)**: `addr[31:16] == 16'h2004` (0x2004_0000)
 * **Slave 9 (GPIO)**: `addr[31:16] == 16'h2005` (0x2005_0000)
+* **Slave 10 (WDT)**: `addr[31:16] == 16'h2006` (0x2006_0000)
 
 Unmapped addresses return an AXI SLVERR (2'b10) response on the read channel and OKAY (2'b00) on the write channel (write is silently ignored).
 
@@ -2030,6 +2042,106 @@ CTRL = EN | PWM_EN | PWM_POL | INT_EN
 
 ---
 
+=== Watchdog Timer (WDT)
+
+==== Overview
+
+The WDT provides a hardware safety net that resets the system (or raises an IRQ) if software fails to periodically service it.
+
+[cols="1,3"]
+.WDT Features
+|===
+|Feature |Specification
+
+|Base Address
+|0x2006_0000
+
+|Size
+|64KB
+
+|PLIC Source
+|10 (`KV_PLIC_SRC_WDT`) — only when INTR_EN=1
+
+|External output
+|`wdt_reset_o` — asserts and latches when INTR_EN=0 and expiry occurs; cleared only by `rst_n`
+
+|Counter width
+|32-bit countdown (configurable via LOAD register)
+|===
+
+==== Register Map
+
+[cols="1,1,1,4"]
+.WDT Register Map
+|===
+|Offset |Name |Access |Description
+
+|0x00
+|CTRL
+|R/W
+|[0]=EN: start/stop the countdown. +
+[1]=INTR_EN: expiry action (1=assert PLIC IRQ, 0=assert `wdt_reset_o`)
+
+|0x04
+|LOAD
+|R/W
+|Reload value — written before enabling the WDT. Value loaded into COUNT on enable or KICK.
+
+|0x08
+|COUNT
+|RO
+|Current countdown value. Counts down from LOAD to 0.
+
+|0x0C
+|KICK
+|WO
+|Any write reloads COUNT from LOAD (\"pets\" the watchdog). Ignores written data.
+
+|0x10
+|STATUS
+|R/W1C
+|[0]=WDT_INT — set when count expires with INTR_EN=1. Write 1 to clear.
+
+|0x14
+|CAP
+|RO
+|Capability: `0x0001_0020` (version=1, counter width=32)
+|===
+
+Addresses > 0x17 within the WDT aperture return SLVERR.
+
+==== Operation
+
+1. Write reload value to LOAD.
+2. Write `0x03` to CTRL (EN=1, INTR_EN=1 for IRQ mode, or `0x01` for reset mode).
+3. Periodically write any value to KICK before COUNT reaches 0.
+
+On expiry (COUNT reaches 0)::
+* **IRQ mode** (INTR_EN=1): STATUS[0] is set; PLIC source 10 asserts. Software must claim, handle, kick (or clear STATUS), and complete.
+* **Reset mode** (INTR_EN=0): `wdt_reset_o` asserts and _latches_ until `rst_n`; software cannot recover. System integrator feeds `wdt_reset_o` into the system reset tree.
+
+The COUNT register latches at zero after expiry; a KICK is required to resume counting.
+
+==== Interrupt Behavior
+
+* `wdt_irq` to PLIC = `STATUS[0] & CTRL[1]` (only fires in IRQ mode)
+* `wdt_reset_o` = latched register set on expiry in reset mode; cleared only by `rst_n`
+* In simulation (`kv32sim`): reset mode calls `exit(2)`; Spike plugin calls `sim->exit(2)`
+
+==== External Pins
+
+[cols="1,1,4"]
+.WDT External Pins
+|===
+|Pin |Direction |Description
+
+|wdt_reset_o
+|Output
+|Hardware reset request. Latches high on reset-mode expiry. System integrator feeds into reset tree.
+|===
+
+---
+
 === CLINT (Core-Local Interruptor)
 
 ==== Overview
@@ -2235,7 +2347,11 @@ The following peripherals are connected to the PLIC:
 |Timer3
 |Timer channel 3 compare match (`KV_PLIC_SRC_TIMER3`)
 
-|10-31
+|10
+|WDT
+|Watchdog timer expired with INTR_EN=1 (`KV_PLIC_SRC_WDT`)
+
+|11-31
 |Reserved
 |Future peripheral expansion
 |===

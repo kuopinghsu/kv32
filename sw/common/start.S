@@ -72,6 +72,9 @@ _start:
     li t0, 0x80
     csrs mie, t0
 
+    // Call user_hook (weak default: start timer + WDT keep-alive)
+    call user_hook
+
     // Call main
     call main
 

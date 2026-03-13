@@ -99,6 +99,10 @@ Portability:: Works with both RTL simulation and software simulators (kv32sim, S
 | GPIO
 | General-Purpose I/O driver
 
+| `kv_wdt.h`
+| Watchdog Timer
+| Hardware watchdog timer driver (start, kick, stop, IRQ clear)
+
 | `kv_cap.h`
 | Capability Constants
 | Expected capability register values for all peripherals (derived from RTL parameters)
@@ -1542,6 +1546,81 @@ uint32_t cap = kv_gpio_get_capability();
 assert(cap == KV_CAP_GPIO);   // 0x00010104: v1, 1 bank, 4 pins
 printf("GPIO: banks=%u pins_per_bank=%u\\n",
        kv_gpio_get_num_banks(), kv_gpio_get_num_pins());
+----
+
+'''
+
+== Watchdog Timer (WDT) Driver API
+
+=== Overview
+
+The WDT (`axi_wdt.sv`) counts down from a software-configured LOAD value and, on expiry, either raises a PLIC interrupt (IRQ mode) or asserts the `wdt_reset_o` hardware reset output (reset mode).
+
+Base Address:: `0x2006_0000` (KV_WDT_BASE)
+PLIC Source:: 10 (`KV_PLIC_SRC_WDT`) — IRQ mode only
+Header:: `kv_wdt.h`
+
+=== Quick Reference
+
+[source,c]
+----
+// Start WDT: set reload value and expiry action.
+//   load    - countdown start value (cycles)
+//   intr_en - 1 = IRQ on expiry (PLIC src 10); 0 = hardware reset
+void kv_wdt_start(uint32_t load, int intr_en);
+
+// Reload COUNT from LOAD ("pet" the watchdog).
+void kv_wdt_kick(void);
+
+// Disable the WDT (clear EN bit).
+void kv_wdt_stop(void);
+
+// Clear WDT_INT status bit (W1C).  Call from ISR before kv_plic_complete().
+void kv_wdt_clear_int(void);
+----
+
+=== Usage — IRQ Mode
+
+[source,c]
+----
+#include "kv_wdt.h"
+#include "kv_plic.h"
+#include "kv_irq.h"
+
+static void wdt_handler(uint32_t cause) {
+    (void)cause;
+    uint32_t src = kv_plic_claim();
+    if (src == KV_PLIC_SRC_WDT) {
+        kv_wdt_clear_int();
+        kv_wdt_kick();
+    }
+    kv_plic_complete(src);
+}
+
+void setup_wdt_irq(void) {
+    kv_irq_register(KV_CAUSE_MEI, wdt_handler);
+    kv_plic_init_source(KV_PLIC_SRC_WDT, 1);
+    kv_irq_enable();
+    kv_wdt_start(100000u, 1);   /* LOAD=100000, INTR_EN=1 */
+}
+----
+
+=== Usage — Reset Mode
+
+[source,c]
+----
+#include "kv_wdt.h"
+
+void setup_wdt_reset(void) {
+    /* Start in hardware-reset mode.  wdt_reset_o latches on expiry.
+     * System integrator feeds wdt_reset_o into the board reset tree. */
+    kv_wdt_start(200000u, 0);   /* LOAD=200000, INTR_EN=0 */
+}
+
+/* In periodic supervisor loop: */
+void periodic_kick(void) {
+    kv_wdt_kick();
+}
 ----
 
 '''

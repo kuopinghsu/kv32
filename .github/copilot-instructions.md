@@ -41,6 +41,7 @@ Debugging RTL:
        Bit 15  (0x08000)  SB      — Store buffer
        Bit 16  (0x10000)  AXIMEM  — AXI memory slave (testbench)
        Bit 17  (0x20000)  DTM     — DTM debug module (DM registers, commands, SBA)
+       Bit 18  (0x40000)  WDT     — Watchdog timer (count, expiry, reset/IRQ)
 
      Examples:
        make DEBUG=2 DEBUG_GROUP=0x40    rtl-wfi    # WFI only

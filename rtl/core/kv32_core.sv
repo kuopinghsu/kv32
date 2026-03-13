@@ -401,9 +401,22 @@ module kv32_core #(
     logic [4:0]  wb_exception_cause;
     logic [31:0] wb_exception_pc;
     logic [31:0] wb_exception_tval;
+    logic        external_irq_meta;
+    logic        external_irq_sync;
     logic        irq_pending;
     logic [31:0] irq_cause;
     logic        retire_instr;
+
+    // Synchronize asynchronous external IRQ input into the core clock domain.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            external_irq_meta <= 1'b0;
+            external_irq_sync <= 1'b0;
+        end else begin
+            external_irq_meta <= external_irq;
+            external_irq_sync <= external_irq_meta;
+        end
+    end
 
 `ifndef SYNTHESIS
     assign retire_instr_out    = retire_instr;
@@ -3090,7 +3103,7 @@ module kv32_core #(
 
         // Interrupt handling
         .timer_irq(timer_irq),
-        .external_irq(external_irq),
+        .external_irq(external_irq_sync),
         .software_irq(software_irq),
         .irq_pending(irq_pending),
         .irq_cause(irq_cause),

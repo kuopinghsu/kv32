@@ -163,7 +163,9 @@ module kv32_soc #(
     output logic [63:0] instret_count,
     output logic [63:0] stall_count,
     output logic [63:0] first_retire_cycle,
-    output logic [63:0] last_retire_cycle
+    output logic [63:0] last_retire_cycle,
+    // WDT hardware reset output (asserted on watchdog reset-mode expiry)
+    output logic        wdt_reset_o
 
 `ifndef SYNTHESIS
     ,output logic       timeout_error,
@@ -443,6 +445,29 @@ module kv32_soc #(
     logic        gpio_axi_rready;
 
     // ========================================================================
+    // AXI Interconnect <-> WDT Peripheral Signals
+    // ========================================================================
+    // Hardware Watchdog Timer
+    // Base address: 0x2006_0000
+    logic [31:0] wdt_axi_awaddr;
+    logic        wdt_axi_awvalid;
+    logic        wdt_axi_awready;
+    logic [31:0] wdt_axi_wdata;
+    logic [3:0]  wdt_axi_wstrb;
+    logic        wdt_axi_wvalid;
+    logic        wdt_axi_wready;
+    logic [1:0]  wdt_axi_bresp;
+    logic        wdt_axi_bvalid;
+    logic        wdt_axi_bready;
+    logic [31:0] wdt_axi_araddr;
+    logic        wdt_axi_arvalid;
+    logic        wdt_axi_arready;
+    logic [31:0] wdt_axi_rdata;
+    logic [1:0]  wdt_axi_rresp;
+    logic        wdt_axi_rvalid;
+    logic        wdt_axi_rready;
+
+    // ========================================================================
     // AXI Interconnect <-> Timer Peripheral Signals
     // ========================================================================
     // Memory-mapped Timer/PWM controller with 4 independent 32-bit timers
@@ -538,6 +563,8 @@ module kv32_soc #(
     logic        dma_irq;             // DMA interrupt → PLIC source 4
     logic        gpio_irq;            // GPIO interrupt → PLIC source 5
     logic [3:0]  timer_ch_irq;        // Timer per-channel IRQs → PLIC sources 6–9
+    logic        wdt_irq;             // WDT interrupt → PLIC source 10
+    logic        wdt_reset;           // WDT reset request (from axi_wdt.wdt_reset_o)
 
     // ========================================================================
     // Debug Interface Signals
@@ -1150,19 +1177,20 @@ module kv32_soc #(
     );
 
     // ========================================================================
-    // AXI4 Interconnect (1-to-7 Crossbar)
+    // AXI4 Interconnect (1-to-11 Crossbar)
     // ========================================================================
     // Routes transactions from arbiter to slave devices based on address with ID tracking:
-    //   Slave 0 (0x8000_0000): External 2MB RAM
-    //   Slave 1 (0x4000_0000): Magic device
-    //   Slave 2 (0x0200_0000): CLINT timer peripheral
-    //   Slave 3 (0x0C00_0000): PLIC interrupt controller
-    //   Slave 4 (0x2000_0000): DMA controller
-    //   Slave 5 (0x2001_0000): UART peripheral
-    //   Slave 6 (0x2002_0000): I2C peripheral
-    //   Slave 7 (0x2003_0000): SPI peripheral
-    //   Slave 8 (0x2004_0000): Timer/PWM peripheral
-    //   Slave 9 (0x2005_0000): GPIO peripheral
+    //   Slave 0  (0x8000_0000): External 2MB RAM
+    //   Slave 1  (0x4000_0000): Magic device
+    //   Slave 2  (0x0200_0000): CLINT timer peripheral
+    //   Slave 3  (0x0C00_0000): PLIC interrupt controller
+    //   Slave 4  (0x2000_0000): DMA controller
+    //   Slave 5  (0x2001_0000): UART peripheral
+    //   Slave 6  (0x2002_0000): I2C peripheral
+    //   Slave 7  (0x2003_0000): SPI peripheral
+    //   Slave 8  (0x2004_0000): Timer/PWM peripheral
+    //   Slave 9  (0x2005_0000): GPIO peripheral
+    //   Slave 10 (0x2006_0000): WDT watchdog timer
     // Returns DECERR response for unmapped addresses
     axi_xbar axi_intercon (
         .clk(clk),
@@ -1419,7 +1447,26 @@ module kv32_soc #(
         .s9_axi_rdata   (gpio_axi_rdata),
         .s9_axi_rresp   (gpio_axi_rresp),
         .s9_axi_rvalid  (gpio_axi_rvalid),
-        .s9_axi_rready  (gpio_axi_rready)
+        .s9_axi_rready  (gpio_axi_rready),
+
+        // Slave 10: WDT
+        .s10_axi_awaddr  (wdt_axi_awaddr),
+        .s10_axi_awvalid (wdt_axi_awvalid),
+        .s10_axi_awready (wdt_axi_awready),
+        .s10_axi_wdata   (wdt_axi_wdata),
+        .s10_axi_wstrb   (wdt_axi_wstrb),
+        .s10_axi_wvalid  (wdt_axi_wvalid),
+        .s10_axi_wready  (wdt_axi_wready),
+        .s10_axi_bresp   (wdt_axi_bresp),
+        .s10_axi_bvalid  (wdt_axi_bvalid),
+        .s10_axi_bready  (wdt_axi_bready),
+        .s10_axi_araddr  (wdt_axi_araddr),
+        .s10_axi_arvalid (wdt_axi_arvalid),
+        .s10_axi_arready (wdt_axi_arready),
+        .s10_axi_rdata   (wdt_axi_rdata),
+        .s10_axi_rresp   (wdt_axi_rresp),
+        .s10_axi_rvalid  (wdt_axi_rvalid),
+        .s10_axi_rready  (wdt_axi_rready)
     );
 
     // ========================================================================
@@ -1479,7 +1526,7 @@ module kv32_soc #(
     // ========================================================================
     // Base address: 0x0C00_0000 - 0x0FFF_FFFF
     // Interrupt sources (1..NUM_IRQ) - extend when peripherals gain IRQ outputs
-    localparam int unsigned PLIC_NUM_IRQ = 10;
+    localparam int unsigned PLIC_NUM_IRQ = 11;
     logic [PLIC_NUM_IRQ:0] plic_irq_src;
     // PLIC interrupt source assignment:
     //   [1] = UART RX-not-empty / TX-empty
@@ -1491,7 +1538,8 @@ module kv32_soc #(
     //   [7] = Timer channel 1 compare match  (KV_PLIC_SRC_TIMER1)
     //   [8] = Timer channel 2 compare match  (KV_PLIC_SRC_TIMER2)
     //   [9] = Timer channel 3 compare match  (KV_PLIC_SRC_TIMER3)
-    //   [10]  = reserved (tied 0)
+    //   [10] = WDT expiry interrupt           (KV_PLIC_SRC_WDT)
+    //   [11] = reserved (tied 0)
     assign plic_irq_src[0]   = 1'b0;      // source 0 reserved
     assign plic_irq_src[1]   = uart_irq;
     assign plic_irq_src[2]   = spi_irq;
@@ -1502,7 +1550,8 @@ module kv32_soc #(
     assign plic_irq_src[7]   = timer_ch_irq[1];
     assign plic_irq_src[8]   = timer_ch_irq[2];
     assign plic_irq_src[9]   = timer_ch_irq[3];
-    assign plic_irq_src[10]  = 1'b0;
+    assign plic_irq_src[10]  = wdt_irq;
+    assign plic_irq_src[11]  = 1'b0;      // source 11 reserved
 
     axi_plic #(
         .NUM_IRQ(PLIC_NUM_IRQ)
@@ -1798,6 +1847,40 @@ module kv32_soc #(
 
         .pwm_o(pwm_o)
     );
+
+    // ========================================================================
+    // WDT - Hardware Watchdog Timer (slave 10 at 0x2006_0000)
+    // ========================================================================
+    // Countdown watchdog with configurable expiry action (IRQ or hardware reset).
+    // INTR_EN=1: fires PLIC source KV_PLIC_SRC_WDT (source 10).
+    // INTR_EN=0: asserts wdt_reset_o; connect to system reset tree externally.
+    axi_wdt u_wdt (
+        .clk    (clk),
+        .rst_n  (soc_rst_n),
+
+        .axi_awaddr (wdt_axi_awaddr),
+        .axi_awvalid(wdt_axi_awvalid),
+        .axi_awready(wdt_axi_awready),
+        .axi_wdata  (wdt_axi_wdata),
+        .axi_wstrb  (wdt_axi_wstrb),
+        .axi_wvalid (wdt_axi_wvalid),
+        .axi_wready (wdt_axi_wready),
+        .axi_bresp  (wdt_axi_bresp),
+        .axi_bvalid (wdt_axi_bvalid),
+        .axi_bready (wdt_axi_bready),
+        .axi_araddr (wdt_axi_araddr),
+        .axi_arvalid(wdt_axi_arvalid),
+        .axi_arready(wdt_axi_arready),
+        .axi_rdata  (wdt_axi_rdata),
+        .axi_rresp  (wdt_axi_rresp),
+        .axi_rvalid (wdt_axi_rvalid),
+        .axi_rready (wdt_axi_rready),
+
+        .irq       (wdt_irq),
+        .wdt_reset_o(wdt_reset)
+    );
+
+    assign wdt_reset_o = wdt_reset;
 
     // ========================================================================
     // Magic Device (simulation control, slave 9 at 0xFFFF_0000)
