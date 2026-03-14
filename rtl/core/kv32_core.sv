@@ -55,7 +55,12 @@ module kv32_core #(
     parameter int IB_DEPTH = 4,  // Instruction buffer depth (outstanding fetches); must be power-of-2 and >= effective_latency+1
     parameter int SB_DEPTH = 4,  // Store buffer depth (buffered stores)
     parameter int FAST_MUL = 1,  // Multiply mode: 1=combinatorial, 0=serial
-    parameter int FAST_DIV = 1   // Division mode: 1=combinatorial, 0=serial
+    parameter int FAST_DIV = 1,  // Division mode: 1=combinatorial, 0=serial
+    parameter bit BP_EN = 1'b1,  // Branch prediction enable
+    parameter int unsigned BTB_SIZE = 32,
+    parameter int unsigned BHT_SIZE = 64,
+    parameter bit RAS_EN = 1'b1,  // Return Address Stack enable
+    parameter int unsigned RAS_DEPTH = 8
 )(
     input  logic        clk,
     input  logic        rst_n,
@@ -281,6 +286,8 @@ module kv32_core #(
     logic        is_cbo_ex;      // CBO in EX stage
     logic        is_wfi_ex;      // WFI instruction in EX stage
     logic        is_compressed_ex; // Instruction was originally 16-bit RVC
+    logic        bp_taken_ex;      // Prediction carried from IF/ID
+    logic [31:0] bp_target_ex;     // Predicted target carried to EX
     logic        wfi_active;       // WFI instruction is in EX stage this cycle
     logic        wfi_branch;       // One-shot: flush IF/ID and redirect PC back to WFI (like a branch)
     logic        wfi_sleeping;     // Core is in WFI sleep state (pipeline flushed, awaiting wake)
@@ -563,6 +570,34 @@ module kv32_core #(
     logic        rvc_mem_ready;      // controls imem_resp_ready
     logic branch_flushed;             // Branch already flushed — suppresses re-flush for same branch
 
+    // Branch predictor signals
+    // Prediction is performed at ID stage (post-decode) using the exact
+    // instruction PC.  This avoids the RVC alignment problem that arises when
+    // the prediction fires at IF-stage fetch granularity (aligned word).
+    logic        btb_hit_id;         // BTB hit at ID stage
+    logic        btb_is_return_id;   // BTB says this JALR is a return
+    logic        btb_is_uncond_id;   // BTB says unconditional (JAL/JALR)
+    logic [31:0] btb_target_id;      // BTB stored target
+    logic        bht_pred_taken_id;  // BHT direction prediction at ID stage
+    logic        bp_pred_taken_id;   // Combined ID-stage prediction decision
+    logic [31:0] bp_target_id;       // Combined ID-stage predicted target
+    logic        bp_if_flush;        // ID-stage prediction: flush IF and redirect
+    logic        bp_correct;
+    logic        need_redirect;
+    logic [31:0] bp_redirect_target;
+
+    logic        btb_update_en;
+    logic        btb_update_is_return;
+    logic        btb_update_is_uncond;
+    logic        bht_update_en;
+    logic        bht_actual_taken;
+
+    logic        ras_push_en;
+    logic [31:0] ras_push_data;
+    logic        ras_pop_en;
+    logic [31:0] ras_top;
+    logic        ras_valid;
+
     // flush_pc: target PC on any if_flush event, forwarded to kv32_rvc so it
     // can set init_offset = flush_pc[1] (second halfword of aligned word).
     logic [31:0] if_flush_pc;
@@ -571,7 +606,8 @@ module kv32_core #(
         (wb_exception || exception || irq_pending) ? mtvec         :
         is_mret_ex                                 ? mepc          :
         wfi_branch                                 ? pc_ex         :
-        (branch_taken && !branch_flushed)          ? branch_target :
+        need_redirect                              ? bp_redirect_target :
+        bp_if_flush                                ? bp_target_id  :
         (fence_i_committing || cbo_committing)     ? (pc_mem + 32'd4) :
                                                      32'h8000_0000;
 
@@ -648,9 +684,10 @@ module kv32_core #(
     //   - branch cycle: use branch_target for early fetch
     //   - dedup-consume: use pc_next (pc_if is about to advance this cycle)
     //   - otherwise: use current pc_if
-    assign imem_req_addr_comb = (branch_taken && !branch_flushed) ? {branch_target[31:2], 2'b00} :
-                                dedup_consuming                   ? pc_next :
-                                                                   pc_if;
+    assign imem_req_addr_comb = need_redirect  ? {bp_redirect_target[31:2], 2'b00} :
+                                bp_if_flush    ? {bp_target_id[31:2], 2'b00} :
+                                dedup_consuming ? pc_next :
+                                                  pc_if;
 
     // Dedup: suppress if we already issued for the same 4-byte-aligned word.
     // Compare at word granularity ([31:2]) because:
@@ -686,9 +723,73 @@ module kv32_core #(
     // at pc_if while imem_req_addr_fill advances to pc_next.  The two values give
     // identical fill_same_line / fill_pend_burst_comb results because pc_if and
     // pc_next are always in the same 32-byte cache line during sequential fetches.
-    assign imem_req_addr_fill = (branch_taken && !branch_flushed) ? {branch_target[31:2], 2'b00} :
-                                dedup_consumed                    ? pc_next :
-                                                                   pc_if;
+    assign imem_req_addr_fill = need_redirect  ? {bp_redirect_target[31:2], 2'b00} :
+                                bp_if_flush    ? {bp_target_id[31:2], 2'b00} :
+                                dedup_consumed ? pc_next :
+                                                 pc_if;
+
+    kv32_btb #(
+        .BTB_SIZE(BTB_SIZE)
+    ) btb (
+        .clk(clk),
+        .rst_n(rst_n),
+        .read_pc(pc_id),
+        .hit(btb_hit_id),
+        .target(btb_target_id),
+        .is_return(btb_is_return_id),
+        .is_uncond(btb_is_uncond_id),
+        .update_en(btb_update_en),
+        .update_pc(pc_ex),
+        .update_target(branch_target),
+        .update_is_return(btb_update_is_return),
+        .update_is_uncond(btb_update_is_uncond)
+    );
+
+    kv32_bht #(
+        .BHT_SIZE(BHT_SIZE)
+    ) bht (
+        .clk(clk),
+        .rst_n(rst_n),
+        .read_pc(pc_id),
+        .pred_taken(bht_pred_taken_id),
+        .update_en(bht_update_en),
+        .update_pc(pc_ex),
+        .actual_taken(bht_actual_taken)
+    );
+
+    kv32_ras #(
+        .RAS_DEPTH(RAS_DEPTH)
+    ) ras (
+        .clk(clk),
+        .rst_n(rst_n),
+        .push_en(ras_push_en),
+        .push_data(ras_push_data),
+        .pop_en(ras_pop_en),
+        .top(ras_top),
+        .valid(ras_valid)
+    );
+
+    // ID-stage prediction: fires after the decoder has identified the instruction
+    // type and the BTB/BHT/RAS provide a prediction for exact PC=pc_id.
+    // Only predict when the instruction is actually a branch/JAL/JALR.
+    assign bp_pred_taken_id = BP_EN && id_valid && btb_hit_id &&
+                              (jal_id || jalr_id || branch_id) &&
+                              (btb_is_uncond_id ||
+                               (btb_is_return_id && RAS_EN && ras_valid) ||
+                               (!btb_is_uncond_id && !btb_is_return_id && bht_pred_taken_id));
+    assign bp_target_id = (btb_is_return_id && RAS_EN && ras_valid) ? ras_top : btb_target_id;
+
+    // bp_if_flush: fire the prediction redirect once the branch is in ID and
+    // can advance to EX (id_ex_stall=0).  This flushes IF (killing fall-through
+    // instructions from the same or next aligned words) and resets the RVC
+    // expander's init_offset via if_flush_pc[1].
+    // Guard with !if_id_stall: don't fire while the pipeline is stalled (load-use
+    // hazard, downstream MEM/WB stall, debug halt).  !if_id_stall subsumes
+    // !id_ex_stall (since id_ex_stall implies downstream_stall implies if_id_stall).
+    assign bp_if_flush = bp_pred_taken_id && !id_flush && !if_id_stall;
+
+    // Pop RAS when the prediction fires (JALR decoded as return, prediction taken).
+    assign ras_pop_en = RAS_EN && BP_EN && bp_if_flush && btb_is_return_id;
 
     // ====== Fetch Request Lifecycle Debug Tracing ======
     `ifdef DEBUG
@@ -763,7 +864,7 @@ module kv32_core #(
             last_issued_fetch_pc <= imem_req_addr;
             last_issued_valid    <= 1'b1;
             `DEBUG2(`DBG_GRP_FETCH, ("[PC] Issued for pc=0x%h (branch_early=%b)",
-                   imem_req_addr, branch_taken && !branch_flushed));
+                     imem_req_addr, need_redirect));
         end else if (if_flush || (ib_outstanding == '0 && !imem_resp_valid &&
                                    imem_req_addr != last_issued_fetch_pc)) begin
             // Flush without a simultaneous new issue: allow re-fetch.
@@ -872,15 +973,22 @@ module kv32_core #(
                 // then complete as a NOP because irq_pending=1).
                 pc_if <= {pc_ex[31:2], 2'b00};
                 `DEBUG1(("[WFI] Sleep branch: parking pc_if=0x%h at WFI addr=0x%h (aligned 0x%h)", pc_if, pc_ex, {pc_ex[31:2], 2'b00}));
-            end else if (branch_taken && !branch_flushed) begin
-                // Branch/jump taken: update to target address.
+            end else if (need_redirect && !branch_flushed) begin
+                // Branch/jump redirect: update to the resolved target address.
                 // Guard with !branch_flushed to avoid re-redirecting on stall cycles
                 // (branch_flushed prevents duplicate flushes when branch stays in EX).
                 // Always store 4-byte aligned address; branch_target[1] is forwarded
                 // via if_flush_pc to kv32_rvc which sets init_offset accordingly.
-                pc_if <= {branch_target[31:2], 2'b00};
-                `DEBUG2(`DBG_GRP_FETCH, ("[PC] BRANCH: pc=0x%h -> target=0x%h (aligned=0x%h), outstanding=%0d",
-                       pc_if, branch_target, {branch_target[31:2], 2'b00}, ib_outstanding));
+                pc_if <= {bp_redirect_target[31:2], 2'b00};
+                `DEBUG2(`DBG_GRP_FETCH, ("[PC] REDIRECT: pc=0x%h -> target=0x%h (aligned=0x%h), outstanding=%0d",
+                       pc_if, bp_redirect_target, {bp_redirect_target[31:2], 2'b00}, ib_outstanding));
+            end else if (bp_if_flush) begin
+                // ID-stage prediction taken: redirect fetch to predicted target.
+                // if_flush fires simultaneously (if_flush = ... || bp_if_flush), so
+                // the RVC expander and IB are also reset with if_flush_pc = bp_target_id.
+                pc_if <= {bp_target_id[31:2], 2'b00};
+                `DEBUG2(`DBG_GRP_BP, ("[BP] ID predict-taken: pc_id=0x%h -> target=0x%h",
+                       pc_id, bp_target_id));
             end else if (fence_i_committing || cbo_committing) begin
                 // FENCE.I / CBO.INVAL commits: reset fetch pointer to instr+4
                 // (or instr+2 if compressed).  Align to 4 bytes for the fetch;
@@ -1275,6 +1383,8 @@ module kv32_core #(
             is_cbo_ex     <= 1'b0;
             is_wfi_ex     <= 1'b0;
             is_compressed_ex <= 1'b0;
+            bp_taken_ex   <= 1'b0;
+            bp_target_ex  <= 32'd0;
             ex_valid      <= 1'b0;
         end else if (ex_flush) begin
             // Branch misprediction or exception: flush pipeline stage
@@ -1296,6 +1406,8 @@ module kv32_core #(
             is_ebreak_ex <= 1'b0;
             is_wfi_ex    <= 1'b0;
             is_compressed_ex <= 1'b0;
+            bp_taken_ex  <= 1'b0;
+            bp_target_ex <= 32'd0;
             `DEBUG2(`DBG_GRP_PIPE, ("Cycle %0t: ID/EX flush - ex_flush=%b, blocking PC=0x%h instr=0x%h", $time, ex_flush, pc_id, instr_id));
         end else if (if_id_stall && !downstream_stall) begin
             // IF/ID stalled (e.g., load-use hazard) but EX can advance: inject bubble
@@ -1307,6 +1419,8 @@ module kv32_core #(
             jal_ex       <= 1'b0;
             jalr_ex      <= 1'b0;
             is_wfi_ex    <= 1'b0;
+            bp_taken_ex   <= 1'b0;
+            bp_target_ex  <= 32'd0;
             is_compressed_ex <= 1'b0;
             ex_valid     <= 1'b0;
         end else if (downstream_stall) begin
@@ -1348,6 +1462,8 @@ module kv32_core #(
             is_cbo_ex     <= 1'b0;
             is_wfi_ex     <= 1'b0;
             is_compressed_ex <= 1'b0;
+            bp_taken_ex   <= 1'b0;
+            bp_target_ex  <= 32'd0;
             ex_valid      <= 1'b0;
         end else if (!id_ex_stall) begin
             pc_ex         <= pc_id;
@@ -1385,6 +1501,8 @@ module kv32_core #(
             is_cbo_ex     <= is_cbo_id;
             is_wfi_ex        <= is_wfi_id;
             is_compressed_ex <= is_compressed_id;
+            bp_taken_ex      <= bp_pred_taken_id;
+            bp_target_ex     <= bp_target_id;
             ex_valid         <= id_valid;
             if (id_valid) begin
                 `DEBUG2(`DBG_GRP_PIPE, ("Cycle %0t: ID->EX pc=0x%h instr=0x%h rd=%0d mem_w=%b mem_r=%b id_valid=%b ex_valid_next=%b",
@@ -1548,9 +1666,23 @@ module kv32_core #(
     end
 
     // Branch Decision
-    // Branches are predicted not-taken; flush pipeline if prediction was wrong
     // Suppress branches during flush or when MRET is executing to prevent PC misdirection
     assign branch_taken = ((branch_ex && branch_cond) || jal_ex || jalr_ex) && ex_valid && !ex_flush && !is_mret_ex;
+
+    assign bp_correct = bp_taken_ex && branch_taken && (bp_target_ex == branch_target);
+    assign need_redirect = ex_valid && !branch_flushed && (branch_taken || bp_taken_ex) && !bp_correct && !is_mret_ex;
+    assign bp_redirect_target = branch_taken ? branch_target :
+                                (pc_ex + (is_compressed_ex ? 32'd2 : 32'd4));
+
+    assign btb_update_en = (branch_ex || jal_ex || jalr_ex) && ex_valid && !ex_flush;
+    assign btb_update_is_uncond = jal_ex || jalr_ex;
+    assign btb_update_is_return = jalr_ex && (rd_addr_ex == 5'd0);
+
+    assign bht_update_en = branch_ex && ex_valid && !ex_flush;
+    assign bht_actual_taken = branch_taken;
+
+    assign ras_push_en = RAS_EN && (jal_ex || jalr_ex) && (rd_addr_ex != 5'd0) && ex_valid && !ex_flush;
+    assign ras_push_data = pc_ex + (is_compressed_ex ? 32'd2 : 32'd4);
 
     `ifdef DEBUG
     logic branch_taken_prev;
@@ -1576,14 +1708,14 @@ module kv32_core #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             branch_flushed <= 1'b0;
-        end else if (branch_taken && !branch_flushed) begin
+        end else if (need_redirect && !branch_flushed) begin
             // Priority 1: SET on first branch cycle.
             // This must come BEFORE the pipeline-advancing reset so that
             // branch_flushed=1 is actually committed on the same cycle
             // the branch fires (not clobbered by the else-if reset).
             branch_flushed <= 1'b1;
-            `DEBUG2(`DBG_GRP_EX, ("[BRANCH_FLUSH] Setting branch_flushed for pc_ex=0x%h target=0x%h",
-                   pc_ex, branch_target));
+            `DEBUG2(`DBG_GRP_BP, ("[BP] redirect: pc_ex=0x%h pred_taken=%b taken=%b pred_tgt=0x%h actual_tgt=0x%h",
+                   pc_ex, bp_taken_ex, branch_taken, bp_target_ex, bp_redirect_target));
         end else if (!id_ex_stall && !downstream_stall && !load_use_hazard) begin
             // Priority 2: RESET when a new instruction enters EX.
             branch_flushed <= 1'b0;
@@ -1739,8 +1871,8 @@ module kv32_core #(
     // MEM flush: Only on interrupts and WB-stage exceptions (see note below).
     //   Synchronous EX exceptions must NOT flush MEM because the MEM instruction
     //   is older in program order and must be allowed to retire.
-    assign if_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush || wfi_branch;
-    assign id_flush = (branch_taken && !branch_flushed) || exception || wb_exception || irq_pending || is_mret_ex || wfi_branch;
+    assign if_flush = need_redirect || bp_if_flush || exception || wb_exception || irq_pending || is_mret_ex || fence_i_flush || cbo_flush || wfi_branch;
+    assign id_flush = need_redirect || exception || wb_exception || irq_pending || is_mret_ex || wfi_branch;
     assign ex_flush = irq_pending || wb_exception;
     // MEM flush: Only on interrupts (must drain for re-execution after MRET) and
     //   WB-stage exceptions (load/store access faults — WB is the oldest stage, so
@@ -1759,9 +1891,9 @@ module kv32_core #(
     always_ff @(posedge clk) begin
         if (rst_n) begin
             if (if_flush) begin
-                if (branch_taken && !branch_flushed) begin
+                if (need_redirect) begin
                     `DEBUG2(`DBG_GRP_FETCH, ("[FLUSH] Branch mispredict: pc_ex=0x%h target=0x%h, outstanding=%0d",
-                           pc_ex, branch_target, ib_outstanding));
+                           pc_ex, bp_redirect_target, ib_outstanding));
                 end else if (exception) begin
                     `DEBUG2(`DBG_GRP_FETCH, ("[FLUSH] Exception: pc_ex=0x%h cause=%0d, outstanding=%0d",
                            pc_ex, exception_cause, ib_outstanding));
@@ -3152,10 +3284,10 @@ module kv32_core #(
 
     property p_pc_sequential_increment;
         @(posedge clk) disable iff (!rst_n)
-        (imem_req_valid && imem_req_ready && !if_id_stall && !branch_taken &&
+        (!BP_EN && imem_req_valid && imem_req_ready && !if_id_stall && !branch_taken &&
          !exception && !wb_exception && !irq_pending && !is_mret_ex &&
          !wfi_branch) |=>
-        (pc_if == ($past(imem_req_addr) + 32'd4));
+        ((pc_if == ($past(imem_req_addr) + 32'd4)) || need_redirect || bp_if_flush || if_flush);
     endproperty
     assert property (p_pc_sequential_increment)
         else $error("[CORE] PC did not increment sequentially: prev=0x%h curr=0x%h (issued=0x%h)",
@@ -3489,7 +3621,7 @@ module kv32_core #(
 
     property p_branch_flushes_if_id;
         @(posedge clk) disable iff (!rst_n)
-        (branch_taken && !branch_flushed) |-> (if_flush && id_flush);
+        (need_redirect && !branch_flushed) |-> (if_flush && id_flush);
     endproperty
     assert property (p_branch_flushes_if_id)
         else $error("[CORE] Branch did not flush IF/ID stages");

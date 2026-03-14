@@ -74,6 +74,11 @@ module kv32_soc #(
     parameter int unsigned SB_DEPTH          = 2,                // Store buffer depth (buffered stores)
     parameter int unsigned FAST_MUL          = 1,                // Multiply mode: 1=combinatorial, 0=serial
     parameter int unsigned FAST_DIV          = 1,                // Division mode: 1=combinatorial, 0=serial
+    parameter bit          BP_EN             = 1'b1,             // Branch predictor enable
+    parameter int unsigned BTB_SIZE          = 32,               // BTB entries (direct-mapped)
+    parameter int unsigned BHT_SIZE          = 64,               // BHT entries (2-bit counters)
+    parameter bit          RAS_EN            = 1'b1,             // Return Address Stack enable
+    parameter int unsigned RAS_DEPTH         = 8,                // Return Address Stack depth
     parameter bit          ICACHE_EN         = 1'b1,             // Instruction cache: 1=enabled, 0=bypass (uses mem_axi_ro)
     parameter int unsigned ICACHE_SIZE       = 4096,             // I-cache total bytes
     parameter int unsigned ICACHE_LINE_SIZE  = 32,               // Cache line size in bytes (32 = 8 words/line)
@@ -697,7 +702,12 @@ module kv32_soc #(
         .IB_DEPTH(IB_DEPTH),
         .SB_DEPTH(SB_DEPTH),
         .FAST_MUL(FAST_MUL),
-        .FAST_DIV(FAST_DIV)
+        .FAST_DIV(FAST_DIV),
+        .BP_EN(BP_EN),
+        .BTB_SIZE(BTB_SIZE),
+        .BHT_SIZE(BHT_SIZE),
+        .RAS_EN(RAS_EN),
+        .RAS_DEPTH(RAS_DEPTH)
     ) core (
         .clk(core_clk),
         .rst_n(cpu_rst_n),

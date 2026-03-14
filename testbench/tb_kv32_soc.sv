@@ -14,6 +14,11 @@
 module tb_kv32_soc #(
     parameter int FAST_MUL          = 1,    // Multiply mode: 1=combinatorial, 0=serial
     parameter int FAST_DIV          = 1,    // Division mode: 1=combinatorial, 0=serial
+    parameter int BP_EN             = 0,    // Branch predictor enable
+    parameter int BTB_SIZE          = 32,   // BTB entries
+    parameter int BHT_SIZE          = 64,   // BHT entries
+    parameter int RAS_EN            = 1,    // Return address stack enable
+    parameter int RAS_DEPTH         = 8,    // Return address stack depth
     parameter int ICACHE_EN         = 1,    // I-cache: 1=enabled, 0=bypass
     parameter int ICACHE_SIZE       = 4096, // I-cache total bytes
     parameter int ICACHE_LINE_SIZE  = 32,   // Cache line size in bytes
@@ -160,6 +165,11 @@ module tb_kv32_soc #(
     kv32_soc #(
         .FAST_MUL       (FAST_MUL),
         .FAST_DIV       (FAST_DIV),
+        .BP_EN          (BP_EN),
+        .BTB_SIZE       (BTB_SIZE),
+        .BHT_SIZE       (BHT_SIZE),
+        .RAS_EN         (RAS_EN),
+        .RAS_DEPTH      (RAS_DEPTH),
         .ICACHE_EN      (ICACHE_EN),
         .ICACHE_SIZE    (ICACHE_SIZE),
         .ICACHE_LINE_SIZE(ICACHE_LINE_SIZE),

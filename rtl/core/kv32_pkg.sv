@@ -55,6 +55,7 @@ package kv32_pkg;
     `define DBG_GRP_AXIMEM 16   // AXI memory slave (testbench)
     `define DBG_GRP_DTM    17   // DTM debug module (DM registers, commands, SBA)
     `define DBG_GRP_DCACHE 18   // D-Cache state machine
+    `define DBG_GRP_BP     19   // Branch predictor (BTB/BHT/RAS)
 
 `ifndef SYNTHESIS
     // ── Display name strings (6-char fixed width for aligned output) ─────────
@@ -81,6 +82,7 @@ package kv32_pkg;
             `DBG_GRP_AXIMEM: return "AXIMEM";
             `DBG_GRP_DTM:    return "DTM   ";
             `DBG_GRP_DCACHE: return "DCACHE";
+            `DBG_GRP_BP:     return "BP    ";
             default:         return "?     ";
         endcase
     endfunction
