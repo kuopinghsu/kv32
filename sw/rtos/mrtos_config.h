@@ -51,7 +51,7 @@
 
 /** Idle task stack size in bytes.  Must be at least 256. */
 #ifndef MRTOS_IDLE_STACK_SIZE
-#  define MRTOS_IDLE_STACK_SIZE 256U
+#  define MRTOS_IDLE_STACK_SIZE 512U
 #endif
 
 /* ── Derived constants (do not override) ─────────────────────────── */

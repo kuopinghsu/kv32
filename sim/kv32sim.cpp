@@ -158,6 +158,8 @@ KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
     // Initialize PMA CSRs (all regions disabled – fallback to bit[31] rule)
     for (int i = 0; i < 2; i++) csr_pmacfg[i]  = 0;
     for (int i = 0; i < 8; i++) csr_pmaaddr[i] = 0;
+    csr_sguard_base = 0;
+    csr_spmin = 0xFFFFFFFFu;
 
     // Initialize device drivers
     magic = new MagicDevice();
@@ -323,6 +325,8 @@ void KV32Simulator::log_commit(uint32_t pc, uint32_t inst, int rd_num,
             case 0x7c9: csr_name = "pmaaddr5"; break;
             case 0x7ca: csr_name = "pmaaddr6"; break;
             case 0x7cb: csr_name = "pmaaddr7"; break;
+            case 0x7cc: csr_name = "sguard_base"; break;
+            case 0x7cd: csr_name = "spmin"; break;
             default: csr_name = "unknown"; break;
             }
             line_stream << " c" << std::setfill('0') << std::setw(3) << std::hex << csr_num
@@ -377,6 +381,8 @@ void KV32Simulator::log_commit(uint32_t pc, uint32_t inst, int rd_num,
             case 0x7c9: csr_name = "pmaaddr5"; break;
             case 0x7ca: csr_name = "pmaaddr6"; break;
             case 0x7cb: csr_name = "pmaaddr7"; break;
+            case 0x7cc: csr_name = "sguard_base"; break;
+            case 0x7cd: csr_name = "spmin"; break;
             default: csr_name = "unknown"; break;
             }
             trace_file << " c" << std::dec << csr_num << "_" << csr_name
@@ -483,6 +489,8 @@ uint32_t KV32Simulator::read_csr(uint32_t csr) {
     case CSR_PMAADDR5: return csr_pmaaddr[5];
     case CSR_PMAADDR6: return csr_pmaaddr[6];
     case CSR_PMAADDR7: return csr_pmaaddr[7];
+    case CSR_SGUARD_BASE: return csr_sguard_base;
+    case CSR_SPMIN: return csr_spmin;
     default:
         std::cerr << "Warning: Reading unknown CSR 0x" << std::hex << csr
                   << std::endl;
@@ -580,6 +588,8 @@ void KV32Simulator::write_csr(uint32_t csr, uint32_t value) {
     case CSR_PMAADDR5: if (!(csr_pmacfg[1] & 0x00008000u)) csr_pmaaddr[5] = value; break;
     case CSR_PMAADDR6: if (!(csr_pmacfg[1] & 0x00800000u)) csr_pmaaddr[6] = value; break;
     case CSR_PMAADDR7: if (!(csr_pmacfg[1] & 0x80000000u)) csr_pmaaddr[7] = value; break;
+    case CSR_SGUARD_BASE: csr_sguard_base = value; break;
+    case CSR_SPMIN: csr_spmin = value; break;
 
     default:
         std::cerr << "Warning: Writing unknown CSR 0x" << std::hex << csr
@@ -1246,6 +1256,7 @@ void KV32Simulator::step() {
     bool trace_is_csr = false;
     uint32_t trace_csr_num = 0;
     bool trace_is_mret = false;
+    uint32_t old_sp = regs[2];
 
     // Decode and execute
     switch (opcode) {
@@ -1737,6 +1748,7 @@ void KV32Simulator::step() {
                 CSR_PMACFG0, CSR_PMACFG1,
                 CSR_PMAADDR0, CSR_PMAADDR1, CSR_PMAADDR2, CSR_PMAADDR3,
                 CSR_PMAADDR4, CSR_PMAADDR5, CSR_PMAADDR6, CSR_PMAADDR7,
+                CSR_SGUARD_BASE, CSR_SPMIN,
             };
             if (known_csrs.find(csr_addr) == known_csrs.end()) {
                 take_trap(CAUSE_ILLEGAL_INSTRUCTION, inst);
@@ -1854,6 +1866,22 @@ void KV32Simulator::step() {
         untick_slaves(); // Undo the mtime increment — RTL does not advance mtime for exceptions
         inst_count--; csr_mcycle--; csr_minstret--; // Not retired — don't consume a trace slot
         return;
+    }
+
+    if (!exception_occurred && trace_rd == 2) {
+        uint32_t new_sp = regs[2];
+
+        // Guard check happens before SP commit in RTL; mirror by restoring old SP on trap.
+        if (csr_sguard_base != 0 && new_sp < csr_sguard_base) {
+            regs[2] = old_sp;
+            take_trap(CAUSE_STACK_OVERFLOW, new_sp);
+            untick_slaves();
+            inst_count--; csr_mcycle--; csr_minstret--;
+            return;
+        }
+
+        if (new_sp < csr_spmin)
+            csr_spmin = new_sp;
     }
 
     regs[0] = 0; // x0 is always 0

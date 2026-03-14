@@ -146,6 +146,30 @@ static inline void write_csr_mip(uint32_t val) {
 }
 
 // ============================================================================
+// Custom Machine CSRs (KV32)
+// ============================================================================
+
+static inline uint32_t read_csr_sguard_base(void) {
+    uint32_t val;
+    asm volatile("csrr %0, 0x7cc" : "=r"(val));
+    return val;
+}
+
+static inline void write_csr_sguard_base(uint32_t val) {
+    asm volatile("csrw 0x7cc, %0" :: "r"(val));
+}
+
+static inline uint32_t read_csr_spmin(void) {
+    uint32_t val;
+    asm volatile("csrr %0, 0x7cd" : "=r"(val));
+    return val;
+}
+
+static inline void write_csr_spmin(uint32_t val) {
+    asm volatile("csrw 0x7cd, %0" :: "r"(val));
+}
+
+// ============================================================================
 // Machine Counter/Timers
 // ============================================================================
 
@@ -332,6 +356,7 @@ static inline void csr_clear_mie(uint32_t mask) {
 #define EXCEPTION_STORE_ACCESS_FAULT     7
 #define EXCEPTION_ECALL_FROM_UMODE       8
 #define EXCEPTION_ECALL_FROM_MMODE       11
+#define EXCEPTION_STACK_OVERFLOW         16
 
 // Interrupt codes (mcause with MCAUSE_INTERRUPT=1)
 #define INTERRUPT_SOFTWARE  3   // Machine software interrupt

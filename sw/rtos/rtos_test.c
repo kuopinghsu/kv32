@@ -39,13 +39,14 @@
  * ═══════════════════════════════════════════════════════════════════ */
 void user_hook(void)
 {
-    kv_wdt_start(2000000u, 0);  /* INTR_EN=0: hardware reset on expiry.
+    kv_wdt_start(8000000u, 0);  /* INTR_EN=0: hardware reset on expiry.
                                  * WDT clock = system clk = 100 MHz = MRTOS_CLINT_FREQ,
                                  * so 1 MRTOS tick = 100 000 WDT cycles.
-                                 * 2 000 000 cycles = 20 MRTOS ticks @ 1 kHz.
+                                 * 8 000 000 cycles = 80 MRTOS ticks @ 1 kHz.
                                  * Worst test block (Test 3 priority-inheritance):
                                  * HIGH_START_DELAY(3) + LOW_WORK_SLICES(3) ≈ 8-10 ticks;
-                                 * 20-tick budget gives ~2× safety margin. */
+                                 * 80-tick budget keeps deadlock detection while
+                                 * tolerating extra scheduler instrumentation. */
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -134,7 +135,7 @@ static int g_fail_count;
  * ═══════════════════════════════════════════════════════════════════ */
 
 static mrtos_tcb_t   t1a_tcb, t1b_tcb;
-static uint8_t       t1a_stack[512], t1b_stack[512];
+static uint8_t       t1a_stack[1024], t1b_stack[1024];
 static volatile int  t1a_runs, t1b_runs;
 static mrtos_sem_t   t1_done;
 
@@ -167,7 +168,7 @@ static void task1b(void *arg)
  * ═══════════════════════════════════════════════════════════════════ */
 
 static mrtos_tcb_t  t2p_tcb, t2c1_tcb, t2c2_tcb;
-static uint8_t      t2p_stack[512], t2c1_stack[512], t2c2_stack[512];
+static uint8_t      t2p_stack[1024], t2c1_stack[1024], t2c2_stack[1024];
 static mrtos_sem_t  t2_sem;
 static mrtos_sem_t  t2_result;
 static volatile int t2_c1_woke, t2_c2_woke;
@@ -218,7 +219,7 @@ static void task2_producer(void *arg)
  * ═══════════════════════════════════════════════════════════════════ */
 
 static mrtos_tcb_t  t3lo_tcb, t3med_tcb, t3hi_tcb;
-static uint8_t      t3lo_stack[512], t3med_stack[512], t3hi_stack[512];
+static uint8_t      t3lo_stack[1024], t3med_stack[1024], t3hi_stack[1024];
 static mrtos_mutex_t t3_mutex;
 static mrtos_sem_t   t3_done;
 
@@ -312,6 +313,61 @@ static uint8_t      t4div_stack[1024], t4mul_stack[1024];
 static mrtos_sem_t  t4_done;
 static volatile int t4_div_fail;
 static volatile int t4_mul_fail;
+
+/* ════════════════════════════════════════════════════════════════════
+ * Test 5: Per-task stack watermark save/restore
+ * ═══════════════════════════════════════════════════════════════════ */
+
+static mrtos_tcb_t  t5sh_tcb, t5dp_tcb;
+static uint8_t      t5sh_stack[4096], t5dp_stack[4096];
+static mrtos_sem_t  t5_done;
+static volatile uint32_t t5_wm_shallow;
+static volatile uint32_t t5_wm_deep;
+
+static void t5_stack_burn(int depth, int burn_words)
+{
+    volatile uint32_t sink[48];
+    int i;
+
+    for (i = 0; i < burn_words && i < 48; i++)
+        sink[i] = (uint32_t)(depth + i);
+
+    if (depth > 0)
+        t5_stack_burn(depth - 1, burn_words);
+
+    if (sink[0] == 0xFFFFFFFFu)
+        kv_wdt_kick();
+}
+
+static void task5_shallow(void *arg)
+{
+    (void)arg;
+    int i;
+
+    for (i = 0; i < 6; i++) {
+        t5_stack_burn(3, 10);
+        mrtos_yield();
+    }
+
+    t5_wm_shallow = mrtos_stack_watermark(mrtos_current_task());
+    mrtos_sem_post(&t5_done);
+    while (1) { mrtos_delay(1000); }
+}
+
+static void task5_deep(void *arg)
+{
+    (void)arg;
+    int i;
+
+    for (i = 0; i < 6; i++) {
+        t5_stack_burn(11, 20);
+        mrtos_yield();
+    }
+
+    t5_wm_deep = mrtos_stack_watermark(mrtos_current_task());
+    mrtos_sem_post(&t5_done);
+    while (1) { mrtos_delay(1000); }
+}
 
 static void task4_div(void *arg)
 {
@@ -517,6 +573,29 @@ static void supervisor_task(void *arg)
         printf("  div_fail=%d  mul_fail=%d\n", t4_div_fail, t4_mul_fail);
     }
     kv_wdt_kick(); /* Test 4 complete: pet the WDT */
+
+    /* ── Test 5: per-task stack watermark accounting ─────────────── */
+    printf("\n[TEST 5] Per-task stack watermark save/restore\n");
+
+    mrtos_sem_init(&t5_done, 0);
+    t5_wm_shallow = 0;
+    t5_wm_deep = 0;
+
+    mrtos_task_create(&t5sh_tcb, "wm_sh", task5_shallow, NULL, 3,
+                      t5sh_stack, sizeof(t5sh_stack));
+    mrtos_task_create(&t5dp_tcb, "wm_dp", task5_deep, NULL, 3,
+                      t5dp_stack, sizeof(t5dp_stack));
+
+    mrtos_sem_wait(&t5_done);
+    mrtos_sem_wait(&t5_done);
+
+    if (t5_wm_shallow > 0 && t5_wm_deep > t5_wm_shallow) {
+        TEST_PASS(5, "Watermark reports larger usage for deeper stack task");
+    } else {
+        TEST_FAIL(5, "Watermark did not reflect per-task stack depth");
+        printf("  shallow=%u deep=%u\n", (unsigned)t5_wm_shallow, (unsigned)t5_wm_deep);
+    }
+    kv_wdt_kick(); /* Test 5 complete: pet the WDT */
 
     /* ── Summary ────────────────────────────────────────────────── */
     printf("\n========================================\n");

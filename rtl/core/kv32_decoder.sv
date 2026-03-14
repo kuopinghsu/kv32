@@ -306,7 +306,9 @@ module kv32_decoder (
                             instr[31:20] != CSR_PMAADDR4  &&
                             instr[31:20] != CSR_PMAADDR5  &&
                             instr[31:20] != CSR_PMAADDR6  &&
-                            instr[31:20] != CSR_PMAADDR7) begin
+                            instr[31:20] != CSR_PMAADDR7  &&
+                            instr[31:20] != CSR_SGUARD_BASE &&
+                            instr[31:20] != CSR_SPMIN) begin
                             illegal = 1'b1;
                         end
                     end

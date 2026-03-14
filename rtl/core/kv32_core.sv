@@ -418,6 +418,10 @@ module kv32_core #(
     logic        irq_pending;
     logic [31:0] irq_cause;
     logic        retire_instr;
+    logic [31:0] sguard_base;
+    logic        sp_we_csr;
+    logic [31:0] sp_wdata_csr;
+    logic        stack_overflow_ex;
 
     // external_irq is already synchronised to clk by kv32_soc before arriving here.
 
@@ -1150,6 +1154,9 @@ module kv32_core #(
         end
     end
 
+    assign sp_we_csr = reg_we_wb && retire_instr && (rd_addr_wb == 5'd2);
+    assign sp_wdata_csr = wb_write_data;
+
     kv32_regfile regfile (
         .clk(clk),
         .rst_n(rst_n),
@@ -1753,6 +1760,11 @@ module kv32_core #(
                               (jal_ex || jalr_ex) ? (pc_ex + (is_compressed_ex ? 32'd2 : 32'd4)) :
                               alu_result_ex;
 
+    // EX-stage early stack guard check for instructions that commit ALU results directly.
+    assign stack_overflow_ex = ex_valid && reg_we_ex && (rd_addr_ex == 5'd2) &&
+                               !mem_read_ex && (csr_op_ex == 3'd0) &&
+                               (sguard_base != 32'd0) && (alu_result_final < sguard_base);
+
     // Stall EX stage if ALU is busy (FAST_MUL=0 or FAST_DIV=0)
     assign id_ex_stall = !alu_ready && ex_valid;
 
@@ -2041,6 +2053,11 @@ module kv32_core #(
                 exception_cause = EXC_BREAKPOINT;
                 exception_tval  = pc_ex;  // RISC-V spec: mtval = PC of ebreak instruction
                 `DEBUG1(("EXCEPTION: EBREAK @ PC=0x%h", pc_ex));
+            end else if (stack_overflow_ex) begin
+                exception = 1'b1;
+                exception_cause = EXC_STACK_OVERFLOW;
+                exception_tval  = alu_result_final;
+                `DEBUG1(("EXCEPTION: Stack overflow @ PC=0x%h sp=0x%h guard=0x%h", pc_ex, alu_result_final, sguard_base));
             end else if (mem_read_ex && (
                 ((mem_op_ex == MEM_HALF || mem_op_ex == MEM_HALF_U) && alu_result_final[0]) ||
                 (mem_op_ex == MEM_WORD && alu_result_final[1:0] != 2'b00)
@@ -3170,6 +3187,11 @@ module kv32_core #(
                 wb_exception_tval  = store_retired_addr;
                 `DEBUG1(("EXCEPTION: Store access fault @ PC=0x%h addr=0x%h (FENCE PC=0x%h)", store_retired_pc, store_retired_addr, pc_wb));
             end
+        end else if (wb_valid && reg_we_wb && (rd_addr_wb == 5'd2) && (sguard_base != 32'd0) && (wb_write_data < sguard_base)) begin
+            wb_exception = 1'b1;
+            wb_exception_cause = EXC_STACK_OVERFLOW;
+            wb_exception_tval = wb_write_data;
+            `DEBUG1(("EXCEPTION: Stack overflow (WB) @ PC=0x%h sp=0x%h guard=0x%h", pc_wb, wb_write_data, sguard_base));
         end
     end
 
@@ -3237,7 +3259,12 @@ module kv32_core #(
         .irq_cause(irq_cause),
 
         // Performance monitoring
-        .retire_instr(retire_instr)
+        .retire_instr(retire_instr),
+
+        // Stack guard / SP watermark
+        .sguard_base_o(sguard_base),
+        .sp_we_i(sp_we_csr),
+        .sp_wdata_i(sp_wdata_csr)
 
         // PMA CSR outputs
         ,.pma_cfg_o  (pma_cfg_o)
@@ -3583,9 +3610,11 @@ module kv32_core #(
 
     property p_no_writeback_on_exception;
         @(posedge clk) disable iff (!rst_n)
-        (wb_exception && wb_valid) |-> !(reg_we_wb && (rd_addr_wb != 5'd0));
+        (wb_exception && wb_valid) |-> !(reg_we_wb && retire_instr && (rd_addr_wb != 5'd0));
     endproperty
-    // reg_we_wb should already be cleared for faulting loads
+    // During WB-detected exceptions (e.g. stack-overflow on SP write), reg_we_wb can
+    // remain asserted for the in-flight instruction, but retire_instr must be 0 so the
+    // register file is not updated.
     assert property (p_no_writeback_on_exception)
         else $error("[CORE] Writeback occurred during exception: PC=0x%h instr=0x%h rd=%0d reg_we=%b mem_read=%b mem_write=%b cause=%0d",
                     pc_wb, instr_wb, rd_addr_wb, reg_we_wb, mem_read_wb, mem_write_wb, wb_exception_cause);

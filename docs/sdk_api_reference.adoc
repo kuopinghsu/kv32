@@ -2280,6 +2280,10 @@ The `kv_irq.h` module provides high-level interrupt management functions.
 | `KV_EXC_ECALL_M`
 | 11
 | Environment call from M-mode
+
+| `KV_EXC_STACK_OVERFLOW`
+| 16
+| KV32 stack-guard exception (SP below `SGUARD_BASE`)
 |===
 
 === API Functions
@@ -2700,6 +2704,21 @@ void write_csr_mtval(uint32_t val);
 uint32_t read_csr_mip(void);        // Interrupt pending
 void write_csr_mip(uint32_t val);
 ----
+
+=== KV32 Custom Machine CSRs (Non-Standard)
+
+[source,c]
+----
+uint32_t read_csr_sguard_base(void);
+void write_csr_sguard_base(uint32_t val);
+
+uint32_t read_csr_spmin(void);
+void write_csr_spmin(uint32_t val);
+----
+
+`SGUARD_BASE` (`0x7CC`) programs a lower stack bound. `SPMIN` (`0x7CD`) tracks
+the minimum observed stack pointer (low-water mark) and is writable so software can
+reset/reseed tracking.
 
 === Performance Counters
 
@@ -3390,6 +3409,14 @@ Use this section when evaluating portability to other RISC-V implementations.
 | KV32-specific (non-standard)
 | Runtime PMA region programming API in `kv_pma.h`. Not part of standard privileged CSR map.
 
+| Stack-guard custom CSRs (`sguard_base`, `spmin` at `0x7CC-0x7CD`)
+| KV32-specific (non-standard)
+| Hardware stack bound and low-water tracking exposed via `csr.h` (`read_csr_sguard_base`, `read_csr_spmin`).
+
+| Stack-overflow exception (`KV_EXC_STACK_OVERFLOW`, cause `16`)
+| KV32-specific (non-standard)
+| Raised when stack pointer moves below configured guard; not a standard privileged-spec exception code.
+
 | Trap-frame API (`kv_trap_frame_t`, frame-pointer exception handlers)
 | KV32-specific SDK ABI
 | Design choice for robust trap handling; not required by standard RISC-V ABI.
@@ -3413,6 +3440,10 @@ Use this section when evaluating portability to other RISC-V implementations.
 
 `kv_pma.h` exposes PMA control through custom M-mode CSRs in the `0x7C0-0x7CB` range. These CSRs are not part of the standard RISC-V privileged spec and must be abstracted out when porting firmware.
 
+==== Stack-guard CSRs and exception are custom
+
+`csr.h` exposes stack-guard controls through custom M-mode CSRs `0x7CC` (`SGUARD_BASE`) and `0x7CD` (`SPMIN`). KV32 also defines custom exception cause `16` (`KV_EXC_STACK_OVERFLOW`). These are KV32 architectural extensions and are not represented by standard `misa` extension bits.
+
 ==== Trap redirection model
 
 Exception handlers should update `frame->mepc` in `kv_trap_frame_t` rather than directly writing `mepc` CSR. This is the KV32 SDK contract and ensures compatibility with the trap epilogue restore sequence.
@@ -3426,6 +3457,7 @@ When porting KV32 firmware to another RISC-V target:
 3. Validate availability of `Zicbom` and `Zifencei` before using cache maintenance helpers.
 4. Treat trap frame layout and handler ABI as platform-specific unless explicitly reproduced.
 5. Re-map all peripheral drivers to target MMIO register maps and interrupt IDs.
+6. Replace or abstract stack-guard controls (`read_csr_sguard_base`, `read_csr_spmin`) and exception cause `16` handling.
 
 '''
 

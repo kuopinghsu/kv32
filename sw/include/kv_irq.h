@@ -40,6 +40,7 @@ extern "C" {
 #define KV_EXC_STORE_FAULT      7u
 #define KV_EXC_ECALL_U          8u
 #define KV_EXC_ECALL_M          11u
+#define KV_EXC_STACK_OVERFLOW   16u
 
 /* ═══════════════════════════════════════════════════════════════════
  * Trap frame — mirrors the register save layout in start.S

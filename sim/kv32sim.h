@@ -129,6 +129,8 @@ struct Elf32_Sym {
 #define CSR_PMAADDR5  0x7C9  // physaddr>>2 for PMA region 5
 #define CSR_PMAADDR6  0x7CA  // physaddr>>2 for PMA region 6
 #define CSR_PMAADDR7  0x7CB  // physaddr>>2 for PMA region 7
+#define CSR_SGUARD_BASE 0x7CC
+#define CSR_SPMIN       0x7CD
 
 // Exception/Interrupt codes
 #define CAUSE_MISALIGNED_FETCH    0
@@ -140,6 +142,7 @@ struct Elf32_Sym {
 #define CAUSE_MISALIGNED_STORE    6
 #define CAUSE_STORE_ACCESS        7
 #define CAUSE_ECALL_FROM_M        11
+#define CAUSE_STACK_OVERFLOW      16
 #define CAUSE_MACHINE_TIMER_INT    0x80000007
 #define CAUSE_MACHINE_SOFTWARE_INT 0x80000003
 #define CAUSE_MACHINE_EXTERNAL_INT 0x8000000B  // MEIP (bit 11)
@@ -246,6 +249,8 @@ public:
     // Custom M-mode PMA CSRs
     uint32_t csr_pmacfg[2];   // pmacfg0 (regions 0-3), pmacfg1 (regions 4-7)
     uint32_t csr_pmaaddr[8];  // pmaaddr0-7
+    uint32_t csr_sguard_base;
+    uint32_t csr_spmin;
 
     // Exception handling
     bool exception_occurred;

@@ -1,12 +1,13 @@
 RISC-V 32-bit IMAC Processor
 ============================
 
-K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMAC_Zicsr support, featuring a 5-stage pipeline, instruction and data caches, a JTAG/cJTAG debug interface, a 1-to-11 AXI4-Lite interconnect with ten on-chip peripherals, and both RTL and functional simulators.
+K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMAC_Zicsr_Zifencei support, featuring a 5-stage pipeline, instruction and data caches, KV32 non-standard stack-guard extensions, a JTAG/cJTAG debug interface, a 1-to-11 AXI4-Lite interconnect with ten on-chip peripherals, and both RTL and functional simulators.
 
 ## Features
 
 ### Core Features
 - **ISA**: RV32IMAC_Zicsr (Integer, Multiplication, Atomic, Compressed, CSR extensions)
+- **KV32 Non-Standard Extension**: Stack guard + stack watermark via custom M-mode CSRs `sguard_base` (`0x7CC`) and `spmin` (`0x7CD`), with custom exception cause `16` (`KV_EXC_STACK_OVERFLOW`)
 - **Pipeline**: 5-stage (Fetch, Decode, Execute, Memory, Writeback)
 - **Hazard Handling**: Data forwarding, pipeline stalls, branch prediction
 - **Privilege**: Machine mode (M-mode) support
@@ -32,7 +33,7 @@ K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IM
   - DMA — memory-to-memory transfer engine
   - Watchdog Timer (WDT) — hardware reset/interrupt on timeout
   - Magic — simulation console output and exit control
-- **RTOS**: FreeRTOS and Zephyr ports (`rtos/freertos/`, `rtos/zephyr/`)
+- **RTOS**: FreeRTOS and Zephyr ports (`rtos/freertos/`, `rtos/zephyr/`), Mini-RTOS (`sw/rtos`) for stress test
 - **Simulation**:
   - Verilator-based RTL simulation with FST/VCD tracing
   - Fast functional ISA simulator (kv32sim) with GDB stub

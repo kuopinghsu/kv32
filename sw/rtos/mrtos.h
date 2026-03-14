@@ -74,6 +74,9 @@ typedef struct mrtos_tcb {
     uint8_t              eff_priority;   /**< Effective priority (may be raised).  */
     mrtos_state_t        state;          /**< Current scheduler state.             */
     uint32_t             wake_tick;      /**< Tick to wake on (DELAYED state).     */
+    uint32_t             sguard_base;    /**< Per-task stack guard lower bound.    */
+    uint32_t             stack_top_addr; /**< Per-task stack top (high address).   */
+    uint32_t             spmin_saved;    /**< Saved hardware low-water mark SP.    */
 
     /* Ready / blocked doubly-linked list links. */
     struct mrtos_tcb    *next;
@@ -123,6 +126,13 @@ mrtos_tcb_t *mrtos_current_task(void);
 
 /** @brief Return the global tick counter (incremented once per OS tick). */
 uint32_t mrtos_tick_count(void);
+
+/**
+ * @brief Return peak stack usage (bytes) observed for a task.
+ *
+ * Computed as `stack_top_addr - spmin_saved`.
+ */
+uint32_t mrtos_stack_watermark(const mrtos_tcb_t *tcb);
 
 /* ════════════════════════════════════════════════════════════════════
  * Mutex — with priority inheritance

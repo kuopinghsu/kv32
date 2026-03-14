@@ -71,9 +71,17 @@
 
 ### 5. ARM-style Cache Diagnostic CSRs
 
+refer to `docs/plan-cacheDiagCsrs.prompt.md`
+
 ---
 
 ## Completed
+
+### ~~C24. Hardware ISA Extension — Stack Guard + SP Watermark CSRs~~
+- Implemented custom machine CSRs `CSR_SGUARD_BASE` (`0x7CC`) and `CSR_SPMIN` (`0x7CD`) in RTL and simulators.
+- Added custom exception cause `EXC_STACK_OVERFLOW` (`16`) and wired trap behavior for SP underflow detection.
+- Integrated RTOS context-switch save/restore of stack-guard state and validated with `stack_guard` and `rtos` regression flows.
+- Updated documentation: `docs/sdk_api_reference.adoc`, `docs/kv32_soc_datasheet.adoc`, and `README.md`.
 
 ### ~~C1. Null Address Bus-Error Test~~
 - Added null pointer load/store and function-call cases to `sw/bus_err`.

@@ -56,6 +56,13 @@ module kv32_csr (
     output logic [1:0][31:0] pma_cfg_o,    // pmacfg0, pmacfg1
     output logic [7:0][31:0] pma_addr_o,   // pmaaddr0-7
 
+    // Stack guard CSR/state outputs
+    output logic [31:0] sguard_base_o,
+
+    // SP writeback pulse from WB stage
+    input  logic        sp_we_i,
+    input  logic [31:0] sp_wdata_i,
+
     // Cycle counter
     input  logic        retire_instr
 `ifndef SYNTHESIS
@@ -83,8 +90,11 @@ module kv32_csr (
     // pmacfg byte: [7]=L(lock) [6:5]=rsvd [4:3]=A(match) [2]=X(I$) [1]=C(D$) [0]=B(bufferable)
     logic [1:0][31:0] pma_cfg_r;   // pmacfg0 (regions 0-3), pmacfg1 (regions 4-7)
     logic [7:0][31:0] pma_addr_r;  // pmaaddr0-7 (NAPOT/TOR encoded, physaddr >> 2)
+    logic [31:0] sguard_base_r;    // stack lower bound; 0 disables checking
+    logic [31:0] spmin_r;          // minimum committed SP value observed
     assign pma_cfg_o  = pma_cfg_r;
     assign pma_addr_o = pma_addr_r;
+    assign sguard_base_o = sguard_base_r;
 
     // cycle_csr_src: selects which counter is returned for cycle/time/mcycle reads.
     // In normal operation this is mcycle (actual wall-clock cycles).
@@ -234,6 +244,8 @@ module kv32_csr (
             CSR_PMAADDR5: csr_rdata = pma_addr_r[5];
             CSR_PMAADDR6: csr_rdata = pma_addr_r[6];
             CSR_PMAADDR7: csr_rdata = pma_addr_r[7];
+            CSR_SGUARD_BASE: csr_rdata = sguard_base_r;
+            CSR_SPMIN:       csr_rdata = spmin_r;
             default: begin
                 csr_rdata   = 32'd0;
                 csr_illegal = (csr_op != 3'b0);
@@ -271,6 +283,8 @@ module kv32_csr (
             minstret  <= 64'd0;
             pma_cfg_r  <= '0;   // all regions disabled (A=00) at reset
             pma_addr_r <= '0;
+            sguard_base_r <= 32'd0;
+            spmin_r <= 32'hFFFF_FFFF;
         end else begin
             // Cycle counter
             mcycle <= mcycle + 64'd1;
@@ -343,8 +357,15 @@ module kv32_csr (
                     CSR_PMAADDR5: if (!pma_cfg_r[1][15]) pma_addr_r[5] <= csr_wdata_final;
                     CSR_PMAADDR6: if (!pma_cfg_r[1][23]) pma_addr_r[6] <= csr_wdata_final;
                     CSR_PMAADDR7: if (!pma_cfg_r[1][31]) pma_addr_r[7] <= csr_wdata_final;
+                    CSR_SGUARD_BASE: sguard_base_r <= csr_wdata_final;
+                    CSR_SPMIN:       spmin_r <= csr_wdata_final;
                     default: ;
                 endcase
+            end
+
+            // Track minimum committed SP. Software writes to CSR_SPMIN win.
+            if (sp_we_i && !(csr_op != 3'b0 && !csr_illegal && csr_addr == CSR_SPMIN) && (sp_wdata_i < spmin_r)) begin
+                spmin_r <= sp_wdata_i;
             end
         end
     end

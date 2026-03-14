@@ -201,7 +201,8 @@ package kv32_pkg;
         EXC_STORE_ADDR_MISALIGNED   = 5'd6,
         EXC_STORE_ACCESS_FAULT      = 5'd7,
         EXC_ECALL_UMODE             = 5'd8,
-        EXC_ECALL_MMODE             = 5'd11
+        EXC_ECALL_MMODE             = 5'd11,
+        EXC_STACK_OVERFLOW          = 5'd16
     } exception_e;
 
     // CSR addresses
@@ -243,7 +244,10 @@ package kv32_pkg;
         CSR_PMAADDR4  = 12'h7C8,   // PMA NAPOT/TOR addr region 4
         CSR_PMAADDR5  = 12'h7C9,   // PMA NAPOT/TOR addr region 5
         CSR_PMAADDR6  = 12'h7CA,   // PMA NAPOT/TOR addr region 6
-        CSR_PMAADDR7  = 12'h7CB    // PMA NAPOT/TOR addr region 7
+        CSR_PMAADDR7  = 12'h7CB,   // PMA NAPOT/TOR addr region 7
+        // Custom machine-mode CSRs: stack guard and stack watermark
+        CSR_SGUARD_BASE = 12'h7CC,
+        CSR_SPMIN       = 12'h7CD
     } csr_addr_e;
 
     // Number of programmable PMA region slots

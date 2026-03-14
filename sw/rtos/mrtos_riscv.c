@@ -67,6 +67,9 @@ extern volatile int      mrtos_ctx_switch_pending;
 extern volatile void   **mrtos_ctx_old_sp_ptr;
 /** New task's stack pointer (loaded on context switch). */
 extern volatile void    *mrtos_ctx_new_sp;
+/** New task stack-guard values to install after switching SP. */
+extern volatile uint32_t mrtos_ctx_new_sguard_base;
+extern volatile uint32_t mrtos_ctx_new_spmin;
 
 /* ════════════════════════════════════════════════════════════════════
  * CLINT state
@@ -247,6 +250,16 @@ void __attribute__((naked, aligned(4))) mrtos_trap_vector(void)
         "sw    sp, 0(t2)\n\t"            /* *old_sp_ptr = current frame sp */
 
         ".Lskip_save:\n\t"
+        /* Program SGUARD_BASE/SPMIN for the new task context first so
+         * the subsequent SP write is checked against the incoming task guard,
+         * not the outgoing task guard. */
+        "la    t1, mrtos_ctx_new_sguard_base\n\t"
+        "lw    t0, 0(t1)\n\t"
+        "csrw  0x7cc, t0\n\t"
+        "la    t1, mrtos_ctx_new_spmin\n\t"
+        "lw    t0, 0(t1)\n\t"
+        "csrw  0x7cd, t0\n\t"
+
         /* Load new sp. */
         "la    t1, mrtos_ctx_new_sp\n\t"
         "lw    sp, 0(t1)\n\t"            /* sp = new task frame */

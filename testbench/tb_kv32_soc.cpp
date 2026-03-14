@@ -441,6 +441,8 @@ static void dump_instruction_trace(
             case 0x7c9: csr_name = "pmaaddr5"; break;
             case 0x7ca: csr_name = "pmaaddr6"; break;
             case 0x7cb: csr_name = "pmaaddr7"; break;
+            case 0x7cc: csr_name = "sguard_base"; break;
+            case 0x7cd: csr_name = "spmin"; break;
             default: csr_name = "unknown"; break;
             }
             uint32_t csr_result = csr_rdata;

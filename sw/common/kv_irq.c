@@ -51,8 +51,8 @@ static void _default_exc(kv_trap_frame_t *frame)
 #define _IRQ_MAX 16u
 static kv_irq_handler_t _irq_table[_IRQ_MAX];
 
-/* Exception causes 0..15 */
-#define _EXC_MAX 16u
+/* Exception causes 0..31 (includes KV32 custom cause 16) */
+#define _EXC_MAX 32u
 static kv_exc_handler_t _exc_table[_EXC_MAX];
 
 /* ── registration ─────────────────────────────────────────────────── */

@@ -110,9 +110,9 @@ int main(void)
     // Subtest 3: force SP write below guard and validate trap metadata.
     g_overflow_seen = 0;
     asm volatile ("mv %0, sp" : "=r"(sp_now));
-    guard = sp_now - 64u;
+    guard = sp_now - 256u;
     write_csr_sguard_base(guard);
-    g_expected_bad_sp = sp_now - 128u;
+    g_expected_bad_sp = sp_now - 320u;
     trigger_bad_sp(g_expected_bad_sp);
     write_csr_sguard_base(0u);
     if (g_overflow_seen == 1 &&

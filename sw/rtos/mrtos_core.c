@@ -21,6 +21,7 @@
 #include <string.h>
 #include "mrtos.h"
 #include "mrtos_port.h"
+#include "csr.h"
 
 /* ════════════════════════════════════════════════════════════════════
  * Internal types
@@ -61,6 +62,12 @@ volatile void   **mrtos_ctx_old_sp_ptr;
  * Set before triggering a context switch.
  */
 volatile void    *mrtos_ctx_new_sp;
+
+/**
+ * @brief Stack guard values to be installed for the next task at trap-exit.
+ */
+volatile uint32_t mrtos_ctx_new_sguard_base;
+volatile uint32_t mrtos_ctx_new_spmin;
 
 /* ── Idle task ─────────────────────────────────────────────────────── */
 
@@ -168,6 +175,12 @@ static void do_schedule(void)
     mrtos_ready_remove(next);
     next->state = MRTOS_TASK_RUNNING;
 
+    if (g_current != NULL) {
+        g_current->spmin_saved = read_csr_spmin();
+    }
+    mrtos_ctx_new_sguard_base = next->sguard_base;
+    mrtos_ctx_new_spmin = next->spmin_saved;
+
     /* Arm the port-level context-switch. */
     mrtos_ctx_old_sp_ptr      = (g_current != NULL) ? (volatile void **)&g_current->sp : NULL;
     mrtos_ctx_new_sp          = next->sp;
@@ -274,6 +287,8 @@ void mrtos_init(void)
     mrtos_ctx_switch_pending = 0;
     mrtos_ctx_old_sp_ptr     = NULL;
     mrtos_ctx_new_sp         = NULL;
+    mrtos_ctx_new_sguard_base = 0u;
+    mrtos_ctx_new_spmin = 0xFFFFFFFFu;
 
     /* Create the idle task at the lowest possible priority. */
     mrtos_task_create(&g_idle_tcb, "idle", idle_task, NULL,
@@ -301,6 +316,9 @@ void mrtos_task_create(mrtos_tcb_t *tcb,
     tcb->next         = NULL;
     tcb->prev         = NULL;
     tcb->blocked_on   = NULL;
+    tcb->sguard_base  = (uint32_t)(uintptr_t)stack;
+    tcb->stack_top_addr = (uint32_t)((uintptr_t)stack + stack_size);
+    tcb->spmin_saved  = tcb->stack_top_addr;
 
     /* Initialise the context frame at the top of the supplied stack. */
     uint8_t *top = (uint8_t *)stack + stack_size;
@@ -342,6 +360,17 @@ mrtos_tcb_t *mrtos_current_task(void)
 uint32_t mrtos_tick_count(void)
 {
     return g_tick_count;
+}
+
+uint32_t mrtos_stack_watermark(const mrtos_tcb_t *tcb)
+{
+    if (tcb == NULL)
+        return 0u;
+
+    if (tcb->spmin_saved >= tcb->stack_top_addr)
+        return 0u;
+
+    return tcb->stack_top_addr - tcb->spmin_saved;
 }
 
 void mrtos_yield(void)
@@ -486,6 +515,8 @@ void mrtos_start(void)
     mrtos_ready_remove(first);
     first->state = MRTOS_TASK_RUNNING;
     g_current    = first;
+    write_csr_sguard_base(first->sguard_base);
+    write_csr_spmin(first->spmin_saved);
     mrtos_port_exit_critical(saved);
 
     /* Hand off to the port; does not return. */
