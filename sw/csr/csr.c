@@ -9,6 +9,7 @@
 // ============================================================================
 
 #include <stdint.h>
+#include "kv_irq.h"
 
 extern void putc(char c);
 
@@ -36,17 +37,15 @@ static volatile uint32_t g_mcause;
 static volatile uint32_t g_mepc;
 
 // override the weak trap_handler from common/trap.c
-void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
-    (void)mtval;
+void trap_handler(kv_trap_frame_t *frame) {
     g_trapped = 1;
-    g_mcause  = mcause;
-    g_mepc    = mepc;
+    g_mcause  = frame->mcause;
+    g_mepc    = frame->mepc;
     // Advance mepc past the faulting instruction: +2 for RVC (bits[1:0] != 11),
     // +4 otherwise.  Without this the core retries the same instruction forever.
     {
-        uint16_t inst16 = *(volatile uint16_t *)mepc;
-        uint32_t next_pc = mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
-        asm volatile("csrw mepc, %0" :: "r"(next_pc));
+        uint16_t inst16 = *(volatile uint16_t *)frame->mepc;
+        frame->mepc += (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
     }
 }
 

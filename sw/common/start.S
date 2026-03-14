@@ -72,7 +72,7 @@ _start:
     li t0, 0x80
     csrs mie, t0
 
-    // Call user_hook (weak default: start timer + WDT keep-alive)
+    // Call user_hook (weak default: no-op; override for custom pre-main init)
     call user_hook
 
     // Call main
@@ -97,15 +97,17 @@ trap_vector:
     // Step 2: Save trap CSRs (mepc and mstatus) — REQUIRED for nested interrupts.
     //         A nested interrupt overwrites these CSRs; without saving them the
     //         outer handler's mret will return to the wrong PC.
-    //         Frame layout (136 bytes):
-    //           [sp+0]   unused
+    //         Frame layout (144 bytes, matches kv_trap_frame_t in kv_irq.h):
+    //           [sp+0]   unused (x0 placeholder)
     //           [sp+4]   x1 (ra)
-    //           [sp+8]   x2 (sp, pre-adjust)
+    //           [sp+8]   x2 (sp, post-adjust value)
     //           ...
     //           [sp+124] x31 (t6)
-    //           [sp+128] mepc
+    //           [sp+128] mepc     <- handlers may update to redirect return PC
     //           [sp+132] mstatus
-    addi sp, sp, -136
+    //           [sp+136] mcause   <- read-only for handlers
+    //           [sp+140] mtval    <- read-only for handlers
+    addi sp, sp, -144
     sw x1, 4(sp)
     sw x2, 8(sp)
     sw x3, 12(sp)
@@ -141,21 +143,24 @@ trap_vector:
     sw x1, 128(sp)          // save mepc
     csrr x1, mstatus
     sw x1, 132(sp)          // save mstatus
+    csrr x1, mcause
+    sw x1, 136(sp)          // save mcause
+    csrr x1, mtval
+    sw x1, 140(sp)          // save mtval
 
-    // Call C trap handler
-    csrr a0, mcause
-    csrr a1, mepc
-    csrr a2, mtval
+    // Pass the frame pointer to trap_handler; the handler and any
+    // registered exception handlers communicate the return PC via
+    // frame->mepc rather than a direct csrw.  The epilogue below
+    // will restore mepc from frame->mepc before mret.
+    mv a0, sp
     call trap_handler
 
-    // Step 6: Restore trap CSRs first (use x1 as scratch before it is restored).
-    //         Restoring mstatus replaces the (potentially modified) in-handler
-    //         mstatus with the value from trap entry: MIE=0, MPIE=outer-MIE.
-    //         mret will then correctly set MIE←MPIE and jump to the saved mepc.
+    // Restore CSRs from the frame (authoritative source — exception handlers
+    // update frame->mepc rather than writing the CSR directly).
     lw x1, 132(sp)
-    csrw mstatus, x1        // restore mstatus (MIE=0, MPIE=outer-MIE)
+    csrw mstatus, x1        // restore mstatus
     lw x1, 128(sp)
-    csrw mepc, x1           // restore outer return address
+    csrw mepc, x1           // restore mepc (may have been updated by handler)
     // Restore general-purpose registers
     lw x1, 4(sp)
     lw x2, 8(sp)
@@ -188,6 +193,6 @@ trap_vector:
     lw x29, 116(sp)
     lw x30, 120(sp)
     lw x31, 124(sp)
-    addi sp, sp, 136
+    addi sp, sp, 144
 
     mret

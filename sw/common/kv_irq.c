@@ -35,12 +35,12 @@ static void _default_irq(uint32_t cause)
     _puts("[kv_irq] unhandled interrupt, cause="); _puthex(cause); _puts("\n");
 }
 
-static void _default_exc(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+static void _default_exc(kv_trap_frame_t *frame)
 {
     _puts("\n=== EXCEPTION ===\n");
-    _puts("mcause: "); _puthex(mcause); _puts("\n");
-    _puts("mepc:   "); _puthex(mepc);   _puts("\n");
-    _puts("mtval:  "); _puthex(mtval);  _puts("\n");
+    _puts("mcause: "); _puthex(frame->mcause); _puts("\n");
+    _puts("mepc:   "); _puthex(frame->mepc);   _puts("\n");
+    _puts("mtval:  "); _puthex(frame->mtval);  _puts("\n");
     _puts("Halted.\n");
     while (1) {}
 }
@@ -71,8 +71,9 @@ void kv_exc_register(uint32_t cause, kv_exc_handler_t handler)
 
 /* ── dispatcher ───────────────────────────────────────────────────── */
 
-void kv_irq_dispatch(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+void kv_irq_dispatch(kv_trap_frame_t *frame)
 {
+    uint32_t mcause = frame->mcause;
     if (mcause & 0x80000000u) {
         /* Interrupt */
         uint32_t code = mcause & 0x7FFFFFFFu;
@@ -84,9 +85,9 @@ void kv_irq_dispatch(uint32_t mcause, uint32_t mepc, uint32_t mtval)
         /* Exception */
         uint32_t code = mcause & 0x7FFFFFFFu;
         if (code < _EXC_MAX && _exc_table[code])
-            _exc_table[code](mcause, mepc, mtval);
+            _exc_table[code](frame);
         else
-            _default_exc(mcause, mepc, mtval);
+            _default_exc(frame);
     }
 }
 

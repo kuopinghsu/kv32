@@ -535,7 +535,7 @@ PLIC Source ID:: 2 (KV_PLIC_SRC_SPI)
 | `0x18`
 | IS
 | R/W1C
-| Interrupt Status
+| Interrupt Status (`IS[2]` sticky W1C; `IS[1:0]` level)
 |===
 
 === SPI Modes
@@ -545,6 +545,7 @@ PLIC Source ID:: 2 (KV_PLIC_SRC_SPI)
 | Mode | CPOL | CPHA | Description
 
 | MODE0
+| 0
 | 0
 | Clock idle low, sample on rising edge
 
@@ -559,6 +560,7 @@ PLIC Source ID:: 2 (KV_PLIC_SRC_SPI)
 | Clock idle high, sample on falling edge
 
 | MODE3
+| 1
 | 1
 | Clock idle high, sample on rising edge
 |===
@@ -846,7 +848,11 @@ uint32_t kv_i2c_irq_status(void);
 
 * `KV_I2C_IE_RX_READY` (bit 0): RX FIFO not empty
 * `KV_I2C_IE_TX_EMPTY` (bit 1): TX FIFO empty
-* `KV_I2C_IE_STOP_DONE` (bit 2): STOP condition completed
+* `KV_I2C_IE_STOP_DONE` (bit 2): STOP condition completed (sticky until W1C clear)
+
+`kv_i2c_irq_status()` reads `IS` and writes the same value back.
+This acknowledges `IS[2]` (W1C STOP_DONE); `IS[1:0]` are level-driven and
+clear when the underlying FIFO/busy condition deasserts.
 
 ==== Capability Register
 
@@ -983,6 +989,11 @@ Each channel has registers at `KV_DMA_BASE + channel * 0x40`:
 | RO
 | Identification register (0xD4A00100)
 
+| `0xF0C`
+| CAPABILITY
+| RO
+| Hardware capability: `{VERSION[31:16], NUM_CHANNELS[15:8], MAX_BURST_LEN[7:0]}`
+
 | `0xF10`
 | PERF_CTRL
 | R/W
@@ -1002,11 +1013,6 @@ Each channel has registers at `KV_DMA_BASE + channel * 0x40`:
 | PERF_WR_BYTES
 | R/W
 | Total bytes written
-
-| `0xF0C`
-| CAPABILITY
-| RO
-| Hardware capability: `{VERSION[31:16], NUM_CHANNELS[15:8], MAX_BURST_LEN[7:0]}`
 |===
 
 === Control Register Bits
@@ -1942,6 +1948,330 @@ kv_irq_source_enable(KV_IRQ_MTIE | KV_IRQ_MEIE);
 kv_irq_source_disable(KV_IRQ_MTIE);
 ----
 
+==== Wait For Interrupt
+
+[source,c]
+----
+void kv_wfi(void);
+----
+
+Suspends the core until any enabled interrupt fires (`wfi` instruction).
+Use inside idle loops to reduce active power consumption:
+
+[source,c]
+----
+kv_irq_enable();
+while (!done)
+    kv_wfi();
+----
+
+==== Handler Registration
+
+Interrupt and exception handlers are registered per cause code.
+Both table slots default to built-in no-op / diagnostic handlers.
+
+[source,c]
+----
+// Interrupt handler: receives the stripped cause code (mcause MSB cleared)
+typedef void (*kv_irq_handler_t)(uint32_t cause);
+
+// Exception handler: receives a pointer to the full saved register frame
+typedef void (*kv_exc_handler_t)(kv_trap_frame_t *frame);
+
+void kv_irq_register(uint32_t cause, kv_irq_handler_t handler);
+void kv_exc_register(uint32_t cause, kv_exc_handler_t handler);
+----
+
+* `kv_irq_register()` — binds `handler` to interrupt cause `cause` (e.g. `KV_CAUSE_MEI`).
+* `kv_exc_register()` — binds `handler` to exception cause `cause` (e.g. `KV_EXC_ILLEGAL_INSN`).
+* Pass `NULL` to restore the built-in default (prints diagnostics + halts for exceptions).
+
+*Example:*
+
+[source,c]
+----
+static void on_timer(uint32_t cause) {
+    (void)cause;
+    timer_ticks++;
+    kv_clint_timer_set_rel(TICK_PERIOD);
+}
+
+static void on_illegal_insn(kv_trap_frame_t *frame) {
+    printf("Illegal insn @ 0x%08x\n", frame->mepc);
+    frame->mepc += 4;   // skip and resume
+}
+
+kv_irq_register(KV_CAUSE_MTI,        on_timer);
+kv_exc_register(KV_EXC_ILLEGAL_INSN, on_illegal_insn);
+kv_irq_enable();
+----
+
+'''
+
+== Exception Handling and Trap Frame
+
+=== Overview
+
+When a machine-mode trap fires the processor saves the machine state and jumps to
+`mtvec`, which points to the assembly stub `trap_vector` in `start.S`. That stub:
+
+1. Allocates a 144-byte `kv_trap_frame_t` on the interrupted thread's stack.
+2. Saves all 32 general-purpose registers and four CSRs (`mepc`, `mstatus`, `mcause`, `mtval`) into the frame.
+3. Passes a **pointer to the frame** as the sole argument to `trap_handler()`.
+4. On return, restores machine state from the frame, then executes `mret`.
+
+Because the epilogue restores `mepc` from `frame->mepc`, exception handlers redirect
+the return PC by writing `frame->mepc` — no direct `csrw mepc` inside the handler.
+
+=== Trap Frame Layout (`kv_trap_frame_t`)
+
+Defined in `kv_irq.h`. Total size: 144 bytes, allocated on the interrupted thread's
+stack. The frame is the *authoritative* state used by `mret`.
+
+[cols="1,2,3,6"]
+|===
+| Offset | Field | Register | Notes
+
+| +0   | `_pad`    | x0          | Placeholder; x0 is hardwired zero
+| +4   | `ra`      | x1          | Return address at trap entry
+| +8   | `sp`      | x2          | Stack pointer at trap entry (post-allocation)
+| +12  | `gp`      | x3          | Global pointer
+| +16  | `tp`      | x4          | Thread pointer
+| +20  | `t0`      | x5          | Temporary
+| +24  | `t1`      | x6          | Temporary
+| +28  | `t2`      | x7          | Temporary
+| +32  | `s0`      | x8 / fp     | Saved register / frame pointer
+| +36  | `s1`      | x9          | Saved register
+| +40  | `a0`      | x10         | Argument / return value
+| +44  | `a1`      | x11         | Argument / return value
+| +48  | `a2`      | x12         | Argument
+| +52  | `a3`      | x13         | Argument
+| +56  | `a4`      | x14         | Argument
+| +60  | `a5`      | x15         | Argument
+| +64  | `a6`      | x16         | Argument
+| +68  | `a7`      | x17         | Argument / syscall number (ecall convention)
+| +72  | `s2`–`s11`| x18–x27     | Saved registers (at offsets +72…+108)
+| +112 | `t3`–`t6` | x28–x31     | Temporaries (at offsets +112…+124)
+| +128 | `mepc`    | mepc CSR    | *Writable* — write to redirect the `mret` return PC
+| +132 | `mstatus` | mstatus CSR | Restored verbatim; read-only for normal handlers
+| +136 | `mcause`  | mcause CSR  | Read-only; MSB set for interrupts, clear for exceptions
+| +140 | `mtval`   | mtval CSR   | Read-only; faulting address (load/store) or bad instruction
+|===
+
+TIP: The field names match the RISC-V ABI register names (`ra`, `sp`, `a0`…`a7`, `s0`…`s11`,
+`t0`…`t6`), so accessing a saved argument register in a handler is simply `frame->a0`.
+
+=== Design Rationale — Frame Pointer Instead of Direct CSR Writes
+
+==== Why the Old Approach Was Fragile
+
+The previous interface passed `(mcause, mepc, mtval)` as plain scalars and expected
+exception handlers to call `write_csr_mepc(mepc + 4)` to skip a faulting instruction.
+That relied on the trap epilogue re-reading `mepc` from the live CSR just before `mret`.
+Two conditions break that assumption:
+
+Nested interrupts:: A higher-priority interrupt can preempt an executing handler and
+overwrite the `mepc` CSR with the preempted handler's PC. When the outer handler later
+calls `write_csr_mepc()`, its value is correct — but if the epilogue reads `mepc` from
+the frame (required by the nested-interrupt fix), that CSR write is ignored.
+
+Epilogue restore ordering:: The epilogue saves `mepc` in the frame and restores it
+from there to support nesting correctly. Any `write_csr_mepc()` call inside the handler
+is silently overwritten by `lw t0, 128(sp); csrw mepc, t0` on the way out.
+This was the root cause of the bus_err infinite-loop bug: the handler updated the CSR
+to skip the faulting instruction, but the epilogue restored the original (faulting)
+`mepc`, causing the same instruction to re-execute forever.
+
+==== The Fix: Frame Is the Authoritative Source
+
+The epilogue has one invariant: it reads `mepc` from `frame->mepc` and writes it to the
+CSR. Exception handlers that want to redirect execution write `frame->mepc`:
+
+[source,c]
+----
+// WRONG — CSR write is overwritten by the epilogue's frame→CSR restore
+static void bad_handler(kv_trap_frame_t *frame) {
+    write_csr_mepc(frame->mepc + 4);   // ← clobbered on exit
+}
+
+// CORRECT — update the frame; epilogue copies frame->mepc to CSR before mret
+static void good_handler(kv_trap_frame_t *frame) {
+    frame->mepc += 4;                  // ← survives the epilogue
+}
+----
+
+==== Additional Benefits
+
+Single source of truth:: What is in `frame->mepc` at handler return is exactly what
+`mret` uses. No reasoning about CSR side-effects or epilogue ordering required.
+
+Debuggability:: A panic handler or debugger sees the full machine state (all 32 GPRs
+plus four CSRs) behind one pointer. Stack traces can walk `frame->ra` and `frame->sp`
+without probing live hardware CSRs.
+
+Register injection:: An advanced handler (e.g. an `ecall` emulation layer) can write
+arbitrary values into `frame->a0`…`frame->a7` to synthesise return values, or rewrite
+the entire register context to emulate an instruction.
+
+Nested-interrupt safety:: Re-enabling interrupts inside a handler is safe regardless of
+nesting depth: each level has its own frame on the stack. Inner trap activity cannot
+corrupt the `mepc`/`mstatus` saved in outer frames.
+
+==== Interaction with the RTOS Port
+
+The mini-RTOS (`mrtos_riscv.c`) has its own `mrtos_trap_vector` with a 132-byte
+context frame optimised for fast task switching. Its `mrtos_trap_handler()` constructs
+a temporary `kv_trap_frame_t` on the C stack when forwarding to `kv_irq_dispatch()`,
+and calls `write_csr_mepc(frame.mepc)` to commit any exception-handler update before
+the RTOS epilogue restores from its own frame. This bridges the two layouts without
+merging them.
+
+=== Writing Exception Handlers
+
+Register with `kv_exc_register(cause, handler)`. The handler receives
+`kv_trap_frame_t *frame` and returns `void`. The epilogue restores machine state from the
+frame when the handler returns.
+
+==== Skip a Faulting Instruction
+
+[source,c]
+----
+static void bus_err_handler(kv_trap_frame_t *frame) {
+    g_bus_err_caught = 1;
+    g_bus_err_mcause = frame->mcause;  // KV_EXC_LOAD_FAULT or KV_EXC_STORE_FAULT
+
+    /* Bits [1:0] != 0b11  →  16-bit RVC instruction, else 32-bit */
+    uint16_t inst16 = *(volatile uint16_t *)frame->mepc;
+    frame->mepc += ((inst16 & 0x3u) != 0x3u) ? 2u : 4u;
+}
+
+kv_exc_register(KV_EXC_LOAD_FAULT,  bus_err_handler);
+kv_exc_register(KV_EXC_STORE_FAULT, bus_err_handler);
+----
+
+==== Redirect to a Pre-Stored Resume Address
+
+When `mepc` itself is invalid (e.g. a null-function-call fault where `mepc = 0`),
+`mepc + N` is still unmapped. Store a safe resume address before the dangerous call:
+
+[source,c]
+----
+static volatile uintptr_t g_resume;
+
+static void insn_fault_handler(kv_trap_frame_t *frame) {
+    g_caught = 1;
+    frame->mepc = (uint32_t)g_resume;  // redirect to pre-stored address
+}
+
+kv_exc_register(KV_EXC_INSN_FAULT, insn_fault_handler);
+
+// Capture the instruction immediately following the dangerous call:
+uintptr_t resume_pc;
+asm volatile ("la %0, 1f" : "=r"(resume_pc));
+g_resume = resume_pc;
+((void (*)(void))NULL)();   // call NULL → KV_EXC_INSN_FAULT, mepc = 0
+asm volatile ("1:");         // handler redirects mret here
+----
+
+==== Emulate an ecall (Syscall ABI)
+
+[source,c]
+----
+static void ecall_handler(kv_trap_frame_t *frame) {
+    uint32_t nr = frame->a7;                 // syscall number in a7 (RISC-V convention)
+    frame->a0   = dispatch_syscall(nr,        // return value in a0
+                                   frame->a0, frame->a1, frame->a2);
+    frame->mepc += 4;                         // ecall is always 4 bytes
+}
+
+kv_exc_register(KV_EXC_ECALL_M, ecall_handler);
+----
+
+=== Writing Interrupt Handlers
+
+Register with `kv_irq_register(cause, handler)`. The handler receives the stripped
+cause code (`mcause & 0x7FFFFFFF`) and returns `void`. No frame modification needed.
+
+[source,c]
+----
+static void mei_handler(uint32_t cause) {
+    (void)cause;
+    uint32_t src = kv_plic_claim();
+    if (src == KV_PLIC_SRC_UART) {
+        while (kv_uart_rx_ready())
+            rx_buf[rx_head++] = kv_uart_getc();
+    }
+    kv_plic_complete(src);
+}
+
+kv_irq_register(KV_CAUSE_MEI, mei_handler);
+kv_plic_init_source(KV_PLIC_SRC_UART, 1);
+kv_irq_source_enable(KV_IRQ_MEIE);
+kv_irq_enable();
+----
+
+=== Overriding `trap_handler` Entirely
+
+`trap_handler()` is a `weak` symbol. Provide your own definition to replace the
+`kv_irq_register` / `kv_exc_register` dispatch table:
+
+[source,c]
+----
+// my_test.c — replaces the default trap_handler for the linked binary
+void trap_handler(kv_trap_frame_t *frame) {
+    if (frame->mcause & 0x80000000u) {
+        my_fast_irq_dispatch(frame);
+    } else {
+        printf("EXC cause=%u pc=0x%08x val=0x%08x\n",
+               frame->mcause, frame->mepc, frame->mtval);
+        frame->mepc += 4;   // skip and continue
+    }
+}
+----
+
+NOTE: Override `trap_handler` only when the registration table is too slow or inflexible
+(e.g. performance-critical bare-metal interrupt paths). For normal use,
+`kv_irq_register` and `kv_exc_register` compose well and leave room to add handlers
+later without rewriting existing code.
+
+=== Trap Entry / Exit Flow
+
+[source]
+----
+Trap fires (interrupt or exception)
+    │
+    ▼
+trap_vector  (start.S, 4-byte aligned)
+    │
+    ├─ addi sp, sp, -144          allocate kv_trap_frame_t on stack
+    ├─ sw x1..x31, 4..124(sp)     save all general-purpose registers
+    ├─ csrr+sw mepc   → [sp+128]  save mepc
+    ├─ csrr+sw mstatus→ [sp+132]  save mstatus
+    ├─ csrr+sw mcause → [sp+136]  save mcause
+    ├─ csrr+sw mtval  → [sp+140]  save mtval
+    ├─ mv a0, sp                  pass frame pointer as argument
+    └─ call trap_handler
+               │
+               ▼
+           trap_handler()  [trap.c — weak symbol, override per binary]
+               └─ kv_irq_dispatch(frame)
+                      │
+                      ├─ mcause[31]=1 → irq_table[code](code)
+                      │                 interrupt handler; frame unchanged
+                      └─ mcause[31]=0 → exc_table[code](frame)
+                                        frame->mepc writable to redirect mret
+               │
+               ▼  (return from trap_handler)
+    ├─ lw t0, 132(sp); csrw mstatus, t0  restore mstatus
+    ├─ lw t0, 128(sp); csrw mepc, t0     restore mepc ← from frame (authoritative)
+    ├─ lw x1..x31, 4..124(sp)            restore GPRs
+    ├─ addi sp, sp, 144                  free frame
+    └─ mret                              resume at frame->mepc
+    │
+    ▼
+Interrupted code resumes (or redirected PC if handler wrote frame->mepc)
+----
+
 '''
 
 == Control and Status Registers (CSR)
@@ -2042,14 +2372,35 @@ It will not be synthesized for production FPGA/ASIC.
 |===
 | Offset | Name | Description
 
-| `0xFFF0`
+| `0x0000`
+| CONSOLE
+| Write character (low byte) to simulation console
+
+| `0x0004`
 | EXIT
 | Write exit code to signal simulation end
 
-| `0xFFF4`
-| CONSOLE
-| Write character (low byte) to simulation console
+| `0x1000-0x11FF`
+| NCM[127:0]
+| Non-cacheable memory window (`KV_NCM_BASE`, `KV_NCM_SIZE`) for uncached code/data tests
 |===
+
+=== AXI Decode and Responses
+
+The RTL `axi_magic` slave acknowledges only these decoded regions:
+
+* `KV_MAGIC_CONSOLE_ADDR` (`0x4000_0000`)
+* `KV_MAGIC_EXIT_ADDR` (`0x4000_0004`)
+* `KV_NCM_BASE .. KV_NCM_BASE + KV_NCM_SIZE - 1` (`0x4000_1000-0x4000_11FF`)
+
+Transactions outside these regions return AXI `SLVERR`.
+
+NCM details:
+
+* Capacity: 128 x 32-bit words (512 bytes)
+* Word index: `addr[8:2]`
+* Read: returns stored 32-bit word
+* Write: stores full `wdata` word (no per-byte strobe merge in RTL)
 
 === Exit Code Encoding
 
@@ -2070,6 +2421,11 @@ void kv_magic_exit(int code);
 
 * `kv_magic_putc()`: Output one character to simulation console
 * `kv_magic_exit()`: Signal program exit and halt (infinite loop)
+
+Related constants from `kv_platform.h`:
+
+* `KV_MAGIC_BASE`, `KV_MAGIC_CONSOLE_ADDR`, `KV_MAGIC_EXIT_ADDR`
+* `KV_NCM_BASE`, `KV_NCM_SIZE`
 
 *Example:*
 
@@ -2534,10 +2890,34 @@ For bulk data transfers > 256 bytes, DMA provides significant performance benefi
 
 === Cache Coherency
 
-The KV32 core includes an instruction cache but no data cache. When using DMA:
+The KV32 SoC includes both an instruction cache (I-cache) and a data cache (D-cache). When using DMA, explicit cache maintenance is necessary to keep the caches coherent with memory:
 
-* No explicit cache maintenance required for data transfers
-* Use `fence` instruction after MMIO writes to ensure ordering
+* *Before a DMA read* (CPU writes data, DMA reads): flush the D-cache range so dirty lines are written back to SRAM before the DMA transfer begins.
++
+[source,c]
+----
+kv_dcache_flush_range(buf, len);   // write-back dirty lines
+// then program the DMA descriptor and start the transfer
+----
+
+* *After a DMA write* (DMA writes data, CPU reads): invalidate the D-cache range so the CPU fetches fresh data from SRAM rather than stale lines.
++
+[source,c]
+----
+// wait for DMA transfer complete interrupt/poll
+kv_dcache_inval_range(buf, len);   // discard stale cached lines
+// now safe to read buf[]
+----
+
+* *Code loaded into SRAM by DMA* (e.g., overlay / firmware update): after invalidating the D-cache, also invalidate the I-cache so the CPU fetches the new instructions.
++
+[source,c]
+----
+kv_dcache_inval_range(buf, len);
+kv_fence_i();                      // synchronise I-cache
+----
+
+* Use `fence rw,rw` (or the `kv_fence()` helper) after MMIO writes to ensure store ordering before the DMA descriptor is submitted.
 
 === Interrupt Latency
 
@@ -2578,6 +2958,99 @@ Creates `wave.fst` for viewing in GTKWave.
 *Interrupts not firing*:: Ensure global interrupts enabled (`kv_irq_enable()`)
 
 *I2C NACK errors*:: Check device address and pull-up resistors on SCL/SDA
+
+'''
+
+== Appendix E: RISC-V Compliance and KV32 Extensions
+
+=== Scope
+
+This appendix classifies SDK-visible features into three categories:
+
+* Standard RISC-V ISA/privileged features
+* Standard optional RISC-V extensions
+* KV32-specific platform or architectural extensions (non-standard)
+
+Use this section when evaluating portability to other RISC-V implementations.
+
+=== Classification Matrix
+
+[cols="3,2,6"]
+|===
+| Feature | Category | Notes / Portability Impact
+
+| RV32I base ISA
+| Standard
+| Fully standard base integer ISA behavior.
+
+| M extension (multiply/divide)
+| Standard optional
+| Standard extension; portable to cores that implement `M`.
+
+| A extension (atomics)
+| Standard optional
+| Standard extension; portable to cores that implement `A`.
+
+| Zicsr CSR access
+| Standard optional
+| Standard extension used by `csr.h` and interrupt/exception control flows.
+
+| Zifencei (`fence.i`)
+| Standard optional
+| Standard instruction. KV32 may add implementation-specific cache side effects (see note below).
+
+| Zicbom (`cbo.inval/clean/flush`)
+| Standard optional
+| Standard CMO instruction family when supported by the target. Software must feature-gate for cores without Zicbom.
+
+| PLIC programming model
+| Standard platform block
+| Register model follows standard RISC-V PLIC style; source IDs are SoC-specific.
+
+| CLINT programming model
+| Standard platform block
+| `mtime`, `mtimecmp`, and `msip` follow standard CLINT style.
+
+| PMA custom CSRs (`pmacfg*`, `pmaaddr*` at `0x7C0-0x7CB`)
+| KV32-specific (non-standard)
+| Runtime PMA region programming API in `kv_pma.h`. Not part of standard privileged CSR map.
+
+| Trap-frame API (`kv_trap_frame_t`, frame-pointer exception handlers)
+| KV32-specific SDK ABI
+| Design choice for robust trap handling; not required by standard RISC-V ABI.
+
+| Magic Device MMIO (`KV_MAGIC_BASE`)
+| KV32-specific simulation interface
+| Simulation/testbench-only host console+exit transport. Not synthesizable as a standard RISC-V device.
+
+| DMA / Timer / WDT / GPIO / UART / SPI / I2C register maps
+| KV32 platform-specific peripherals
+| Device APIs are KV32 SoC specific even when functionally similar to common IP blocks.
+|===
+
+=== Important KV32 Notes
+
+==== `fence.i` behavior
+
+`kv_fence_i()` uses the standard `fence.i` instruction encoding, but KV32 documentation notes an additional implementation behavior: a full D-cache write-back may be performed to ensure self-modifying code visibility. Treat this as KV32-specific micro-architectural behavior, not a guaranteed generic RISC-V property.
+
+==== PMA CSRs are custom
+
+`kv_pma.h` exposes PMA control through custom M-mode CSRs in the `0x7C0-0x7CB` range. These CSRs are not part of the standard RISC-V privileged spec and must be abstracted out when porting firmware.
+
+==== Trap redirection model
+
+Exception handlers should update `frame->mepc` in `kv_trap_frame_t` rather than directly writing `mepc` CSR. This is the KV32 SDK contract and ensures compatibility with the trap epilogue restore sequence.
+
+=== Portability Checklist
+
+When porting KV32 firmware to another RISC-V target:
+
+1. Replace or abstract `kv_pma_*` APIs.
+2. Replace Magic Device calls (`kv_magic_putc`, `kv_magic_exit`) with target-specific transport.
+3. Validate availability of `Zicbom` and `Zifencei` before using cache maintenance helpers.
+4. Treat trap frame layout and handler ABI as platform-specific unless explicitly reproduced.
+5. Re-map all peripheral drivers to target MMIO register maps and interrupt IDs.
 
 '''
 

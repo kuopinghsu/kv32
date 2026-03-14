@@ -5,8 +5,7 @@
 // ============================================================================
 
 #include <stdint.h>
-
-// Memory-mapped I/O addresses
+#include "kv_irq.h"
 #define UART_BASE    0x20000000
 #define UART_TX      (*(volatile uint32_t*)(UART_BASE + 0x00))
 #define UART_STATUS  (*(volatile uint32_t*)(UART_BASE + 0x04))
@@ -40,10 +39,10 @@ void test_uart(void);
 void test_clint(void);
 
 // Trap handler
-void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
-    if (mcause & 0x80000000) {
+void trap_handler(kv_trap_frame_t *frame) {
+    if (frame->mcause & 0x80000000) {
         // Interrupt
-        uint32_t irq = mcause & 0x7FFFFFFF;
+        uint32_t irq = frame->mcause & 0x7FFFFFFF;
         if (irq == 7) {
             // Timer interrupt
             timer_irq_count++;
@@ -55,11 +54,11 @@ void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
     } else {
         // Exception
         uart_puts("EXCEPTION: mcause=");
-        uart_puthex(mcause);
+        uart_puthex(frame->mcause);
         uart_puts(" mepc=");
-        uart_puthex(mepc);
+        uart_puthex(frame->mepc);
         uart_puts(" mtval=");
-        uart_puthex(mtval);
+        uart_puthex(frame->mtval);
         uart_putc('\n');
 
         // Exit simulation

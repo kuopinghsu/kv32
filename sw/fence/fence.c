@@ -16,6 +16,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include "kv_irq.h"
 
 #define FENCE()   __asm__ volatile ("fence"          ::: "memory")
 // fence.i (FENCE.I = 0x0000100F) is in the Zifencei extension which is not
@@ -28,8 +29,8 @@ static uint32_t tests_passed = 0;
 static uint32_t tests_failed = 0;
 
 // Trap handler required by start.S
-void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
-    (void)mcause; (void)mepc; (void)mtval;
+void trap_handler(kv_trap_frame_t *frame) {
+    (void)frame;
 }
 
 // ============================================================================

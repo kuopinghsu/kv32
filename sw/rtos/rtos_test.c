@@ -39,7 +39,13 @@
  * ═══════════════════════════════════════════════════════════════════ */
 void user_hook(void)
 {
-    kv_wdt_start(200000u, 0);   /* INTR_EN=0: hardware reset on expiry */
+    kv_wdt_start(2000000u, 0);  /* INTR_EN=0: hardware reset on expiry.
+                                 * WDT clock = system clk = 100 MHz = MRTOS_CLINT_FREQ,
+                                 * so 1 MRTOS tick = 100 000 WDT cycles.
+                                 * 2 000 000 cycles = 20 MRTOS ticks @ 1 kHz.
+                                 * Worst test block (Test 3 priority-inheritance):
+                                 * HIGH_START_DELAY(3) + LOW_WORK_SLICES(3) ≈ 8-10 ticks;
+                                 * 20-tick budget gives ~2× safety margin. */
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -439,6 +445,7 @@ static void supervisor_task(void *arg)
      * Temporarily yield priority by creating tasks first. */
     mrtos_task_create(&t3lo_tcb,  "lo",  task3_low,    NULL, 4,
                       t3lo_stack,  sizeof(t3lo_stack));
+
     mrtos_task_create(&t3med_tcb, "med", task3_medium, NULL, 2,
                       t3med_stack, sizeof(t3med_stack));
     mrtos_task_create(&t3hi_tcb,  "hi",  task3_high,   NULL, 1,

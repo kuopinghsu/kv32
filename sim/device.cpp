@@ -322,11 +322,11 @@ uint32_t I2CDevice::read(uint32_t offset, int size) {
         case KV_I2C_IE_OFF:  // Interrupt enable
             return ie_reg;
 
-        case KV_I2C_IS_OFF:  // Interrupt status (level – read-only, matches RTL is_wire)
+        case KV_I2C_IS_OFF:  // Interrupt status (IS[2] sticky W1C; IS[1:0] level)
             {
-                // IS[0] = rx_fifo not empty      (KV_I2C_IE_RX_READY)
-                // IS[1] = tx_fifo empty+not busy (KV_I2C_IE_TX_EMPTY)
-                // IS[2] = stop_done pulse        (KV_I2C_IE_STOP_DONE; latched by PLIC)
+                // IS[0] = rx_fifo not empty      (KV_I2C_IE_RX_READY, level)
+                // IS[1] = tx_fifo empty+not busy (KV_I2C_IE_TX_EMPTY,  level)
+                // IS[2] = stop_done sticky bit   (KV_I2C_IE_STOP_DONE, W1C)
                 uint32_t is = 0;
                 if (!rx_fifo.empty())        is |= KV_I2C_IE_RX_READY;
                 if (tx_fifo.empty() && !busy) is |= KV_I2C_IE_TX_EMPTY;
@@ -388,7 +388,10 @@ void I2CDevice::write(uint32_t offset, uint32_t value, int size) {
             ie_reg = value & (KV_I2C_IE_RX_READY | KV_I2C_IE_TX_EMPTY | KV_I2C_IE_STOP_DONE);
             break;
 
-        // KV_I2C_IS_OFF is read-only level
+        case KV_I2C_IS_OFF:  // IS[2] is sticky W1C: writing 1 clears stop_done
+            if (value & KV_I2C_IE_STOP_DONE)
+                stop_done = false;
+            break;
         default:
             break;
     }
@@ -403,10 +406,9 @@ bool I2CDevice::get_irq() const {
 }
 
 void I2CDevice::tick() {
-    // stop_done is a 1-cycle pulse – auto-clear at the start of every tick
-    // so it doesn't keep the PLIC IRQ line asserted across multiple cycles.
-    // The PLIC latch fix ensures the single-cycle assertion is still captured.
-    stop_done = false;
+    // stop_done is sticky – cleared only by SW writing 1 to IS[2] (W1C).
+    // This matches the RTL where stop_done_r is latched and cleared via
+    // an AXI write to IS_OFFSET with bit 2 set.
 
     // Clear auto-clearing command bits (simulating RTL auto-clear)
     start_cmd = false;
@@ -506,7 +508,7 @@ void I2CDevice::process_i2c_transaction() {
             // transaction's write-phase will set a fresh memory pointer.
             eeprom_tx_state  = EepromTxState::IDLE;
             eeprom_addr_set = false;
-            stop_done = true;   // 1-cycle pulse; auto-cleared at start of next tick()
+            stop_done = true;   // sticky; cleared by SW W1C write to IS[2]
             state = State::IDLE;
             busy = false;
             tx_ready = (int)tx_fifo.size() < FIFO_DEPTH;
@@ -1561,18 +1563,26 @@ void WatchdogDevice::reset() {
     reset_pending = false;
 }
 
-void WatchdogDevice::tick() {
+void WatchdogDevice::advance_count(uint32_t cycles) {
     if (!(ctrl_r & 1u)) return;  // EN=0: stopped
     if (count_r == 0)   return;  // Already expired; latch held until KICK
-    count_r--;
-    if (count_r == 0) {
+
+    if (cycles >= count_r) {
+        count_r = 0;
         // Expiry event
         if (ctrl_r & 2u) {
             status_r |= 1u;     // INTR_EN=1: set WDT_INT
         } else {
+            ctrl_r &= ~1u;      // INTR_EN=0: reset mode clears EN
             reset_pending = true; // INTR_EN=0: hardware reset
         }
+    } else {
+        count_r -= cycles;
     }
+}
+
+void WatchdogDevice::tick() {
+    advance_count(1);
 }
 
 bool WatchdogDevice::get_irq() const {

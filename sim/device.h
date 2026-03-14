@@ -602,6 +602,8 @@ private:
     uint32_t status_r;      // [0]=WDT_INT (W1C)
     bool     reset_pending; // Hardware reset pending (INTR_EN=0 expiry)
 
+    void advance_count(uint32_t cycles);
+
 public:
     WatchdogDevice();
     virtual ~WatchdogDevice() {}

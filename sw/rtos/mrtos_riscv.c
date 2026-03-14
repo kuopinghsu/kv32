@@ -95,9 +95,6 @@ static volatile uint32_t g_tick_period = MRTOS_TICKS_PER_SLOT;
  */
 void mrtos_trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 {
-    (void)mepc;
-    (void)mtval;
-
     if (mcause & 0x80000000u) {
         uint32_t code = mcause & 0x7FFFFFFFu;
 
@@ -110,8 +107,10 @@ void mrtos_trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 
         if (code == KV_CAUSE_MSI) {
             /* Machine software interrupt — yield requested by a task.
-             * Clear MSIP so the interrupt does not re-fire. */
-            KV_CLINT_MSIP = 0u;
+             * Clear MSIP so the interrupt does not re-fire.
+             * Use the CLINT helper's read-back so emulators such as Spike
+             * observe the deassertion before we return from the trap. */
+            kv_clint_msip_clear();
             /*
              * Edge case: mrtos_yield() set the task to READY but
              * do_schedule() found no higher-priority task to switch to.
@@ -122,11 +121,28 @@ void mrtos_trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
             return;
         }
 
-        /* All other interrupts (MEI etc.) → standard dispatcher. */
-        kv_irq_dispatch(mcause, mepc, mtval);
+        /* All other interrupts (MEI etc.) → standard dispatcher.
+         * IRQ handlers don't modify mepc so a local frame is sufficient. */
+        kv_trap_frame_t frame = {0};
+        frame.mcause = mcause;
+        frame.mepc   = mepc;
+        frame.mtval  = mtval;
+        kv_irq_dispatch(&frame);
     } else {
-        /* Exception — forward to standard dispatcher. */
-        kv_irq_dispatch(mcause, mepc, mtval);
+        /* Exception — forward to standard dispatcher.
+         * Build a frame so exception handlers can update frame->mepc.
+         * After dispatch, write back the (possibly updated) mepc to the
+         * CSR; the RTOS epilogue assembly reads sp+4 (its own saved mepc
+         * slot) — we update that by also calling write_csr_mepc so the
+         * subsequent asm "lw t0, 4(sp) / csrw mepc, t0" restores to the
+         * handler-chosen PC. */
+        kv_trap_frame_t frame = {0};
+        frame.mcause = mcause;
+        frame.mepc   = mepc;
+        frame.mtval  = mtval;
+        kv_irq_dispatch(&frame);
+        if (frame.mepc != mepc)
+            write_csr_mepc(frame.mepc);
     }
 }
 
@@ -413,6 +429,11 @@ void mrtos_port_yield(void)
     /* Write 1 to CLINT MSIP; this raises the machine-software interrupt,
      * which fires as soon as the core leaves this function (next instruction
      * boundary with MIE=1).  The trap handler will clear MSIP and perform
-     * the context switch. */
-    KV_CLINT_MSIP = 1u;
+     * the context switch.
+     *
+     * Use the CLINT helper rather than a raw MMIO store so the read-back
+     * flushes the write through emulators that do not expose the pending
+     * software interrupt until the store is globally visible. */
+    kv_clint_msip_set();
+    (void)KV_CLINT_MSIP;
 }

@@ -48,27 +48,23 @@ static volatile uint32_t g_bus_err_mcause;
 static volatile uintptr_t g_null_call_resume;
 
 /* ── bus-error exception handler (load/store faults) ───────────────────── */
-static void bus_err_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+static void bus_err_handler(kv_trap_frame_t *frame)
 {
-    (void)mtval;
     g_bus_err_caught = 1;
-    g_bus_err_mcause = mcause;
+    g_bus_err_mcause = frame->mcause;
     /* Skip the faulting load/store/fence instruction: +2 for RVC, +4 otherwise. */
-    {
-        uint16_t inst16 = *(volatile uint16_t *)mepc;
-        write_csr_mepc(mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u));
-    }
+    uint16_t inst16 = *(volatile uint16_t *)frame->mepc;
+    frame->mepc += (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
 }
 
 /* ── instruction-access-fault handler (null function call) ──────────────── */
-static void insn_fault_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+static void insn_fault_handler(kv_trap_frame_t *frame)
 {
-    (void)mtval;
-    (void)mepc;  /* mepc = 0x0 (unmapped fetch address) — cannot use mepc+4 */
+    /* mepc = 0x0 (unmapped fetch address) — cannot use mepc+4 */
     g_bus_err_caught = 1;
-    g_bus_err_mcause = mcause;
+    g_bus_err_mcause = frame->mcause;
     /* Redirect to the pre-stored resume point (instruction after the call). */
-    write_csr_mepc((uint32_t)g_null_call_resume);
+    frame->mepc = (uint32_t)g_null_call_resume;
 }
 
 /* ── helper: test one invalid address (load + store) ────────────────────── */

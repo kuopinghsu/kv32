@@ -58,30 +58,28 @@ static void on_software_irq(uint32_t cause)
 
 /* ── exception handlers registered via kv_exc_register() ─────────── */
 
-static void on_illegal_insn(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+static void on_illegal_insn(kv_trap_frame_t *frame)
 {
-    (void)mcause; (void)mtval;
     exception_count++;
-    g_last_mepc = mepc;
-    _puts("  Setting mepc from 0x"); _puthex(mepc);
+    g_last_mepc = frame->mepc;
+    _puts("  Setting mepc from 0x"); _puthex(frame->mepc);
     // Advance past the faulting instruction: +2 for RVC (bits[1:0] != 11), +4 otherwise.
-    uint16_t inst16 = *(volatile uint16_t *)mepc;
-    uint32_t new_pc = mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
+    uint16_t inst16 = *(volatile uint16_t *)frame->mepc;
+    uint32_t new_pc = frame->mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
     _puts(" to 0x"); _puthex(new_pc); _puts("\n");
-    write_csr_mepc(new_pc);
-    _puts("  mepc read back: 0x"); _puthex(read_csr_mepc()); _puts("\n");
+    frame->mepc = new_pc;
+    _puts("  mepc read back: 0x"); _puthex(frame->mepc); _puts("\n");
 }
 
-static void on_ecall(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+static void on_ecall(kv_trap_frame_t *frame)
 {
-    (void)mtval;
-    if ((mcause & 0x7FFFFFFFu) == KV_EXC_ECALL_M) {
+    if ((frame->mcause & 0x7FFFFFFFu) == KV_EXC_ECALL_M) {
         ecall_count++;
         _puts("  ECALL exception detected (mcause = 11)\n");
         // ecall is always a 4-byte instruction (no RVC form), but use the
         // general width check for consistency.
-        uint16_t inst16 = *(volatile uint16_t *)mepc;
-        write_csr_mepc(mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u));
+        uint16_t inst16 = *(volatile uint16_t *)frame->mepc;
+        frame->mepc += (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
     }
 }
 

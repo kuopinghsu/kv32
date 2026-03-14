@@ -14,6 +14,7 @@
 #include "kv_platform.h"
 #include "kv_cache.h"
 #include "kv_pma.h"
+#include "kv_irq.h"
 
 // ---------------------------------------------------------------------------
 // Helper: output one character via UART MMIO
@@ -40,14 +41,13 @@ static void print_dec(uint32_t v) {
 // ---------------------------------------------------------------------------
 // Minimal trap handler (required by start.S)
 // ---------------------------------------------------------------------------
-void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
-    my_puts("TRAP mcause=0x"); print_hex32(mcause);
-    my_puts(" mepc=0x");       print_hex32(mepc);
-    my_puts(" mtval=0x");      print_hex32(mtval);
+void trap_handler(kv_trap_frame_t *frame) {
+    my_puts("TRAP mcause=0x"); print_hex32(frame->mcause);
+    my_puts(" mepc=0x");       print_hex32(frame->mepc);
+    my_puts(" mtval=0x");      print_hex32(frame->mtval);
     my_puts("\n");
-    uint16_t inst16 = *(volatile uint16_t *)mepc;
-    uint32_t next_pc = mepc + (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
-    asm volatile("csrw mepc, %0" :: "r"(next_pc));
+    uint16_t inst16 = *(volatile uint16_t *)frame->mepc;
+    frame->mepc += (((inst16 & 0x3u) != 0x3u) ? 2u : 4u);
 }
 
 // ---------------------------------------------------------------------------

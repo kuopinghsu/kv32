@@ -40,13 +40,13 @@ The RV32IMAC SoC is a complete embedded processor system implementing the RISC-V
 |Feature |Specification
 
 |ISA
-|RV32IMAC_Zicsr (Integer, Multiply/Divide, Atomic, Compressed, CSR)
+|RV32IMAC_Zicsr_Zifencei with KV32-specific cache-management and PMA extensions
 
 |Pipeline
 |5-stage in-order (Fetch, Decode, Execute, Memory, Writeback)
 
 |Instruction Cache
-|Configurable size (default 4KB), 2-way set-associative, 64B line; WRAP burst fill; PMA X-bit control
+|Configurable size (default 4KB), 2-way set-associative, 32B line; WRAP burst fill; PMA X-bit control
 
 |Data Cache
 |Configurable size (default 4KB), 2-way set-associative, 32B line; write-back / write-through; write-allocate / no-allocate; dirty eviction; CMO support; PMA C-bit control
@@ -240,7 +240,7 @@ An optional configurable instruction cache improves performance by reducing memo
 
 * **Size**: 4KB default (parameterizable)
 * **Associativity**: 2-way set-associative (parameterizable)
-* **Line Size**: 64 bytes
+* **Line Size**: 32 bytes (KV32 SoC instantiation default; the `kv32_icache` IP module default is 64 bytes)
 * **Replacement Policy**: Round-robin per set
 * **Bypass Mode**: Cacheable or direct-mapped via CMO operations; PMA X-bit per region
 * **AXI Interface**: WRAP bursts for cache-line fills (critical-word-first)
@@ -358,6 +358,11 @@ The RV32IMAC SoC implements a 32-bit address space (4GB) with the following allo
 |64MB
 |(actual registers much smaller, per RISC-V spec)
 
+|0x2000_0000 - 0x2000_FFFF
+|DMA
+|64KB
+|DMA controller (4 channels)
+
 |0x2001_0000 - 0x2001_FFFF
 |UART
 |64KB
@@ -373,10 +378,10 @@ The RV32IMAC SoC implements a 32-bit address space (4GB) with the following allo
 |64KB
 |SPI master controller
 
-|0x2000_0000 - 0x2000_FFFF
-|DMA
+|0x2004_0000 - 0x2004_FFFF
+|Timer
 |64KB
-|DMA controller (4 channels)
+|Timer/PWM controller (4 channels, 32-bit)
 
 |0x2005_0000 - 0x2005_FFFF
 |GPIO
@@ -388,20 +393,15 @@ The RV32IMAC SoC implements a 32-bit address space (4GB) with the following allo
 |64KB
 |Hardware watchdog timer (IRQ or hardware reset on timeout)
 
-|0x2004_0000 - 0x2004_FFFF
-|Timer
+|0x4000_0000 - 0x4000_FFFF
+|Magic Device
 |64KB
-|Timer/PWM controller (4 channels, 32-bit)
+|Simulation control and console
 
 |0x8000_0000 - 0x801F_FFFF
 |RAM
 |2MB
 |Main system memory (SRAM)
-
-|0x4000_0000 - 0x4000_FFFF
-|Magic Device
-|64KB
-|Simulation control and console
 |===
 
 === Address Decode Rules
@@ -452,6 +452,9 @@ The processor core implements the following RISC-V instruction set extensions:
 
 |Zifencei
 |Instruction-fetch fence (FENCE.I)
+
+|Zicbom-style CMO operations
+|Cache-management operations used by the KV32 D-cache subsystem; see Appendix D for portability notes
 |===
 
 NOTE: The core supports Machine mode (M-mode) only. User mode (U-mode) and Supervisor mode (S-mode) are not implemented.
@@ -604,10 +607,10 @@ The core implements Machine-mode CSRs per RISC-V Privileged Spec v1.11:
 
 |0xB80
 |mcycleh
-|R/W
+|R/W (W1C on bit 2)
 |Machine cycle counter (upper 32 bits)
 
-|0xB02
+|**[2]**: STOP done (sticky, write 1 to clear)
 |minstret
 |R/W
 |Machine instructions-retired counter (lower 32 bits)
@@ -1251,6 +1254,8 @@ Write: ignored
 |Mode |CPOL |CPHA |Description
 
 |0
+|0
+|0
 |Clock idle low, sample on leading (rising) edge
 
 |1
@@ -1264,6 +1269,7 @@ Write: ignored
 |Clock idle high, sample on leading (falling) edge
 
 |3
+|1
 |1
 |Clock idle high, sample on trailing (rising) edge
 |===
@@ -1468,7 +1474,7 @@ The I2C bus frequency formula accounts for 4 clock cycles per SCL period (rise/f
 4. Write data bytes to TX register
 5. Check STATUS[3]=1 to verify slave ACK
 6. Set CTRL[2]=1 to issue STOP
-7. Wait for IS[2]=1 (STOP done interrupt)
+7. Wait for IS[2]=1 (STOP done interrupt), then acknowledge by writing 1 to IS[2]
 
 ===== Read Transaction
 
@@ -2126,7 +2132,7 @@ The COUNT register latches at zero after expiry; a KICK is required to resume co
 
 * `wdt_irq` to PLIC = `STATUS[0] & CTRL[1]` (only fires in IRQ mode)
 * `wdt_reset_o` = latched register set on expiry in reset mode; cleared only by `rst_n`
-* In simulation (`kv32sim`): reset mode calls `exit(2)`; Spike plugin calls `sim->exit(2)`
+* In simulation (`kv32sim`): reset mode calls `exit(2)`; Spike plugin calls `sim_->htif_exit(2)`
 
 ==== External Pins
 
@@ -2410,7 +2416,7 @@ WARNING: This peripheral is intended for simulation and testing only. It is not 
 |64KB
 
 |Functionality
-|Console character output, simulation exit control
+|Console output, simulation exit control, and 512-byte non-cacheable memory (NCM)
 |===
 
 ==== Register Map
@@ -2420,17 +2426,38 @@ WARNING: This peripheral is intended for simulation and testing only. It is not 
 |===
 |Offset |Name |Access |Description
 
+|0x0000
+|CONSOLE
+|W/O
+|Write character (low byte) to simulation console
+
 |0x0004
 |EXIT
 |W/O
 |Write exit code to terminate simulation +
 Value 1 = PASS (exit 0), Value ≠1 = FAIL (exit code N)
 
-|0x0000
-|CONSOLE
-|W/O
-|Write character (low byte) to simulation console
+|0x1000-0x11FF
+|NCM[127:0]
+|R/W
+|Non-cacheable memory window (128 x 32-bit words, 512 B total) for uncached instruction/data access tests
 |===
+
+==== AXI Response Behavior
+
+`axi_magic` returns AXI response `OKAY` only for these decoded regions:
+
+* `0x4000_0000` (`CONSOLE`, word-aligned alias)
+* `0x4000_0004` (`EXIT`, word-aligned alias)
+* `0x4000_1000-0x4000_11FF` (NCM window)
+
+All other addresses in the Magic-device aperture return `SLVERR` on read/write transactions.
+
+NCM implementation notes (from RTL):
+
+* NCM is 128 x 32-bit words (index `addr[8:2]`)
+* Reads return the stored 32-bit word
+* Writes store `axi_wdata` as a full word (byte strobes are not merged per-byte)
 
 ==== Exit Code Encoding
 
@@ -2699,6 +2726,7 @@ Typical AXI transaction latencies:
 
 |I-Cache Lookup Latency
 |1 cycle
+|-
 |Hit latency (registered output)
 
 |I-Cache Miss Penalty
@@ -2708,10 +2736,12 @@ Typical AXI transaction latencies:
 
 |Load-to-Use Latency
 |2 cycles
+|-
 |Pipeline load latency
 
 |Branch Mispredict Penalty
 |2 cycles
+|-
 |Flush IF and ID stages (2 bubbles)
 
 |Interrupt Latency
@@ -3254,7 +3284,7 @@ For questions or support, contact: support@example.com
 
 |0x2002_0018
 |IS
-|R/O
+|R/W (W1C on bit 2)
 |0x0000_0000
 
 |0x2002_001C
@@ -3754,7 +3784,215 @@ NOTE: I2C requires external pull-up resistors (4.7kΩ typical) on SCL and SDA.
 <<<
 
 [appendix]
-== Appendix D: Revision History
+== Appendix D: RISC-V Architectural Extensions and KV32-Specific Features
+
+=== Scope
+
+This appendix summarizes the processor from the *architecture* point of view:
+
+* Which standard RISC-V ISA extensions are implemented
+* Which standard privileged-architecture features are present
+* Which KV32 features are architecture-visible but non-standard
+* What software portability assumptions are safe to make
+
+This section is intentionally architecture-focused. Device register maps for DMA, UART,
+SPI, I2C, GPIO, Timer, WDT, CLINT, PLIC, and the Magic device are platform details,
+not ISA extensions.
+
+=== ISA and Privileged Architecture Summary
+
+[cols="2,2,6"]
+|===
+| Item | Status | Architectural Meaning
+
+| RV32I
+| Implemented
+| Base 32-bit integer instruction set.
+
+| M
+| Implemented
+| Integer multiply/divide instructions.
+
+| A
+| Implemented
+| Atomic memory operations (`LR/SC`, AMOs).
+
+| C
+| Implemented
+| 16-bit compressed instructions; expanded before the main decode path.
+
+| Zicsr
+| Implemented
+| CSR access instructions used for machine-mode control/status operations.
+
+| Zifencei
+| Implemented
+| `FENCE.I` supported for instruction-stream synchronization.
+
+| Zicbom-style CMO operations
+| Implemented by KV32 cache subsystem
+| Cache block maintenance operations are exposed for D-cache management.
+
+| Privilege modes
+| Machine mode only
+| No S-mode, U-mode, virtual memory, or hypervisor support.
+|===
+
+=== Standard Architectural Features Implemented
+
+==== Machine-Mode Trap Architecture
+
+KV32 implements the standard machine-mode trap CSRs and trap return flow:
+
+* `mstatus`
+* `mie`
+* `mtvec`
+* `mscratch`
+* `mepc`
+* `mcause`
+* `mtval`
+* `mip`
+
+Supported architectural trap classes:
+
+* Instruction address misaligned
+* Instruction access fault
+* Illegal instruction
+* Breakpoint
+* Load address misaligned
+* Load access fault
+* Store/AMO address misaligned
+* Store/AMO access fault
+* Environment call from M-mode
+* Machine software interrupt
+* Machine timer interrupt
+* Machine external interrupt
+
+Trap entry uses direct `mtvec` mode and return uses `MRET`.
+
+==== Standard Counters
+
+The core implements machine and unprivileged counter aliases for:
+
+* `mcycle` / `mcycleh`
+* `minstret` / `minstreth`
+* `cycle` / `cycleh`
+* `instret` / `instreth`
+* `time` / `timeh`
+
+==== Atomic Extension Scope
+
+The `A` extension support covers the standard RV32A architectural model:
+
+* `LR.W` / `SC.W`
+* Word-sized AMOs
+
+No 64-bit atomic operations are implemented because the core is RV32.
+
+==== Compressed Instruction Support
+
+Compressed instructions are supported architecturally via the `C` extension.
+Internally, KV32 expands 16-bit instructions into an internal 32-bit representation before decode.
+This is a micro-architectural implementation detail; architecturally, software observes standard RVC behavior.
+
+=== Standard Optional Extensions with KV32-Specific Behavior
+
+==== `FENCE.I` (`Zifencei`)
+
+`FENCE.I` is a standard RISC-V instruction and is architecturally supported.
+On KV32, the cache subsystem may additionally perform a full D-cache write-back so that
+self-modifying code becomes visible to subsequent instruction fetches. Software may rely on
+the standard `FENCE.I` semantics, but this extra write-back behavior is KV32-specific and
+must not be assumed on unrelated RISC-V implementations.
+
+==== Cache Block Management (`Zicbom`-style)
+
+KV32 exposes cache maintenance operations corresponding to cache-block invalidate, clean,
+and flush behavior. These operations are used by the D-cache subsystem and software cache
+management helpers.
+
+Architectural interpretation:
+
+* They are not part of the RV32IMAC base profile.
+* Their availability must be treated as optional by portable software.
+* Their exact interaction with KV32 PMA cacheability settings is implementation-specific.
+
+=== KV32-Specific Non-Standard Architectural Features
+
+==== Runtime-Configurable PMA CSRs
+
+KV32 implements a custom set of M-mode CSRs for Physical Memory Attributes (PMA):
+
+* `pmacfg0` at `0x7C0`
+* `pmacfg1` at `0x7C1`
+* `pmaaddr0`-`pmaaddr7` at `0x7C4`-`0x7CB`
+
+These CSRs are *not* part of the standard RISC-V privileged architecture.
+
+Architectural role:
+
+* Define 8 programmable address regions
+* Support `OFF`, `TOR`, `NA4`, and `NAPOT` matching modes
+* Control per-region I-cacheability (`X`), D-cacheability (`C`), and bufferability (`B`)
+* Provide a lock bit (`L`) to freeze configuration until reset
+
+The address matching model is intentionally PMP-like, but the PMA CSR block itself is KV32-specific.
+
+==== Cacheability Fallback Rule
+
+When no PMA region matches, KV32 applies a default architectural policy:
+
+* `addr[31] = 1` -> cacheable
+* `addr[31] = 0` -> non-cacheable
+
+This fallback rule is not a RISC-V architectural requirement. It is a KV32 memory-system rule.
+
+==== Machine-Mode-Only System Profile
+
+KV32 is intentionally machine-mode only:
+
+* No supervisor mode (`S`)
+* No user mode (`U`)
+* No virtual memory / page tables (`satp` absent)
+* No delegation CSRs (`medeleg`, `mideleg` absent)
+* No PMP CSRs; PMA is provided instead through the custom PMA block above
+
+This makes KV32 a bare-metal / RTOS-oriented SoC profile rather than a Linux-class application processor.
+
+=== Features That Are Platform-Specific, Not ISA Extensions
+
+The following blocks are architecturally visible to software but should *not* be described as RISC-V ISA extensions:
+
+* CLINT (`mtime`, `mtimecmp`, `msip`) — standard platform interrupt/timer block
+* PLIC — standard platform interrupt controller model
+* DMA controller
+* GPIO controller
+* Timer/PWM controller
+* UART / SPI / I2C peripherals
+* Watchdog timer
+* Magic device for simulation console / exit control
+
+These are SoC integration choices, not core ISA extensions.
+
+=== Portability Guidance
+
+For software targeting generic RISC-V systems:
+
+1. Safe assumptions: `RV32IMAC + machine-mode traps + standard machine CSRs + atomic + compressed`.
+2. Conditional assumptions: `FENCE.I`, cache maintenance operations, and cache hierarchy behavior.
+3. KV32-only assumptions: PMA custom CSRs, PMA fallback cacheability rule, Magic device, and any software contract that depends on those features.
+
+For software intended to be portable across RISC-V cores, isolate the following behind platform abstraction layers:
+
+* PMA programming
+* Cache maintenance helpers
+* Simulation-only Magic device access
+* Any firmware policy that assumes KV32's cacheability-by-address defaults
+
+<<<
+
+[appendix]
+== Appendix E: Revision History
 
 [cols="1,2,2,3"]
 |===
@@ -3774,6 +4012,11 @@ NOTE: I2C requires external pull-up resistors (4.7kΩ typical) on SCL and SDA.
 |2026-03-09
 |KV32 Dev Team
 |Added Data Cache specification (Section 6): write-back/write-through, write-allocate/no-allocate, dirty eviction, CMO ops (INVAL/FLUSH/CLEAN/FLUSH_ALL); added Physical Memory Attributes (PMA) CSRs (`pmacfg0/1`, `pmaaddr0`–`pmaaddr7`, 0x7C0–0x7CB); updated SoC block diagram (SVG + ASCII) to show D-Cache; updated System Components, Key Features, Abstract, and Performance Optimization sections; added D-Cache burst transaction details to AXI section; updated power estimate to ~50 mW
+
+|1.3
+|2026-03-14
+|KV32 Dev Team
+|Added Appendix D summarizing RISC-V architectural extensions and KV32-specific architecture-visible features; clarified distinction between standard ISA extensions, standard platform blocks, and KV32 custom PMA architecture; clarified I2C IS semantics: IS[2] STOP done is sticky W1C and IS[1:0] are level status
 |===
 
 <<<

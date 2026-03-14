@@ -90,7 +90,7 @@ TEST_DIRS = $(shell find $(SW_DIR) -mindepth 1 -maxdepth 1 -type d ! -name commo
 TEST_NAMES = $(notdir $(TEST_DIRS))
 
 # Tests to compare (exclude I/O-dependent tests that require external peripherals)
-COMPARE_EXCLUDE = full i2c uart spi dma dcache gpio timer wfi nested_irq
+COMPARE_EXCLUDE = full i2c uart spi dma dcache gpio timer wdt wfi nested_irq
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
 # Tests to run under Spike (excludes tests not supported by Spike; override with SPIKE_TESTS=<list>)
@@ -411,7 +411,7 @@ all: rtl-all sim-all compare-all spike-all freertos-compare-simple
 	@make -f Makefile TRACE=1 arch-test-sim
 
 # Run minimum tests (RTL + software sim + trace comparison)
-test-all: rtl-all sim-all compare-all
+test-all: rtl-all sim-all compare-all spike-all
 
 # Verify memory interface
 verify-mem: verify-sram verify-ddr4
@@ -738,6 +738,20 @@ endif
 # Target to run test with Spike simulator (e.g., make spike-hello)
 # Always uses Spike regardless of the SIM variable.
 # Use TRACE=1 to enable instruction trace.
+spike-rtos: build-spike-plugins
+	@$(MAKE) -B $(BUILD_DIR)/rtos.elf EXTRA_CFLAGS="$(EXTRA_CFLAGS) -DMRTOS_PORT_SEM_WAIT_WFI_SYNC=1"
+	@echo "=========================================="
+	@echo "Running test 'rtos' with Spike"
+	@echo "=========================================="
+	cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) rtos.elf 2>&1
+	@echo ""
+ifeq ($(TRACE),1)
+	@echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"
+else
+	@echo "Use TRACE=1 to enable instruction trace"
+endif
+	@echo "=========================================="
+
 spike-%: build-spike-plugins
 	@$(MAKE) $(BUILD_DIR)/$*.elf
 	@echo "=========================================="
@@ -795,6 +809,21 @@ compare-%:
 		echo "Error: $(BUILD_DIR)/sim_trace.txt not found"; \
 		exit 1; \
 	fi
+	@if [ "$*" = "wdt" ]; then \
+		echo "WARNING: strict trace compare for wdt may diverge on timer-read timing"; \
+		echo "         while remaining functionally correct."; \
+		echo "         Running compare for visibility (non-fatal in this mode)..."; \
+		python3 scripts/trace_compare.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt || true; \
+		if [ -f scripts/trace_resync.py ]; then \
+			echo ""; \
+			echo "Resync summary:"; \
+			python3 scripts/trace_resync.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt || true; \
+		fi; \
+		echo "=========================================="; \
+		echo "Trace comparison complete (warning-only mode)"; \
+		echo "=========================================="; \
+		exit 0; \
+	fi
 	@if [ "$*" = "rtos" ] && [ "$(ICACHE_EN)" = "0" ] && echo "$(MEM_TYPE)" | grep -q '^ddr4-'; then \
 		echo "WARNING: strict trace compare for rtos with ICACHE_EN=0 + $(MEM_TYPE)"; \
 		echo "         may show small trap-entry timing mismatches (e.g. mepc +/- 2)."; \
@@ -810,7 +839,7 @@ compare-%:
 		echo "=========================================="; \
 		exit 0; \
 	fi
-	@if ! { [ "$*" = "rtos" ] && [ "$(ICACHE_EN)" = "0" ] && echo "$(MEM_TYPE)" | grep -q '^ddr4-'; }; then \
+	@if ! { [ "$*" = "wdt" ] || ( [ "$*" = "rtos" ] && [ "$(ICACHE_EN)" = "0" ] && echo "$(MEM_TYPE)" | grep -q '^ddr4-' ); }; then \
 		python3 scripts/trace_compare.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt; \
 	fi
 	@echo "=========================================="

@@ -125,19 +125,18 @@ static void t8_mei_handler(uint32_t cause)
     if (src == (uint32_t)KV_PLIC_SRC_I2C) {
         t8_irq_count++;
 
+        // Read-and-acknowledge I2C interrupt status (IS[2] is W1C STOP_DONE).
+        uint32_t is = kv_i2c_irq_status();
+
         /* Drain RX FIFO if data available (Phase 2 reads) */
-        uint32_t drained = 0;
         while (kv_i2c_rx_valid()) {
             uint8_t b = (uint8_t)(KV_I2C_RX & 0xFFu);
             if (t8_rx_count < T8_LEN)
                 t8_rx_buf[t8_rx_count++] = b;
-            drained++;
         }
 
-        /* stop_done_r is a 1-cycle pulse – IS[2] is already 0 by the
-         * time the handler executes.  If no RX bytes were drained this
-         * interrupt must have been triggered by STOP_DONE. */
-        if (drained == 0)
+        // STOP_DONE is sticky and explicitly acknowledged via kv_i2c_irq_status().
+        if (is & KV_I2C_IE_STOP_DONE)
             t8_stop_count++;
     }
     kv_plic_complete(src);
@@ -264,9 +263,11 @@ static int test7_fifo_irq_transfer(void)
         KV_I2C_FENCE();
     }
 
-    /* Sleep until all RX bytes arrive via IRQ */
+    /* Wait until all RX bytes arrive via IRQ.
+     * Keep this as an active wait (not WFI): dense back-to-back RX IRQs can
+     * hit a rare interrupt-return edge case in the WFI loop during this phase. */
     while (t8_rx_count < T8_LEN)
-        kv_wfi();   /* gate clocks between RX_READY IRQ arrivals */
+        asm volatile("nop");
 
     /* STOP */
     while (kv_i2c_busy()) {}

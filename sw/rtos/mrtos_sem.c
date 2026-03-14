@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include "mrtos.h"
 #include "mrtos_port.h"
+#include "kv_irq.h"
 
 /* Private helpers from mrtos_core.c */
 extern void mrtos_ready_insert(mrtos_tcb_t *tcb);
@@ -115,6 +116,17 @@ void mrtos_sem_wait(mrtos_sem_t *s)
      * task — no count increment happens for the waiter path.
      */
     mrtos_port_yield();
+#if MRTOS_PORT_SEM_WAIT_WFI_SYNC
+    /*
+     * Spike can retire a few instructions after the MMIO write that raises
+     * MSIP before it vectors into the trap handler.  For a blocking wait that
+     * is fatal: the caller can fall through and observe the semaphore as if it
+     * had been posted already.  Sleep in WFI until an interrupt boundary is
+     * actually taken; when this task is rescheduled after sem_post_locked(),
+     * execution resumes here and returns normally.
+     */
+    kv_wfi();
+#endif
 }
 
 void mrtos_sem_post(mrtos_sem_t *s)

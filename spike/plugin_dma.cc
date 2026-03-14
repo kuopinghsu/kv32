@@ -50,10 +50,10 @@
 
 #include "kv_platform.h"
 
-static constexpr uint32_t DMA_NUM_CHANNELS = 8;
+static constexpr uint32_t DMA_NUM_CHANNELS = 4;
 static constexpr uint32_t DMA_ID_VAL       = 0xD4A00100u;
 static constexpr uint32_t DMA_CAP_VAL      =
-    (0x0001u << 16) | (4u << 8) | DMA_NUM_CHANNELS; // version=1, burst=4, N_CH=8
+    (0x0001u << 16) | (DMA_NUM_CHANNELS << 8) | 16u; // version=1, N_CH=4, burst=16
 static constexpr reg_t DMA_ADDR_MAX        = 0xFFFu; // 4 KB window
 
 // Number of 32-bit words per channel (stride = 0x40 = 16 words)
@@ -134,14 +134,17 @@ private:
     bool do_1d_copy(uint32_t src, uint32_t dst, uint32_t bytes,
                     bool src_inc, bool dst_inc) const
     {
-        uint8_t *s = to_host(src);
-        uint8_t *d = to_host(dst);
-        if (!s || !d) return false;
-        if (src_inc && dst_inc) {
-            memcpy(d, s, bytes);
-        } else {
-            for (uint32_t i = 0; i < bytes; i++)
-                *(dst_inc ? d + i : d) = *(src_inc ? s + i : s);
+        // NOTE: simif_t::addr_to_mem() does not guarantee that a pointer
+        // remains valid/contiguous across page boundaries. Copy via translated
+        // addresses per byte so large transfers (e.g. 4 KB perf test) are
+        // correct even when src/dst span multiple memory pages.
+        for (uint32_t i = 0; i < bytes; i++) {
+            const uint32_t s_addr = src + (src_inc ? i : 0u);
+            const uint32_t d_addr = dst + (dst_inc ? i : 0u);
+            uint8_t *s = to_host(s_addr);
+            uint8_t *d = to_host(d_addr);
+            if (!s || !d) return false;
+            *d = *s;
         }
         return true;
     }

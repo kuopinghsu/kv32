@@ -17,15 +17,17 @@ extern "C" {
 #include "kv_irq.h"
 
 /*
- * trap_handler – called by the trap_vector in start.S.
+ * trap_handler – called by the trap_vector in start.S with a pointer to the
+ * saved register frame (kv_trap_frame_t).  Exception handlers registered via
+ * kv_exc_register() receive the same frame pointer and may update frame->mepc
+ * to redirect the return PC.
  *
- * Weak so that individual tests can still override it entirely if they
- * prefer the old single-function approach.
+ * Weak so that individual tests can still override it entirely.
  */
 __attribute__((weak))
-void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+void trap_handler(kv_trap_frame_t *frame)
 {
-    kv_irq_dispatch(mcause, mepc, mtval);
+    kv_irq_dispatch(frame);
 }
 
 #ifdef __cplusplus

@@ -91,14 +91,14 @@ class kv32(pluginTemplate):
 
     def _make_run_cmd(self, elf, sig_file):
         return (
-            '{exe} {elf} --instructions=100000'
+            '{exe} {elf} --instructions=2000000'
             ' +signature={sig} +signature-granularity=4'
         ).format(exe=self.dut_exe, elf=elf, sig=sig_file)
 
     def _make_trace_cmd(self, elf, sig_file, trace_file):
         # kv32soc writes trace via --trace --log; stdout+stderr to log
         return (
-            '{exe} {elf} --instructions=100000'
+            '{exe} {elf} --instructions=2000000'
             ' +signature={sig} +signature-granularity=4'
             ' --trace --log={trace}'
             ' > {log} 2>&1'

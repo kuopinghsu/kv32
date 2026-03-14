@@ -23,8 +23,10 @@
 //         [2]: !rx_empty (RX FIFO has data available)
 //         [3]: ACK Received
 //   0x14: IE - Interrupt Enable: [0]=rx_not_empty_ie, [1]=tx_empty_ie, [2]=done_ie
-//   0x18: IS - Interrupt Status (read-only, level):
-//         [0]=rx_not_empty, [1]=tx_empty, [2]=done (STOP completed)
+//   0x18: IS - Interrupt Status
+//         [0]=rx_not_empty (level)
+//         [1]=tx_empty     (level)
+//         [2]=done         (sticky, set on STOP complete, W1C)
 //
 // Interrupt (irq): asserted when (IE & IS) != 0
 //
@@ -198,7 +200,7 @@ module axi_i2c #(
     // Interrupt
     // ========================================================================
     logic [2:0] ie_r;
-    logic        stop_done_r;  // pulses 1 when STOP completes
+    logic        stop_done_r;  // sticky done bit: set on STOP complete, W1C via IS[2]
     logic [2:0] is_wire;
     assign is_wire[0] = !rxf_empty;
     assign is_wire[1] = txf_empty;
@@ -216,6 +218,12 @@ module axi_i2c #(
     logic [15:0] clk_div;
     logic [15:0] clk_counter;
     logic        scl_tick;
+
+    // IS[2] W1C clear request for stop_done_r
+    logic stop_done_clr_req;
+    assign stop_done_clr_req = axi_awvalid && axi_wvalid &&
+                               (axi_awaddr[15:0] == IS_OFFSET) &&
+                               axi_wstrb[0] && axi_wdata[2];
 
     // TX state machine signals fed from FIFO or ctrl read trigger
     logic [7:0]  tx_data;
@@ -289,6 +297,9 @@ module axi_i2c #(
                         if (axi_wstrb[1]) clk_div[15:8] <= axi_wdata[15:8];
                     end
                     IE_OFFSET: if (axi_wstrb[0]) ie_r <= axi_wdata[2:0];
+                    // IS[2] is W1C for stop_done_r (handled in state-machine block).
+                    // IS[1:0] are level status and are not software-clearable.
+                    IS_OFFSET: ;
                     // TX_OFFSET push is handled combinationally via txf_push
                     default: ;
                 endcase
@@ -373,7 +384,8 @@ module axi_i2c #(
             i2c_sda_o    <= 1'b0;
             i2c_sda_oe   <= 1'b1;  // Tristate (high-Z)
         end else begin
-            stop_done_r <= 1'b0;  // auto-clear each cycle
+            if (stop_done_clr_req)
+                stop_done_r <= 1'b0;  // W1C acknowledge from software (IS[2])
             rxf_push_r  <= 1'b0;  // default clear each cycle (set below when byte captured)
             case (state)
                 IDLE: begin
@@ -568,7 +580,7 @@ module axi_i2c #(
                             end
                             2'b10: begin  // SDA high (STOP condition)
                                 i2c_sda_oe  <= 1'b1;
-                                stop_done_r <= 1'b1;  // signal IS[2]
+                                stop_done_r <= 1'b1;  // latch IS[2] until software W1C clear
                                 scl_phase   <= 2'b00;
                                 state       <= IDLE;
                             end

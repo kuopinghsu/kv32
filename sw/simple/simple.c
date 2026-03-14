@@ -4,14 +4,11 @@
 // Description: Minimal smoke test: NOP execution + exit to verify basic CPU bring-up
 // ============================================================================
 
-#include <stdint.h>
+#include "kv_irq.h"
 
 // Minimal trap handler (required by start.S)
-void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
-    // Do nothing - just return
-    (void)mcause;
-    (void)mepc;
-    (void)mtval;
+void trap_handler(kv_trap_frame_t *frame) {
+    (void)frame;
 }
 
 // Main function - executes a NOP instruction and returns

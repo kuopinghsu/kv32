@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include "kv_irq.h"
 
 #define TEST_PASS 0
 #define TEST_FAIL 1
@@ -35,10 +36,8 @@ static uint32_t tests_skipped = 0;
 static int atomic_supported = -1;  // -1 = unknown, 0 = no, 1 = yes
 
 // Trap handler (required by start.S)
-void trap_handler(uint32_t mcause, uint32_t mepc, uint32_t mtval) {
-    (void)mcause;
-    (void)mepc;
-    (void)mtval;
+void trap_handler(kv_trap_frame_t *frame) {
+    (void)frame;
 }
 
 // Detect if atomic operations are supported by checking for error pattern

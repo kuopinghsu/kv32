@@ -15,6 +15,18 @@
 
 #include <stdint.h>
 
+/*
+ * Optional port quirk: force a WFI boundary after a blocking semaphore wait
+ * yields.  This is useful for simulator ports where an MSIP MMIO write may
+ * retire before trap entry is architecturally visible to software.
+ *
+ * Enabled by default only when explicitly passed via -D, e.g. for Spike:
+ *   -DMRTOS_PORT_SEM_WAIT_WFI_SYNC=1
+ */
+#ifndef MRTOS_PORT_SEM_WAIT_WFI_SYNC
+#define MRTOS_PORT_SEM_WAIT_WFI_SYNC 0
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

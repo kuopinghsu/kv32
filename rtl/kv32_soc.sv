@@ -556,7 +556,11 @@ module kv32_soc #(
     // ========================================================================
     logic        timer_irq;           // Timer interrupt from CLINT
     logic        software_irq;        // Software interrupt from CLINT
-    logic        external_irq;        // External interrupt from PLIC
+    logic        external_irq;        // External interrupt from PLIC (raw, from PLIC output)
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic        external_irq_meta;   // First synchroniser stage (non-gated clk)
+    logic        external_irq_sync;   // Second synchroniser stage — fed to kv32_core
+    /* verilator lint_on UNUSEDSIGNAL */
     logic        uart_irq;            // UART FIFO interrupt → PLIC source 1
     logic        spi_irq;             // SPI  FIFO interrupt → PLIC source 2
     logic        i2c_irq;             // I2C  FIFO interrupt → PLIC source 3
@@ -631,7 +635,33 @@ module kv32_soc #(
     logic [3:0]  core_wb_store_strb;  // Store byte enables
 `endif
 
-    // external_irq is driven by the PLIC instance below
+    // external_irq is driven by the PLIC instance below.
+    // The two-FF synchroniser here serves two purposes:
+    //
+    //   1. Clock-gating safety (WFI):
+    //      kv32_core runs on the gated core_clk.  When the core is clock-gated,
+    //      synchroniser FFs inside the core would freeze and never sample the
+    //      asserted IRQ, preventing the core from waking.  By registering on the
+    //      ungated system clk, the sync'd signal is ready the moment core_clk
+    //      resumes.
+    //
+    //   2. PLIC prioritiser timing closure:
+    //      The PLIC output irq is the result of a multi-level priority comparison
+    //      across all enabled sources.  Its combinational path can be long enough
+    //      to violate setup time at the core's input registers.  The two pipeline
+    //      stages cut this path, giving the synthesiser a clean single-cycle
+    //      fanout-1 flop-to-flop arc into kv32_core instead of a long
+    //      PLIC-to-core combinational cloud.
+    always_ff @(posedge clk or negedge soc_rst_n) begin
+        if (!soc_rst_n) begin
+            external_irq_meta <= 1'b0;
+            external_irq_sync <= 1'b0;
+        end else begin
+            external_irq_meta <= external_irq;
+            external_irq_sync <= external_irq_meta;
+        end
+    end
+
     // uart_irq / spi_irq / i2c_irq are connected to PLIC sources 1/2/3
 
     // ========================================================================
@@ -646,7 +676,12 @@ module kv32_soc #(
         .rst_n         (rst_n),
         .sleep_req_i   (core_sleep),
         .timer_irq_i   (timer_irq),
-        .external_irq_i(external_irq),
+        // NOTE: Must use external_irq_sync (not raw external_irq) so that PM
+        // wakeup and core trap recognition are aligned to the same pipeline
+        // stage.  Using the raw signal would introduce a 2-cycle skew against
+        // the core, causing IRQ-driven WFI tests to stall indefinitely when
+        // the external-IRQ synchronizer is enabled.
+        .external_irq_i(external_irq_sync),
         .software_irq_i(software_irq),
         .gated_clk_o   (core_clk),
         .wakeup_o      (core_wakeup)
@@ -688,7 +723,7 @@ module kv32_soc #(
         .dmem_resp_ready(dmem_resp_ready),
 
         .timer_irq(timer_irq),
-        .external_irq(external_irq),
+        .external_irq(external_irq_sync),
         .software_irq(software_irq),
 
         .cycle_count(cycle_count),

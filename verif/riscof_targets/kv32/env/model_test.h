@@ -39,8 +39,24 @@ write_tohost:                                                       \
 
 // see https://github.com/riscv-non-isa/riscv-arch-test/issues/659
 // get rid of compressed instructions
+//
+// PMA: configure region 0 as NAPOT covering 0x80000000+2MB with
+// I-cacheable (X=1) but NOT D-cacheable (C=0).  This overrides the
+// default fallback rule (addr[31]=1 → cacheable) and forces all data
+// stores – including the final "sw tohost" in RVMODEL_HALT – to bypass
+// the D-cache and appear immediately on the AXI bus, allowing the
+// testbench axi_monitor to detect the tohost write and exit cleanly.
+//
+// NAPOT encoding for base=0x80000000, size=2MB (2^21):
+//   trailing ones = 21-3 = 18  →  mask = 2^18-1 = 0x3FFFF
+//   pmaaddr0 = (0x80000000>>2) | 0x3FFFF = 0x20000000 | 0x3FFFF = 0x2003FFFF
+//   pmacfg0  = NAPOT(0x18) | X(0x04) = 0x1C  (C-bit=0 → D-cache off)
 #define RVMODEL_BOOT                                                \
-        .option norelax;
+        .option norelax;                                            \
+        li t0, 0x2003FFFF;                                          \
+        csrw 0x7C4, t0;                                             \
+        li t0, 0x1C;                                                \
+        csrw 0x7C0, t0;
 
 #define RVMODEL_DATA_BEGIN                                          \
   .align 4; .global begin_signature; begin_signature:

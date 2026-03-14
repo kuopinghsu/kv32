@@ -29,11 +29,11 @@ all: $(PDFS)
 
 %.pdf: %.adoc
 	$(ASCIIDOCTOR_PDF) $(ADOC_FLAGS) -o $@ $<
-	$(RM) -rf images .asciidoctor
+	@$(RM) -rf images .asciidoctor package-lock.json  package.json
 
 cache_benchmark_report.pdf: cache_benchmark_report.adoc
 	$(ASCIIDOCTOR_PDF) $(ADOC_FLAGS) -r asciidoctor-diagram -o $@ $<
-	$(RM) -rf images .asciidoctor
+	@$(RM) -rf images .asciidoctor package-lock.json  package.json
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 

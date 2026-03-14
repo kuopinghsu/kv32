@@ -780,8 +780,8 @@ int main(int argc, char** argv) {
     time_begin = std::chrono::steady_clock::now();
     #endif
 
-    while ((!exit_requested || g_has_pending_stores) &&
-           (max_instructions == 0 || (uint64_t)dut->instret_count < max_instructions)) {
+        while ((!exit_requested || g_has_pending_stores) &&
+            (max_instructions == 0 || (uint64_t)dut->instret_count < max_instructions)) {
         if (sigint_received) {
             std::cerr << "\n*** SIGINT received: dumping registers and exiting ***" << std::endl;
             dump_registers();
@@ -821,12 +821,26 @@ int main(int argc, char** argv) {
             break;
         }
 
+        // Handle $finish/$stop from SystemVerilog testbench code.
+        // The WDT reset monitor uses $finish(2), which does not go through
+        // the axi_magic DPI exit path, so we must observe Verilator's finish
+        // flag explicitly here.
+        if (contextp->gotFinish()) {
+            if (!exit_requested) {
+                exit_requested = 1;
+                exit_code = 2;
+            }
+            break;
+        }
+
         cycle_count++;
     }
 
     // Capture exit code if exit was requested via DPI
     if (exit_requested) {
-        exit_code = exit_code_value;
+        if (exit_code == 0) {
+            exit_code = exit_code_value;
+        }
     }
 
     #ifdef HAVE_CHRONO
