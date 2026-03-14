@@ -247,7 +247,13 @@ package kv32_pkg;
         CSR_PMAADDR7  = 12'h7CB,   // PMA NAPOT/TOR addr region 7
         // Custom machine-mode CSRs: stack guard and stack watermark
         CSR_SGUARD_BASE = 12'h7CC,
-        CSR_SPMIN       = 12'h7CD
+        CSR_SPMIN       = 12'h7CD,
+        // Custom machine-mode CSRs: cache diagnostics
+        CSR_ICAP        = 12'h7D0,
+        CSR_DCAP        = 12'h7D1,
+        CSR_CDIAG_CMD   = 12'h7D2,
+        CSR_CDIAG_TAG   = 12'h7D3,
+        CSR_CDIAG_DATA  = 12'h7D4
     } csr_addr_e;
 
     // Number of programmable PMA region slots

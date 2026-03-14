@@ -1,13 +1,14 @@
 RISC-V 32-bit IMAC Processor
 ============================
 
-K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMAC_Zicsr_Zifencei support, featuring a 5-stage pipeline, instruction and data caches, KV32 non-standard stack-guard extensions, a JTAG/cJTAG debug interface, a 1-to-11 AXI4-Lite interconnect with ten on-chip peripherals, and both RTL and functional simulators.
+K<sub>V</sub>32 is a complete RISC-V 32-bit processor implementation with RV32IMAC_Zicsr_Zifencei support, featuring a 5-stage pipeline, instruction and data caches, KV32 non-standard stack-guard and cache-diagnostic CSR extensions, a JTAG/cJTAG debug interface, a 1-to-11 AXI4-Lite interconnect with ten on-chip peripherals, and both RTL and functional simulators.
 
 ## Features
 
 ### Core Features
 - **ISA**: RV32IMAC_Zicsr (Integer, Multiplication, Atomic, Compressed, CSR extensions)
 - **KV32 Non-Standard Extension**: Stack guard + stack watermark via custom M-mode CSRs `sguard_base` (`0x7CC`) and `spmin` (`0x7CD`), with custom exception cause `16` (`KV_EXC_STACK_OVERFLOW`)
+- **KV32 Non-Standard Extension**: Cache diagnostics via custom M-mode CSRs `icap` (`0x7D0`), `dcap` (`0x7D1`), `cdiag_cmd` (`0x7D2`), `cdiag_tag` (`0x7D3`), and `cdiag_data` (`0x7D4`) for cache geometry discovery and read-only line/tag inspection
 - **Pipeline**: 5-stage (Fetch, Decode, Execute, Memory, Writeback)
 - **Hazard Handling**: Data forwarding, pipeline stalls, branch prediction
 - **Privilege**: Machine mode (M-mode) support

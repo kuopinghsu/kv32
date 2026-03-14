@@ -69,11 +69,11 @@
 - [ ] Package peripheral cores (`axi_uart`, `axi_dma`, `axi_spi`, `axi_i2c`, `axi_gpio`, `axi_timer`, `axi_clint`, `axi_plic`) as individual `.core` files so they can be reused independently.
 - [ ] Document setup in a new `docs/fusesoc_integration.md`: installation, core file layout, available targets, and how to add a new peripheral core.
 
-### 5. ARM-style Cache Diagnostic CSRs
-
-refer to `docs/plan-cacheDiagCsrs.prompt.md`
-
----
+### ~~5. ARM-style Cache Diagnostic CSRs~~
+- Implemented custom machine CSRs `ICAP` (`0x7D0`), `DCAP` (`0x7D1`), `CDIAG_CMD` (`0x7D2`), `CDIAG_TAG` (`0x7D3`), and `CDIAG_DATA` (`0x7D4`) in RTL and simulators.
+- Added cache diagnostic plumbing through `kv32_csr`, `kv32_core`, `kv32_soc`, `kv32_icache`, and `kv32_dcache`, including geometry reporting and read-only tag/data inspection.
+- Added SDK support in `sw/include/kv_cache.h` and `sw/include/kv_cap.h`, plus new `sw/cache_diag` validation software.
+- Verified with `make sim-cache_diag`, `make rtl-cache_diag`, and `make compare-cache_diag`.
 
 ## Completed
 

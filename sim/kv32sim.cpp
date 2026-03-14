@@ -160,6 +160,7 @@ KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
     for (int i = 0; i < 8; i++) csr_pmaaddr[i] = 0;
     csr_sguard_base = 0;
     csr_spmin = 0xFFFFFFFFu;
+    csr_cdiag_cmd = 0;
 
     // Initialize device drivers
     magic = new MagicDevice();
@@ -327,6 +328,11 @@ void KV32Simulator::log_commit(uint32_t pc, uint32_t inst, int rd_num,
             case 0x7cb: csr_name = "pmaaddr7"; break;
             case 0x7cc: csr_name = "sguard_base"; break;
             case 0x7cd: csr_name = "spmin"; break;
+            case 0x7d0: csr_name = "icap"; break;
+            case 0x7d1: csr_name = "dcap"; break;
+            case 0x7d2: csr_name = "cdiag_cmd"; break;
+            case 0x7d3: csr_name = "cdiag_tag"; break;
+            case 0x7d4: csr_name = "cdiag_data"; break;
             default: csr_name = "unknown"; break;
             }
             line_stream << " c" << std::setfill('0') << std::setw(3) << std::hex << csr_num
@@ -383,6 +389,11 @@ void KV32Simulator::log_commit(uint32_t pc, uint32_t inst, int rd_num,
             case 0x7cb: csr_name = "pmaaddr7"; break;
             case 0x7cc: csr_name = "sguard_base"; break;
             case 0x7cd: csr_name = "spmin"; break;
+            case 0x7d0: csr_name = "icap"; break;
+            case 0x7d1: csr_name = "dcap"; break;
+            case 0x7d2: csr_name = "cdiag_cmd"; break;
+            case 0x7d3: csr_name = "cdiag_tag"; break;
+            case 0x7d4: csr_name = "cdiag_data"; break;
             default: csr_name = "unknown"; break;
             }
             trace_file << " c" << std::dec << csr_num << "_" << csr_name
@@ -491,6 +502,11 @@ uint32_t KV32Simulator::read_csr(uint32_t csr) {
     case CSR_PMAADDR7: return csr_pmaaddr[7];
     case CSR_SGUARD_BASE: return csr_sguard_base;
     case CSR_SPMIN: return csr_spmin;
+    case CSR_ICAP: return ((2u << 24) | (64u << 16) | (8u << 8) | 21u);
+    case CSR_DCAP: return ((2u << 24) | (64u << 16) | (8u << 8) | 21u);
+    case CSR_CDIAG_TAG: return 0u;
+    case CSR_CDIAG_DATA: return 0u;
+    case CSR_CDIAG_CMD: return csr_cdiag_cmd;
     default:
         std::cerr << "Warning: Reading unknown CSR 0x" << std::hex << csr
                   << std::endl;
@@ -590,6 +606,12 @@ void KV32Simulator::write_csr(uint32_t csr, uint32_t value) {
     case CSR_PMAADDR7: if (!(csr_pmacfg[1] & 0x80000000u)) csr_pmaaddr[7] = value; break;
     case CSR_SGUARD_BASE: csr_sguard_base = value; break;
     case CSR_SPMIN: csr_spmin = value; break;
+    case CSR_CDIAG_CMD: csr_cdiag_cmd = value; break;
+    case CSR_ICAP:
+    case CSR_DCAP:
+    case CSR_CDIAG_TAG:
+    case CSR_CDIAG_DATA:
+        break;
 
     default:
         std::cerr << "Warning: Writing unknown CSR 0x" << std::hex << csr
@@ -1749,6 +1771,7 @@ void KV32Simulator::step() {
                 CSR_PMAADDR0, CSR_PMAADDR1, CSR_PMAADDR2, CSR_PMAADDR3,
                 CSR_PMAADDR4, CSR_PMAADDR5, CSR_PMAADDR6, CSR_PMAADDR7,
                 CSR_SGUARD_BASE, CSR_SPMIN,
+                CSR_ICAP, CSR_DCAP, CSR_CDIAG_CMD, CSR_CDIAG_TAG, CSR_CDIAG_DATA,
             };
             if (known_csrs.find(csr_addr) == known_csrs.end()) {
                 take_trap(CAUSE_ILLEGAL_INSTRUCTION, inst);

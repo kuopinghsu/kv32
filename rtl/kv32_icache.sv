@@ -117,7 +117,17 @@ module kv32_icache #(
     // pmaaddr: physaddr >> 2, NAPOT-encoded (same as RISC-V PMP convention)
     // Fallback when no region matches: legacy bit[31]=1 rule
     input  logic [1:0][31:0] pma_cfg_i,    // pmacfg0 (regions 0-3), pmacfg1 (regions 4-7)
-    input  logic [7:0][31:0] pma_addr_i    // pmaaddr0-7
+    input  logic [7:0][31:0] pma_addr_i,
+
+    // Cache diagnostic interface (CSR_CDIAG_*)
+    output logic [31:0] cap_o,
+    input  logic        diag_req_i,
+    input  logic [1:0]  diag_way_i,
+    input  logic [5:0]  diag_set_i,
+    input  logic [3:0]  diag_word_i,
+    output logic        diag_valid_o,
+    output logic [31:0] diag_tag_o,
+    output logic [31:0] diag_data_o
 
 `ifndef SYNTHESIS
     ,
@@ -141,6 +151,8 @@ module kv32_icache #(
     localparam int INDEX_BITS       = $clog2(NUM_SETS);
     localparam int TAG_BITS         = 32 - INDEX_BITS - BYTE_OFFSET_BITS;
     localparam int WAY_BITS         = (CACHE_WAYS > 1) ? $clog2(CACHE_WAYS) : 1;
+
+    assign cap_o = {8'(CACHE_WAYS), 8'(NUM_SETS), 8'(WORDS_PER_LINE), 8'(TAG_BITS)};
 
     // CMO opcodes
     localparam logic [1:0] CMO_INVAL     = 2'b00;
@@ -581,6 +593,29 @@ module kv32_icache #(
     end
 
     // =========================================================================
+    // Cache diagnostic capture
+    //   CSR_CDIAG_CMD triggers diag_req_i for one cycle. SRAM read data appears
+    //   one cycle later and is captured into diagnostic holding registers.
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            diag_req_d  <= 1'b0;
+            diag_way_d  <= '0;
+            diag_tag_r  <= '0;
+            diag_data_r <= '0;
+        end else begin
+            diag_req_d <= diag_req_i;
+            if (diag_req_i) begin
+                diag_way_d <= diag_way_sel;
+            end
+            if (diag_req_d) begin
+                diag_tag_r  <= tag_sram_rdata[diag_way_d];
+                diag_data_r <= data_sram_rdata[diag_way_d];
+            end
+        end
+    end
+
+    // =========================================================================
     // Fill tracking registers
     // =========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
@@ -873,16 +908,39 @@ module kv32_icache #(
     // Unified read-launch strobe (covers both fetch and CMO)
     logic                  sram_read_en;
     logic [INDEX_BITS-1:0] sram_read_index;
+    logic [WORD_OFFSET_BITS-1:0] sram_read_word_off;
+
+    logic [WAY_BITS-1:0]         diag_way_sel;
+    logic [INDEX_BITS-1:0]       diag_set_sel;
+    logic [WORD_OFFSET_BITS-1:0] diag_word_sel;
+    logic                        diag_req_d;
+    logic [WAY_BITS-1:0]         diag_way_d;
+    logic [TAG_BITS-1:0]         diag_tag_r;
+    logic [31:0]                 diag_data_r;
+
+    assign diag_way_sel  = WAY_BITS'(diag_way_i[WAY_BITS-1:0]);
+    assign diag_set_sel  = INDEX_BITS'(diag_set_i[INDEX_BITS-1:0]);
+    assign diag_word_sel = WORD_OFFSET_BITS'(diag_word_i[WORD_OFFSET_BITS-1:0]);
+    assign diag_valid_o  = valid_array[diag_way_sel][diag_set_sel];
+    assign diag_tag_o    = {{(32-TAG_BITS){1'b0}}, diag_tag_r};
+    assign diag_data_o   = diag_data_r;
+`ifndef SYNTHESIS
+    // Keep Verilator lint clean when configured widths use fewer command bits.
+    logic _unused_diag_bits;
+    assign _unused_diag_bits = &{1'b0, diag_way_i[1], diag_word_i[3]};
+`endif
 
     assign sram_read_en =
         (imem_req_valid && imem_req_ready) ||
-        (state == S_IDLE && cmo_valid);       // CMO accepted → read tag for comparison
+        (state == S_IDLE && cmo_valid) ||      // CMO accepted → read tag for comparison
+        diag_req_i;
 
     // CMO takes index priority over fetch when both arrive in S_IDLE
     assign sram_read_index =
         (state == S_IDLE && cmo_valid)
             ? cmo_addr[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS]
-            : new_req_index;
+            : (diag_req_i ? diag_set_sel : new_req_index);
+    assign sram_read_word_off = diag_req_i ? diag_word_sel : new_req_word_off;
 
     // Tag fill commit strobe (last beat, no error) – fires in any fill state
     // tag_fill_commit: declared earlier as forward declaration
@@ -919,7 +977,7 @@ module kv32_icache #(
                 // Overflow of the addition wraps naturally at WORD_OFFSET_BITS
                 // (cache-line boundary) matching AXI WRAP semantics.
                 ? DATA_SRAM_ADDR_BITS'({req_index, WORD_OFFSET_BITS'(req_word_off + fill_word_cnt)})
-                : DATA_SRAM_ADDR_BITS'({sram_read_index,  new_req_word_off});
+                : DATA_SRAM_ADDR_BITS'({sram_read_index,  sram_read_word_off});
             assign data_sram_wdata[w] = axi_rdata;
 
         end
@@ -1065,6 +1123,7 @@ module kv32_icache #(
                 `DEBUG2(`DBG_GRP_ICACHE, ("[ICACHE] PMA bypass: addr=0x%h bit31=0 -> non-cacheable, issuing single INCR fetch", req_addr_r));
             end
         end
+
     end
 `endif
 
@@ -1174,7 +1233,7 @@ module kv32_icache #(
     // -----------------------------------------------------------------------
     property p_no_multi_way_hit;
         @(posedge clk) disable iff (!rst_n)
-        $onehot0(way_hit);
+        (state == S_LOOKUP && use_cache) |-> $onehot0(way_hit);
     endproperty
     assert property (p_no_multi_way_hit)
         else $error("Multiple ways hit simultaneously – tag aliasing!");

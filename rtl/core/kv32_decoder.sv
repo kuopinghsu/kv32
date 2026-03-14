@@ -308,7 +308,12 @@ module kv32_decoder (
                             instr[31:20] != CSR_PMAADDR6  &&
                             instr[31:20] != CSR_PMAADDR7  &&
                             instr[31:20] != CSR_SGUARD_BASE &&
-                            instr[31:20] != CSR_SPMIN) begin
+                            instr[31:20] != CSR_SPMIN     &&
+                            instr[31:20] != CSR_ICAP      &&
+                            instr[31:20] != CSR_DCAP      &&
+                            instr[31:20] != CSR_CDIAG_CMD &&
+                            instr[31:20] != CSR_CDIAG_TAG &&
+                            instr[31:20] != CSR_CDIAG_DATA) begin
                             illegal = 1'b1;
                         end
                     end

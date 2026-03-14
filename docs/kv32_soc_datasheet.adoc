@@ -705,6 +705,31 @@ The core implements Machine-mode CSRs per RISC-V Privileged Spec v1.11:
 |spmin
 |R/W
 |Minimum observed SP (low-water mark). Software may write to reset/reseed tracking.
+
+|0x7D0
+|icap
+|R/O
+|I-cache diagnostic capability word: `[31:24]=ways [23:16]=sets [15:8]=words/line [7:0]=tag_bits`.
+
+|0x7D1
+|dcap
+|R/O
+|D-cache diagnostic capability word: `[31:24]=ways [23:16]=sets [15:8]=words/line [7:0]=tag_bits`.
+
+|0x7D2
+|cdiag_cmd
+|R/W
+|Cache diagnostic command register. A write issues a diagnostic SRAM read; the latched command value may be read back for software visibility.
+
+|0x7D3
+|cdiag_tag
+|R/O
+|Diagnostic tag/status result for the previously issued `cdiag_cmd`. Returns valid/tag for I$ and dirty/valid/tag for D$.
+
+|0x7D4
+|cdiag_data
+|R/O
+|Diagnostic data result for the previously issued `cdiag_cmd`. Returns one 32-bit word from the selected cache line.
 |===
 
 === Exception and Interrupt Handling
@@ -4006,6 +4031,42 @@ written below `sguard_base` while guard checks are enabled.
 
 These CSRs and trap cause are KV32-specific and are not part of standard RISC-V
 privileged architecture or `misa` extension bits.
+
+==== Cache-Diagnostic CSRs
+
+KV32 implements additional custom machine CSRs for cache geometry discovery and
+read-only array inspection:
+
+* `icap` at `0x7D0` (I-cache geometry capability)
+* `dcap` at `0x7D1` (D-cache geometry capability)
+* `cdiag_cmd` at `0x7D2` (diagnostic read command)
+* `cdiag_tag` at `0x7D3` (diagnostic tag/status result)
+* `cdiag_data` at `0x7D4` (diagnostic data result)
+
+Architectural role:
+
+* Expose cache geometry to firmware without relying on build-time constants
+* Allow software to inspect cache contents for bring-up and validation
+* Use a single command/data path for both caches, selected by `cdiag_cmd[31]`
+
+`icap` and `dcap` use a packed layout of `[31:24]=ways`, `[23:16]=sets`,
+`[15:8]=words_per_line`, and `[7:0]=tag_bits`.
+
+`cdiag_cmd` uses the packed layout `[31]=cache_select`, `[30:25]=reserved`,
+`[24]=way`, `[23:16]=set`, `[15:8]=word`, `[7:0]=reserved`, where
+`cache_select=0` selects I-cache and `cache_select=1` selects D-cache.
+
+The diagnostic result format is cache-specific:
+
+* I-cache `cdiag_tag`: `[30]=valid`, `[20:0]=tag`
+* D-cache `cdiag_tag`: `[31]=dirty`, `[30]=valid`, `[20:0]=tag`
+* `cdiag_data`: one 32-bit word from the selected line
+
+Firmware must allow two instruction slots between writing `cdiag_cmd` and
+reading `cdiag_tag` or `cdiag_data` so the selected SRAM entry can be captured.
+
+These CSRs are KV32-specific and are not part of standard RISC-V privileged
+architecture or `misa` extension bits.
 
 ==== Cacheability Fallback Rule
 

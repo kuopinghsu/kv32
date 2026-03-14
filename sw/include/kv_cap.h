@@ -97,4 +97,13 @@
      (uint32_t)(KV_CAP_TIMER_COUNTER_WIDTH))
 /* Expected: 0x00010420 */
 
+/* ── Cache diagnostic capability CSRs (custom machine CSRs) ─────────────
+ * Layout: [31:24]=WAYS [23:16]=NUM_SETS [15:8]=WORDS_PER_LINE [7:0]=TAG_BITS
+ * Default SoC configuration (Makefile):
+ *   I-cache: 2 ways, 64 sets, 8 words/line, 21-bit tag
+ *   D-cache: 2 ways, 64 sets, 8 words/line, 21-bit tag
+ */
+#define KV_CAP_ICAP_VALUE  ((uint32_t)((2u << 24) | (64u << 16) | (8u << 8) | 21u))
+#define KV_CAP_DCAP_VALUE  ((uint32_t)((2u << 24) | (64u << 16) | (8u << 8) | 21u))
+
 #endif /* KV_CAP_H */

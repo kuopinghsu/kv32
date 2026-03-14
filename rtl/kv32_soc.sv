@@ -619,6 +619,27 @@ module kv32_soc #(
     logic [1:0][31:0] pma_cfg;        // pmacfg0, pmacfg1 from kv32_core
     logic [7:0][31:0] pma_addr;       // pmaaddr0-7 from kv32_core
 
+    // Cache diagnostic sideband (core <-> icache/dcache)
+    logic [31:0] core_icap;
+    logic [31:0] core_dcap;
+    logic        core_cdiag_req;
+    logic        core_cdiag_sel;
+    logic [1:0]  core_cdiag_way;
+    logic [5:0]  core_cdiag_set;
+    logic [3:0]  core_cdiag_word;
+    logic        cdiag_sel_d;
+    logic [31:0] icache_diag_tag;
+    logic [31:0] icache_diag_data;
+    logic        icache_diag_valid;
+    logic [31:0] dcache_diag_tag;
+    logic [31:0] dcache_diag_data;
+    logic        dcache_diag_valid;
+    logic        dcache_diag_dirty;
+    logic [31:0] core_cdiag_tag;
+    logic [31:0] core_cdiag_data;
+    logic        core_cdiag_valid;
+    logic        core_cdiag_dirty;
+
     // CMO interface wires (core → dcache)
     logic        core_dcache_cmo_valid;
     logic [1:0]  core_dcache_cmo_op;
@@ -673,6 +694,24 @@ module kv32_soc #(
             external_irq_sync <= external_irq_meta;
         end
     end
+
+    // Cache diagnostic data returns one cycle after CSR_CDIAG_CMD issue.
+    // Latch the cache-select bit so TAG/DATA muxing aligns with returned data.
+    always_ff @(posedge core_clk or negedge cpu_rst_n) begin
+        if (!cpu_rst_n)
+            cdiag_sel_d <= 1'b0;
+        else if (core_cdiag_req)
+            cdiag_sel_d <= core_cdiag_sel;
+    end
+
+    assign core_cdiag_tag   = cdiag_sel_d ? dcache_diag_tag   : icache_diag_tag;
+    assign core_cdiag_data  = cdiag_sel_d ? dcache_diag_data  : icache_diag_data;
+    assign core_cdiag_valid = cdiag_sel_d ? dcache_diag_valid : icache_diag_valid;
+    assign core_cdiag_dirty = cdiag_sel_d ? dcache_diag_dirty : 1'b0;
+`ifndef SYNTHESIS
+    logic _unused_cdiag_tag_msb;
+    assign _unused_cdiag_tag_msb = &{1'b0, core_cdiag_tag[31:21]};
+`endif
 
     // uart_irq / spi_irq / i2c_irq are connected to PLIC sources 1/2/3
 
@@ -769,6 +808,19 @@ module kv32_soc #(
         .pma_cfg_o (pma_cfg),
         .pma_addr_o(pma_addr),
 
+        // Cache diagnostics
+        .icap_i       (core_icap),
+        .dcap_i       (core_dcap),
+        .cdiag_tag_i  (core_cdiag_tag[20:0]),
+        .cdiag_dirty_i(core_cdiag_dirty),
+        .cdiag_valid_i(core_cdiag_valid),
+        .cdiag_data_i (core_cdiag_data),
+        .cdiag_req_o  (core_cdiag_req),
+        .cdiag_sel_o  (core_cdiag_sel),
+        .cdiag_way_o  (core_cdiag_way),
+        .cdiag_set_o  (core_cdiag_set),
+        .cdiag_word_o (core_cdiag_word),
+
         // Debug interface
         .dbg_halt_req_i(dbg_halt_req),
         .dbg_halted_o(dbg_halted),
@@ -854,6 +906,16 @@ module kv32_soc #(
                 .pma_cfg_i (pma_cfg),
                 .pma_addr_i(pma_addr),
 
+                // Cache diagnostics
+                .cap_o      (core_icap),
+                .diag_req_i (core_cdiag_req && !core_cdiag_sel),
+                .diag_way_i (core_cdiag_way),
+                .diag_set_i (core_cdiag_set),
+                .diag_word_i(core_cdiag_word),
+                .diag_valid_o(icache_diag_valid),
+                .diag_tag_o  (icache_diag_tag),
+                .diag_data_o (icache_diag_data),
+
                 // Power management
                 .icache_idle(icache_idle_w)
 `ifndef SYNTHESIS
@@ -915,6 +977,10 @@ module kv32_soc #(
             // (imem_req_valid is inhibited; !imem_resp_valid in core_sleep_o
             // already covers any last in-flight single-beat response).
             assign icache_idle     = 1'b1;
+            assign core_icap       = 32'd0;
+            assign icache_diag_valid = 1'b0;
+            assign icache_diag_tag   = 32'd0;
+            assign icache_diag_data  = 32'd0;
 `ifndef SYNTHESIS
             assign icache_perf_req_cnt    = '0;
             assign icache_perf_hit_cnt    = '0;
@@ -999,7 +1065,18 @@ module kv32_soc #(
 
             // PMA configuration
             .pma_cfg_i (pma_cfg),
-            .pma_addr_i(pma_addr)
+            .pma_addr_i(pma_addr),
+
+            // Cache diagnostics
+            .cap_o      (core_dcap),
+            .diag_req_i (core_cdiag_req && core_cdiag_sel),
+            .diag_way_i (core_cdiag_way),
+            .diag_set_i (core_cdiag_set),
+            .diag_word_i(core_cdiag_word),
+            .diag_valid_o(dcache_diag_valid),
+            .diag_dirty_o(dcache_diag_dirty),
+            .diag_tag_o  (dcache_diag_tag),
+            .diag_data_o (dcache_diag_data)
 
 `ifndef SYNTHESIS
             ,.perf_req_cnt    (dcache_perf_req_cnt)
@@ -1085,6 +1162,11 @@ module kv32_soc #(
         // No dcache: CMO ack immediately
         assign core_dcache_cmo_ready = 1'b1;
         assign dcache_idle           = 1'b1;
+        assign core_dcap             = 32'd0;
+        assign dcache_diag_valid     = 1'b0;
+        assign dcache_diag_dirty     = 1'b0;
+        assign dcache_diag_tag       = 32'd0;
+        assign dcache_diag_data      = 32'd0;
 
 `ifndef SYNTHESIS
         assign dcache_perf_req_cnt    = '0;

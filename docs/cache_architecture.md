@@ -17,9 +17,36 @@ The KV32 SoC integrates two configurable caches:
 
 Both caches share the same foundational architecture: set-associative with configurable size, line size and ways; SRAM macros for tag and data; round-robin replacement; critical-word-first AXI4 WRAP burst fills; and an 8-region runtime-configurable PMA checker.
 
+Both caches also expose a KV32-specific diagnostic CSR interface for geometry discovery and read-only inspection of cache tags and line data.
+
 ---
 
 ## Part I — Instruction Cache (kv32_icache)
+
+### Diagnostic CSR Interface
+
+The I-cache participates in the shared KV32 cache-diagnostic CSR block:
+
+| CSR | Address | Description |
+|-----|---------|-------------|
+| `ICAP` | `0x7D0` | Capability word: `[31:24]=ways [23:16]=sets [15:8]=words/line [7:0]=tag_bits` |
+| `CDIAG_CMD` | `0x7D2` | Issue a diagnostic read with `cache_select=0` |
+| `CDIAG_TAG` | `0x7D3` | Returns `[30]=valid`, `[20:0]=tag` |
+| `CDIAG_DATA` | `0x7D4` | Returns one 32-bit data word |
+
+The command format is:
+
+```
+31            24 23            16 15             8 7            0
+┌─┬────────────┬────────────────┬────────────────┬────────────────┐
+│S│ WAY        │ SET            │ WORD           │   reserved     │
+└─┴────────────┴────────────────┴────────────────┴────────────────┘
+```
+
+- `S=0` selects the I-cache
+- `WAY`, `SET`, and `WORD` choose the inspected array entry
+
+After software writes `CDIAG_CMD`, the cache captures the selected entry on the next cycle. Firmware should leave two instruction slots before reading `CDIAG_TAG` or `CDIAG_DATA`; the SDK helpers in `kv_cache.h` provide that timing.
 
 ### Configuration Parameters
 
@@ -242,6 +269,19 @@ Generated for simulation only (`\`ifndef SYNTHESIS`):
 ---
 
 ## Part II — Data Cache (kv32_dcache)
+
+### Diagnostic CSR Interface
+
+The D-cache shares the same diagnostic command path but uses `cache_select=1`:
+
+| CSR | Address | Description |
+|-----|---------|-------------|
+| `DCAP` | `0x7D1` | Capability word: `[31:24]=ways [23:16]=sets [15:8]=words/line [7:0]=tag_bits` |
+| `CDIAG_CMD` | `0x7D2` | Issue a diagnostic read with `cache_select=1` |
+| `CDIAG_TAG` | `0x7D3` | Returns `[31]=dirty`, `[30]=valid`, `[20:0]=tag` |
+| `CDIAG_DATA` | `0x7D4` | Returns one 32-bit data word |
+
+Diagnostic reads are non-destructive: they inspect the current tag/data arrays without allocating, evicting, cleaning, or invalidating lines. This makes them suitable for cache bring-up tests such as `sw/cache_diag` and for debugging line state after software workloads.
 
 ### Configuration Parameters
 

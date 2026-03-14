@@ -443,6 +443,11 @@ static void dump_instruction_trace(
             case 0x7cb: csr_name = "pmaaddr7"; break;
             case 0x7cc: csr_name = "sguard_base"; break;
             case 0x7cd: csr_name = "spmin"; break;
+            case 0x7d0: csr_name = "icap"; break;
+            case 0x7d1: csr_name = "dcap"; break;
+            case 0x7d2: csr_name = "cdiag_cmd"; break;
+            case 0x7d3: csr_name = "cdiag_tag"; break;
+            case 0x7d4: csr_name = "cdiag_data"; break;
             default: csr_name = "unknown"; break;
             }
             uint32_t csr_result = csr_rdata;

@@ -126,6 +126,19 @@ module kv32_core #(
     output logic [1:0][31:0] pma_cfg_o,    // pmacfg0, pmacfg1
     output logic [7:0][31:0] pma_addr_o,   // pmaaddr0-7
 
+    // Cache-diagnostic CSR sideband interface
+    input  logic [31:0] icap_i,
+    input  logic [31:0] dcap_i,
+    input  logic [20:0] cdiag_tag_i,
+    input  logic        cdiag_dirty_i,
+    input  logic        cdiag_valid_i,
+    input  logic [31:0] cdiag_data_i,
+    output logic        cdiag_req_o,
+    output logic        cdiag_sel_o,
+    output logic [1:0]  cdiag_way_o,
+    output logic [5:0]  cdiag_set_o,
+    output logic [3:0]  cdiag_word_o,
+
     // Debug Interface
     input  logic        dbg_halt_req_i,      // Debug halt request
     output logic        dbg_halted_o,        // CPU is halted
@@ -3264,7 +3277,20 @@ module kv32_core #(
         // Stack guard / SP watermark
         .sguard_base_o(sguard_base),
         .sp_we_i(sp_we_csr),
-        .sp_wdata_i(sp_wdata_csr)
+        .sp_wdata_i(sp_wdata_csr),
+
+        // Cache diagnostics
+        .icap_i(icap_i),
+        .dcap_i(dcap_i),
+        .cdiag_tag_i(cdiag_tag_i),
+        .cdiag_dirty_i(cdiag_dirty_i),
+        .cdiag_valid_i(cdiag_valid_i),
+        .cdiag_data_i(cdiag_data_i),
+        .cdiag_req_o(cdiag_req_o),
+        .cdiag_sel_o(cdiag_sel_o),
+        .cdiag_way_o(cdiag_way_o),
+        .cdiag_set_o(cdiag_set_o),
+        .cdiag_word_o(cdiag_word_o)
 
         // PMA CSR outputs
         ,.pma_cfg_o  (pma_cfg_o)

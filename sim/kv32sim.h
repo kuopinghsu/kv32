@@ -131,6 +131,11 @@ struct Elf32_Sym {
 #define CSR_PMAADDR7  0x7CB  // physaddr>>2 for PMA region 7
 #define CSR_SGUARD_BASE 0x7CC
 #define CSR_SPMIN       0x7CD
+#define CSR_ICAP        0x7D0
+#define CSR_DCAP        0x7D1
+#define CSR_CDIAG_CMD   0x7D2
+#define CSR_CDIAG_TAG   0x7D3
+#define CSR_CDIAG_DATA  0x7D4
 
 // Exception/Interrupt codes
 #define CAUSE_MISALIGNED_FETCH    0
@@ -251,6 +256,7 @@ public:
     uint32_t csr_pmaaddr[8];  // pmaaddr0-7
     uint32_t csr_sguard_base;
     uint32_t csr_spmin;
+    uint32_t csr_cdiag_cmd;
 
     // Exception handling
     bool exception_occurred;

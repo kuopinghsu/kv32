@@ -120,7 +120,18 @@ module kv32_dcache #(
     // pmaaddr: physaddr >> 2, NAPOT-encoded (same as RISC-V PMP convention)
     // Fallback when no region matches: legacy bit[31]=1 rule
     input  logic [1:0][31:0] pma_cfg_i,    // pmacfg0 (regions 0-3), pmacfg1 (regions 4-7)
-    input  logic [7:0][31:0] pma_addr_i    // pmaaddr0-7
+    input  logic [7:0][31:0] pma_addr_i,
+
+    // Cache diagnostic interface (CSR_CDIAG_*)
+    output logic [31:0] cap_o,
+    input  logic        diag_req_i,
+    input  logic [1:0]  diag_way_i,
+    input  logic [5:0]  diag_set_i,
+    input  logic [3:0]  diag_word_i,
+    output logic        diag_valid_o,
+    output logic        diag_dirty_o,
+    output logic [31:0] diag_tag_o,
+    output logic [31:0] diag_data_o
 
 `ifndef SYNTHESIS
     ,
@@ -145,6 +156,8 @@ module kv32_dcache #(
     localparam int INDEX_BITS       = $clog2(NUM_SETS);
     localparam int TAG_BITS         = 32 - INDEX_BITS - BYTE_OFFSET_BITS;
     localparam int WAY_BITS         = (DCACHE_WAYS > 1) ? $clog2(DCACHE_WAYS) : 1;
+
+    assign cap_o = {8'(DCACHE_WAYS), 8'(NUM_SETS), 8'(WORDS_PER_LINE), 8'(TAG_BITS)};
 
     // AXI burst types
     localparam logic [1:0] AXI_BURST_INCR = 2'b01;
@@ -698,6 +711,27 @@ module kv32_dcache #(
     end
 
     // =========================================================================
+    // Cache diagnostic capture
+    // =========================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            diag_req_d  <= 1'b0;
+            diag_way_d  <= '0;
+            diag_tag_r  <= '0;
+            diag_data_r <= '0;
+        end else begin
+            diag_req_d <= diag_req_i;
+            if (diag_req_i) begin
+                diag_way_d <= diag_way_sel;
+            end
+            if (diag_req_d) begin
+                diag_tag_r  <= tag_sram_rdata[diag_way_d];
+                diag_data_r <= data_sram_rdata[diag_way_d];
+            end
+        end
+    end
+
+    // =========================================================================
     // Fill/eviction tracking registers
     // =========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
@@ -973,17 +1007,41 @@ module kv32_dcache #(
     logic [INDEX_BITS-1:0] sram_read_index;
     logic [WORD_OFFSET_BITS-1:0] sram_read_word_off;
 
+    logic [WAY_BITS-1:0]         diag_way_sel;
+    logic [INDEX_BITS-1:0]       diag_set_sel;
+    logic [WORD_OFFSET_BITS-1:0] diag_word_sel;
+    logic                        diag_req_d;
+    logic [WAY_BITS-1:0]         diag_way_d;
+    logic [TAG_BITS-1:0]         diag_tag_r;
+    logic [31:0]                 diag_data_r;
+
+    assign diag_way_sel  = WAY_BITS'(diag_way_i[WAY_BITS-1:0]);
+    assign diag_set_sel  = INDEX_BITS'(diag_set_i[INDEX_BITS-1:0]);
+    assign diag_word_sel = WORD_OFFSET_BITS'(diag_word_i[WORD_OFFSET_BITS-1:0]);
+    assign diag_valid_o  = valid_array[diag_way_sel][diag_set_sel];
+    assign diag_dirty_o  = dirty_array[diag_way_sel][diag_set_sel];
+    assign diag_tag_o    = {{(32-TAG_BITS){1'b0}}, diag_tag_r};
+    assign diag_data_o   = diag_data_r;
+`ifndef SYNTHESIS
+    // Keep Verilator lint clean when configured widths use fewer command bits.
+    logic _unused_diag_bits;
+    assign _unused_diag_bits = &{1'b0, diag_way_i[1], diag_word_i[3]};
+`endif
+
     assign sram_read_en = (state == S_IDLE && core_req_valid && !cmo_valid_i) ||
                           (state == S_IDLE && cmo_valid_i) ||
-                          (state == S_CMO_SCAN);
+                          (state == S_CMO_SCAN) ||
+                          diag_req_i;
 
-    assign sram_read_index = (state == S_IDLE && cmo_valid_i)
-        ? cmo_addr_i[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS]
-        : (state == S_CMO_SCAN)
-          ? cmo_scan_set
-          : new_req_index;
+        assign sram_read_index = (state == S_IDLE && cmo_valid_i)
+                ? cmo_addr_i[BYTE_OFFSET_BITS + INDEX_BITS - 1 : BYTE_OFFSET_BITS]
+                : diag_req_i
+                    ? diag_set_sel
+                : (state == S_CMO_SCAN)
+                    ? cmo_scan_set
+                    : new_req_index;
 
-    assign sram_read_word_off = new_req_word_off;
+        assign sram_read_word_off = diag_req_i ? diag_word_sel : new_req_word_off;
 
     // Fill write: write received AXI R beat into data SRAM
     logic data_fill_we;

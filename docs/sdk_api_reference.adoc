@@ -87,6 +87,10 @@ Portability:: Works with both RTL simulation and software simulators (kv32sim, S
 | CSR Access
 | Control and Status Register read/write functions
 
+| `kv_cache.h`
+| Cache Control
+| FENCE/CMO helpers plus custom cache-diagnostic CSR helpers and cache dump APIs
+
 | `kv_dma.h`
 | DMA Controller
 | DMA controller driver (channel management, 1D/2D/3D/SG transfers, IRQ, performance)
@@ -228,6 +232,14 @@ Include this header in any file that reads capability registers:
 | Timer
 | `[31:16]` VERSION, `[15:8]` NUM_CHANNELS, `[7:0]` COUNTER_WIDTH
 | `0x00010420` (v0.0001, 4 ch, 32-bit)
+
+| I-Cache Diagnostic CSR (`ICAP`)
+| `[31:24]` WAYS, `[23:16]` SETS, `[15:8]` WORDS_PER_LINE, `[7:0]` TAG_BITS
+| `0x02400815` (2 ways, 64 sets, 8 words/line, 21-bit tag)
+
+| D-Cache Diagnostic CSR (`DCAP`)
+| `[31:24]` WAYS, `[23:16]` SETS, `[15:8]` WORDS_PER_LINE, `[7:0]` TAG_BITS
+| `0x02400815` (2 ways, 64 sets, 8 words/line, 21-bit tag)
 |===
 
 === Constants
@@ -270,6 +282,10 @@ Include this header in any file that reads capability registers:
 #define KV_CAP_TIMER_NUM_CHANNELS   4u
 #define KV_CAP_TIMER_COUNTER_WIDTH  32u
 #define KV_CAP_TIMER_VALUE          0x00010420u
+
+/* Cache diagnostic capability CSRs */
+#define KV_CAP_ICAP_VALUE           0x02400815u
+#define KV_CAP_DCAP_VALUE           0x02400815u
 ----
 
 '''
@@ -3409,6 +3425,10 @@ Use this section when evaluating portability to other RISC-V implementations.
 | KV32-specific (non-standard)
 | Runtime PMA region programming API in `kv_pma.h`. Not part of standard privileged CSR map.
 
+| Cache-diagnostic custom CSRs (`icap`, `dcap`, `cdiag_*` at `0x7D0-0x7D4`)
+| KV32-specific (non-standard)
+| Cache geometry discovery and read-only cache inspection via `kv_cache.h` helpers (`kv_cdiag_tag`, `kv_cdiag_data`, `kv_cache_dump`).
+
 | Stack-guard custom CSRs (`sguard_base`, `spmin` at `0x7CC-0x7CD`)
 | KV32-specific (non-standard)
 | Hardware stack bound and low-water tracking exposed via `csr.h` (`read_csr_sguard_base`, `read_csr_spmin`).
@@ -3440,6 +3460,10 @@ Use this section when evaluating portability to other RISC-V implementations.
 
 `kv_pma.h` exposes PMA control through custom M-mode CSRs in the `0x7C0-0x7CB` range. These CSRs are not part of the standard RISC-V privileged spec and must be abstracted out when porting firmware.
 
+==== Cache-diagnostic CSRs are custom
+
+`kv_cache.h` exposes cache inspection through custom M-mode CSRs `0x7D0-0x7D4` (`ICAP`, `DCAP`, `CDIAG_CMD`, `CDIAG_TAG`, `CDIAG_DATA`). They are intended for bring-up, validation, and diagnostic dumps, and are not part of any standard RISC-V cache-control extension.
+
 ==== Stack-guard CSRs and exception are custom
 
 `csr.h` exposes stack-guard controls through custom M-mode CSRs `0x7CC` (`SGUARD_BASE`) and `0x7CD` (`SPMIN`). KV32 also defines custom exception cause `16` (`KV_EXC_STACK_OVERFLOW`). These are KV32 architectural extensions and are not represented by standard `misa` extension bits.
@@ -3457,7 +3481,8 @@ When porting KV32 firmware to another RISC-V target:
 3. Validate availability of `Zicbom` and `Zifencei` before using cache maintenance helpers.
 4. Treat trap frame layout and handler ABI as platform-specific unless explicitly reproduced.
 5. Re-map all peripheral drivers to target MMIO register maps and interrupt IDs.
-6. Replace or abstract stack-guard controls (`read_csr_sguard_base`, `read_csr_spmin`) and exception cause `16` handling.
+6. Replace or abstract custom cache-diagnostic helpers (`kv_cdiag_tag`, `kv_cdiag_data`, `kv_cache_dump`).
+7. Replace or abstract stack-guard controls (`read_csr_sguard_base`, `read_csr_spmin`) and exception cause `16` handling.
 
 '''
 

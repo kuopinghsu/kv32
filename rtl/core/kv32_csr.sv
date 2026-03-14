@@ -59,6 +59,19 @@ module kv32_csr (
     // Stack guard CSR/state outputs
     output logic [31:0] sguard_base_o,
 
+    // Cache diagnostic capability/data interface
+    input  logic [31:0] icap_i,
+    input  logic [31:0] dcap_i,
+    input  logic [20:0] cdiag_tag_i,
+    input  logic        cdiag_dirty_i,
+    input  logic        cdiag_valid_i,
+    input  logic [31:0] cdiag_data_i,
+    output logic        cdiag_req_o,
+    output logic        cdiag_sel_o,
+    output logic [1:0]  cdiag_way_o,
+    output logic [5:0]  cdiag_set_o,
+    output logic [3:0]  cdiag_word_o,
+
     // SP writeback pulse from WB stage
     input  logic        sp_we_i,
     input  logic [31:0] sp_wdata_i,
@@ -92,9 +105,16 @@ module kv32_csr (
     logic [7:0][31:0] pma_addr_r;  // pmaaddr0-7 (NAPOT/TOR encoded, physaddr >> 2)
     logic [31:0] sguard_base_r;    // stack lower bound; 0 disables checking
     logic [31:0] spmin_r;          // minimum committed SP value observed
+    logic [31:0] cdiag_cmd_r;      // last cache-diag command written by software
+    logic        cdiag_req_r;      // one-cycle diag request pulse to cache SRAMs
     assign pma_cfg_o  = pma_cfg_r;
     assign pma_addr_o = pma_addr_r;
     assign sguard_base_o = sguard_base_r;
+    assign cdiag_req_o  = cdiag_req_r;
+    assign cdiag_sel_o  = cdiag_cmd_r[31];
+    assign cdiag_way_o  = cdiag_cmd_r[25:24];
+    assign cdiag_set_o  = cdiag_cmd_r[21:16];
+    assign cdiag_word_o = cdiag_cmd_r[11:8];
 
     // cycle_csr_src: selects which counter is returned for cycle/time/mcycle reads.
     // In normal operation this is mcycle (actual wall-clock cycles).
@@ -246,6 +266,17 @@ module kv32_csr (
             CSR_PMAADDR7: csr_rdata = pma_addr_r[7];
             CSR_SGUARD_BASE: csr_rdata = sguard_base_r;
             CSR_SPMIN:       csr_rdata = spmin_r;
+            CSR_ICAP:        csr_rdata = icap_i;
+            CSR_DCAP:        csr_rdata = dcap_i;
+`ifndef SYNTHESIS
+            CSR_CDIAG_CMD:   csr_rdata = trace_mode ? 32'd0 : cdiag_cmd_r;
+            CSR_CDIAG_TAG:   csr_rdata = trace_mode ? 32'd0 : {cdiag_dirty_i, cdiag_valid_i, 9'd0, cdiag_tag_i};
+            CSR_CDIAG_DATA:  csr_rdata = trace_mode ? 32'd0 : cdiag_data_i;
+`else
+            CSR_CDIAG_CMD:   csr_rdata = cdiag_cmd_r;
+            CSR_CDIAG_TAG:   csr_rdata = {cdiag_dirty_i, cdiag_valid_i, 9'd0, cdiag_tag_i};
+            CSR_CDIAG_DATA:  csr_rdata = cdiag_data_i;
+`endif
             default: begin
                 csr_rdata   = 32'd0;
                 csr_illegal = (csr_op != 3'b0);
@@ -285,7 +316,12 @@ module kv32_csr (
             pma_addr_r <= '0;
             sguard_base_r <= 32'd0;
             spmin_r <= 32'hFFFF_FFFF;
+            cdiag_cmd_r <= 32'd0;
+            cdiag_req_r <= 1'b0;
         end else begin
+            // cache-diag request is a one-cycle pulse on CSR_CDIAG_CMD writes
+            cdiag_req_r <= 1'b0;
+
             // Cycle counter
             mcycle <= mcycle + 64'd1;
 
@@ -359,6 +395,10 @@ module kv32_csr (
                     CSR_PMAADDR7: if (!pma_cfg_r[1][31]) pma_addr_r[7] <= csr_wdata_final;
                     CSR_SGUARD_BASE: sguard_base_r <= csr_wdata_final;
                     CSR_SPMIN:       spmin_r <= csr_wdata_final;
+                    CSR_CDIAG_CMD: begin
+                        cdiag_cmd_r <= csr_wdata_final;
+                        cdiag_req_r <= 1'b1;
+                    end
                     default: ;
                 endcase
             end

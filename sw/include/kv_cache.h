@@ -175,5 +175,62 @@ static inline void kv_icache_inval_range(void *p, size_t len)
 #endif
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+ * Cache Diagnostic CSRs (custom KV32)
+ * ══════════════════════════════════════════════════════════════════ */
+
+#define KV_CSR_ICAP         0x7D0
+#define KV_CSR_DCAP         0x7D1
+#define KV_CSR_CDIAG_CMD    0x7D2
+#define KV_CSR_CDIAG_TAG    0x7D3
+#define KV_CSR_CDIAG_DATA   0x7D4
+
+#define KV_CAP_WAYS(cap)    (((cap) >> 24) & 0xFFu)
+#define KV_CAP_SETS(cap)    (((cap) >> 16) & 0xFFu)
+#define KV_CAP_WPL(cap)     (((cap) >>  8) & 0xFFu)
+#define KV_CAP_TAGBITS(cap) (((cap)      ) & 0xFFu)
+
+#define KV_CDIAG_CMD_ICACHE  0u
+#define KV_CDIAG_CMD_DCACHE  (1u << 31)
+#define KV_CDIAG_CMD(sel, way, set, word) \
+    ((uint32_t)(sel) | ((uint32_t)(way) << 24) | ((uint32_t)(set) << 16) | ((uint32_t)(word) << 8))
+
+#define KV_CDIAG_DIRTY(t)   (((t) >> 31) & 1u)
+#define KV_CDIAG_VALID(t)   (((t) >> 30) & 1u)
+#define KV_CDIAG_TAG(t)     ((t) & 0x1FFFFFu)
+
+// Two NOPs are required between CSR_CDIAG_CMD write and TAG/DATA reads.
+static inline uint32_t kv_cdiag_tag(uint32_t cmd)
+{
+    uint32_t r;
+    __asm__ volatile (
+        "csrw 0x7D2, %[c]\n"
+        "nop\n"
+        "nop\n"
+        "csrr %[r], 0x7D3\n"
+        : [r] "=r" (r)
+        : [c] "r" (cmd)
+        : "memory");
+    return r;
+}
+
+static inline uint32_t kv_cdiag_data(uint32_t cmd)
+{
+    uint32_t r;
+    __asm__ volatile (
+        "csrw 0x7D2, %[c]\n"
+        "nop\n"
+        "nop\n"
+        "csrr %[r], 0x7D4\n"
+        : [r] "=r" (r)
+        : [c] "r" (cmd)
+        : "memory");
+    return r;
+}
+
+void kv_icache_dump(void);
+void kv_dcache_dump(void);
+void kv_cache_dump(void);
+
 /** @} */
 #endif /* KV_CACHE_H */
