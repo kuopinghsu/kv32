@@ -1,0 +1,210 @@
+extends: default
+
+# ── Extra fonts ───────────────────────────────────────────────────────────────
+# The default theme only bundles Noto Serif and M+ 1mn.
+# We add Noto Sans (also bundled) for headings — clean sans-serif vs serif body
+# gives the contrast characteristic of product-quality technical documents.
+font:
+  catalog:
+    merge: true
+    Noto Sans:
+      normal: GEM_FONTS_DIR/notosans-regular-subset.ttf
+      bold: GEM_FONTS_DIR/notosans-bold-subset.ttf
+      italic: GEM_FONTS_DIR/notosans-italic-subset.ttf
+      bold_italic: GEM_FONTS_DIR/notosans-bold_italic-subset.ttf
+
+# ── Page ──────────────────────────────────────────────────────────────────────
+page:
+  layout: portrait
+  size: A4
+  margin: [20mm, 18mm, 22mm, 20mm]
+
+# ── Base (body text) ──────────────────────────────────────────────────────────
+base:
+  font_color: 1A1A1A
+  font_family: Noto Serif
+  font_size: 10.5
+  line_height_length: 15
+  line_height: $base_line_height_length / $base_font_size
+  text_align: justify
+  border_color: CBD5E1
+
+# ── Headings ──────────────────────────────────────────────────────────────────
+# For article doctype: = Title → title page; == Section → h2; === → h3; etc.
+# Default: h2 ≈ 22pt, h3 ≈ 18pt — far too large for body-level sections.
+# Reduced to a proportional scale consistent with product-spec documents.
+heading:
+  font_family: Noto Sans
+  font_color: 0B2D5C
+  font_style: bold
+  line_height: 1.15
+  margin_top: 14
+  margin_bottom: 5
+  min_height_after: $base_line_height_length * 1.5
+  h1_font_size: 24       # book part titles / article doc title without title-page
+  h2_font_size: 18       # == top-level body sections  (was ~22pt → oversized)
+  h3_font_size: 14       # === subsections
+  h4_font_size: 12       # ==== sub-subsections
+  h5_font_size: 10.5
+  h5_font_style: bold_italic
+  h6_font_size: 10.5
+  h6_font_style: italic
+
+# ── Abstract ──────────────────────────────────────────────────────────────────
+# Fix for "abstract font size too big, not consistent with other sections":
+#   1. abstract.font_size defaults to $role_lead_font_size (~13pt) — body text
+#      looks oversized vs the rest of the document.  Set to base size (10.5pt).
+#   2. abstract.title.text_align defaults to center — visually inconsistent with
+#      all other section headings which are left-aligned.  Set to left.
+#   3. abstract.title.font_size elevated to match h2 (18pt) so the Abstract
+#      heading is indistinguishable in weight from == Overview, == Conclusions.
+abstract:
+  font_size: $base_font_size
+  font_style: italic
+  font_color: 4A5568
+  first_line_font_style: bold_italic
+  line_height: 1.5
+  title:
+    font_family: Noto Sans
+    font_size: 18
+    font_style: bold
+    font_color: 0B2D5C
+    text_align: left
+
+# ── Title page ────────────────────────────────────────────────────────────────
+title_page:
+  text_align: left
+  title:
+    top: 38%
+    font_size: 30
+    font_family: Noto Sans
+    font_color: 0B2D5C
+    font_style: bold
+    line_height: 1.0
+  subtitle:
+    font_size: 16
+    font_style: bold_italic
+    font_color: 3A6BBF
+  authors:
+    margin_top: 20
+    font_size: 11
+    font_color: 1A1A1A
+  revision:
+    margin_top: 8
+    font_size: 9.5
+    font_color: 6B7280
+
+# ── TOC ───────────────────────────────────────────────────────────────────────
+toc:
+  indent: $horizontal_rhythm
+  line_height: 1.5
+  dot_leader:
+    font_color: AAAAAA
+
+# ── Link ──────────────────────────────────────────────────────────────────────
+link:
+  font_color: 1A73E8
+
+# ── Inline code (monospaced spans) ────────────────────────────────────────────
+codespan:
+  font_color: B5302A
+  font_family: M+ 1mn
+
+# ── Code / listing / literal blocks ──────────────────────────────────────────
+code:
+  background_color: F4F6FA
+  border_color: CBD5E1
+  border_radius: 3
+  border_width: 0.5
+  font_family: M+ 1mn
+  font_size: 8.5
+  line_height: 1.4
+  padding: [6, 10, 6, 10]
+
+# ── Tables ────────────────────────────────────────────────────────────────────
+table:
+  font_size: 9.5
+  background_color: FFFFFF
+  border_color: CBD5E1
+  border_width: 0.5
+  grid_width: 0.5
+  cell_padding: [5, 7, 5, 7]
+  head:
+    font_family: Noto Sans
+    font_style: bold
+    font_color: FFFFFF
+    background_color: 0B2D5C
+    border_bottom_width: 0
+  body:
+    stripe_background_color: EDF2FB
+  foot:
+    background_color: E4EBF5
+    font_style: italic
+
+# ── Captions (table/figure titles) ───────────────────────────────────────────
+caption:
+  font_family: Noto Sans
+  font_size: 8.5
+  font_style: italic
+  font_color: 6B7280
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+sidebar:
+  background_color: F8FAFD
+  border_color: C4D2EA
+  border_radius: 3
+  border_width: 0.5
+
+# ── Thematic break ────────────────────────────────────────────────────────────
+thematic_break:
+  border_color: CBD5E1
+  border_width: 0.5
+
+# ── Admonition blocks ─────────────────────────────────────────────────────────
+admonition:
+  column_rule_color: CBD5E1
+  column_rule_width: 0.5
+  padding: [5, 12, 5, 12]
+
+# ── Running header ────────────────────────────────────────────────────────────
+header:
+  height: 16mm
+  font_size: 8.5
+  font_family: Noto Sans
+  font_color: 8899AA
+  line_height: 1
+  vertical_align: middle
+  border_color: CBD5E1
+  border_width: 0.5
+  recto:
+    left:
+      content: '{section-title}'
+    right:
+      content: '{document-title}'
+  verso:
+    left:
+      content: '{document-title}'
+    right:
+      content: '{section-title}'
+
+# ── Running footer ────────────────────────────────────────────────────────────
+footer:
+  height: 14mm
+  font_size: 8.5
+  font_family: Noto Sans
+  font_color: 8899AA
+  line_height: 1
+  vertical_align: top
+  padding: [5, 1, 0, 1]
+  border_color: CBD5E1
+  border_width: 0.5
+  recto:
+    left:
+      content: 'KV32 Architecture · Rev {revnumber} · {revdate}'
+    right:
+      content: '{page-number} / {page-count}'
+  verso:
+    left:
+      content: 'KV32 Architecture · Rev {revnumber} · {revdate}'
+    right:
+      content: '{page-number} / {page-count}'
