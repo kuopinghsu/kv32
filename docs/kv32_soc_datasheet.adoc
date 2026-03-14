@@ -43,7 +43,7 @@ The RV32IMAC SoC is a complete embedded processor system implementing the RISC-V
 |RV32IMAC_Zicsr_Zifencei with KV32-specific cache-management and PMA extensions
 
 |Pipeline
-|5-stage in-order (Fetch, Decode, Execute, Memory, Writeback)
+|5-stage in-order (Fetch, Decode, Execute, Memory, Writeback) with ID-stage branch prediction (BTB+BHT) and Return Address Stack (RAS)
 
 |Instruction Cache
 |Configurable size (default 4KB), 2-way set-associative, 32B line; WRAP burst fill; PMA X-bit control
@@ -229,7 +229,7 @@ The core supports:
 
 * Data forwarding to resolve RAW hazards
 * Pipeline stalls for load-use dependencies
-* Branch prediction (static not-taken)
+* Dynamic branch prediction: ID-stage BTB+BHT with optional RAS-assisted return prediction
 * Configurable multiply/divide (fast combinatorial or slow serial)
 * Instruction buffer (IB_DEPTH=4) for outstanding instruction fetches
 * Store buffer (SB_DEPTH=2) for non-blocking stores
@@ -505,11 +505,39 @@ The store buffer allows stores to complete asynchronously:
 * **Purpose**: Buffer store requests so pipeline doesn't stall on store completion
 * **Ordering**: Maintains program order for stores
 
+==== Branch Prediction and Return Address Stack
+
+The core implements configurable branch prediction in the ID stage:
+
+* **BTB (Branch Target Buffer)**: Direct-mapped target cache with metadata (`is_uncond`, `is_return`)
+* **BHT (Branch History Table)**: 2-bit saturating counters for conditional direction prediction
+* **RAS (Return Address Stack)**: Optional return-target predictor for JALR return flows
+
+Prediction and correction behavior:
+
+* **Prediction stage**: ID stage (`pc_id`) to avoid RVC halfword-alignment ambiguity at IF fetch-word granularity
+* **Early redirect**: `bp_if_flush` redirects IF using predicted target
+* **EX validation**: EX compares predicted-vs-actual outcome/target (`bp_correct`)
+* **Recovery**: `need_redirect` flushes IF/ID and redirects on misprediction or unpredicted taken branches
+
+Configuration parameters:
+
+[cols="1,2,3"]
+|===
+|Parameter |Default |Description
+
+|BP_EN |1 |Enable branch prediction logic
+|BTB_SIZE |32 |BTB entry count (direct-mapped)
+|BHT_SIZE |64 |BHT entry count (2-bit counters)
+|RAS_EN |1 |Enable return address stack
+|RAS_DEPTH |8 |RAS stack depth
+|===
+
 ==== Forwarding and Hazards
 
 * **Data Forwarding**: EX→EX, MEM→EX, WB→EX paths resolve RAW hazards
 * **Load-Use Stall**: Pipeline stalls 1 cycle when load result is immediately used
-* **Branch Prediction**: Static not-taken; 2-cycle penalty on taken branches (flush IF and ID stages)
+* **Branch Prediction**: ID-stage BTB+BHT (+ optional RAS). Correctly predicted taken branches typically incur ~1 lost slot; misprediction/unpredicted taken redirects flush IF/ID.
 * **Structural Hazards**: Single memory port shared between I-fetch and D-access via arbiter
 
 === Performance Characteristics
@@ -533,8 +561,11 @@ Typical performance metrics (workload-dependent):
 |D-Cache Hit Latency
 |1 cycle (registered output from SRAM)
 
+|Correctly Predicted Taken Branch Penalty
+|~1 slot (ID-stage redirect model, workload/pipeline-state dependent)
+
 |Branch Misprediction Penalty
-|2 cycles (flush IF and ID stages)
+|2 cycles (IF/ID flush and redirect on correction path)
 
 |Load-Use Penalty
 |1 cycle stall

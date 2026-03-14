@@ -215,7 +215,7 @@
      text-anchor="middle"
      font-size="9"
      fill="#1D4ED8"
-     id="text10">Decode / RF Read</text>
+     id="text10">Decode / BP / RF Read</text>
   <!-- ID→EX arrow -->
   <line
      x1="111"
@@ -355,14 +355,21 @@
      id="text20">Fwd: EX/MEM→EX</text>
   <text
      x="111"
-     y="416"
+     y="413"
      text-anchor="middle"
      font-size="9"
      fill="#4B5563"
-     id="text21">Branch: static not-taken</text>
+     id="text21">BP: BTB+BHT+RAS (ID-stage)</text>
   <text
      x="111"
-     y="432"
+     y="425"
+     text-anchor="middle"
+     font-size="8"
+     fill="#6B7280"
+     id="text21b">BP_EN=1·BTB=32·BHT=64·RAS=8</text>
+  <text
+     x="111"
+     y="438"
      text-anchor="middle"
      font-size="9"
      fill="#4B5563"
