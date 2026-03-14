@@ -1,23 +1,24 @@
 = KV32 Cache Hierarchy Benchmark Report
 KV32 Architecture Team
-:doctype: article
+:doctype: book
 :revnumber: 1.0
-:revdate: 2026-03-12
+:revdate: 2026-03-14
 :revremark: Initial Release
 :description: KV32 RISC-V processor — comprehensive I-cache / D-cache benchmark technical guide
-:toc: macro
+:toc: left
 :toc-title: Table of Contents
-:toclevels: 3
+:toclevels: 4
 :sectnums:
+:sectnumlevels: 4
 :sectanchors:
 :icons: font
+:source-highlighter: rouge
 :imagesdir: images
 :chart-on-error: log
-:pdf-page-size: A4
 :title-page:
 
 [abstract]
-== Abstract
+--
 
 This report presents a comprehensive benchmarking study of the I-cache and
 D-cache hierarchy of the KV32 RV32IMAC in-order processor.  Thirteen cache
@@ -29,6 +30,7 @@ no-cache penalty on DDR4 and provides the best balance of performance, silicon
 area, and workload generality.  Configurations below 4K+4K are not
 recommended; configurations above 8K+8K yield diminishing returns for most
 embedded workloads.
+--
 
 [%autowidth,stripes=even]
 |===
@@ -36,9 +38,7 @@ embedded workloads.
 | 1.0      | 2026-03-12 | KV32 Architecture Team | Initial release — 234-run full sweep, 13 configurations, 3 memory back-ends
 |===
 
-toc::[]
-
-== Overview
+== Introduction
 
 The KV32 is a 32-bit in-order RISC-V (RV32IMAC) processor with a 5-stage
 pipeline.  Being in-order, every instruction cache miss causes the fetch stage
@@ -388,7 +388,7 @@ catastrophic: CPI reaches 16-19x because every instruction fetch and every
 load/store must pay the full DDR row-access penalty.  At these CPI values,
 the processor is stalled for more than 90% of all cycles.
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "title": "No-Cache CPI by Memory Back-End",
@@ -471,7 +471,7 @@ This non-linearity is the knee-of-the-curve effect: the most commonly
 reused cache lines already fit in 4 KB; larger caches capture only
 infrequently reused long-tail lines.
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -543,7 +543,7 @@ baseline.
 | IC-16K+DC-16K  | 1.48 |     1.53 | 1.20 |       1.32 |    1.30 |    1.36
 |===
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -855,7 +855,7 @@ regime.  At 99%+ hit rates, the few remaining misses that reach DRAM are rare
 enough that the difference in raw bandwidth between 1600 and 3200 makes no
 measurable difference at the 2-decimal CPI granularity.
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -906,7 +906,7 @@ expressed as the ratio of the no-cache DDR4 CPI to the IC-8K+DC-8K DDR4 CPI.
 | DDR4-3200     |  9.61 |    10.15 | 9.08 |       9.03 |    8.71 |   10.01
 |===
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -978,7 +978,7 @@ much performance is left on the table.
 | IC-16K+DC-16K  | 40.4% |    35.2% | 49.0% |      40.3% |   38.2% |   39.8%
 |===
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1060,7 +1060,7 @@ benefit dominates for data-intensive or linked-structure workloads
 larger than either single-sided benefit, confirming the complementary nature
 of the two caches.
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1104,7 +1104,7 @@ With a fixed 12 KB total cache budget, which split is better?
 | IC-4K+DC-8K      | 1.690 |    1.570 | 2.030 |      1.700 |   1.620 |   1.660
 |===
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1163,7 +1163,7 @@ With a 24 KB total cache budget the two natural splits are IC-16K+DC-8K
 | IC-8K+DC-16K     | 1.680 |    1.550 | 1.960 |      1.670 |   1.620 |   1.660
 |===
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1225,7 +1225,7 @@ cache level.
 | 8K+8K to 16K+16K| 0.010 |    0.010 | 0.010 |      0.030 |   0.000 |   0.000
 |===
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1290,7 +1290,7 @@ of total cache: (Speedup over no-cache) / (total KB).
 | IC-16K+DC-16K  | 0.046 |    0.048 | 0.037 |      0.041 |   0.041 |   0.042
 |===
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1366,7 +1366,7 @@ KV32 workloads.
 | IC-16K+DC-16K |      1.620 |      1.620 |      1.660 |      1.660
 |===
 
-[vegalite, format=svg, pdfwidth=100%]
+[vegalite, format=svg, align=center, pdfwidth=100%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1456,7 +1456,7 @@ On DDR4-1600, `rtos` at IC-4K+DC-4K improves by 5.3% with 4-way (2.260 →
 miss penalty because each resolved conflict miss at DDR4 latency saves more
 cycles.
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1505,7 +1505,7 @@ small:
 | mibench    | 99.77% | 99.78% | 92.38% | 92.44%
 |===
 
-[vegalite, format=svg, pdfwidth=90%]
+[vegalite, format=svg, align=center, pdfwidth=90%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1616,7 +1616,7 @@ area constraints.
 
 === Average CPI by Config (SRAM, 6-Benchmark Geomean)
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1691,7 +1691,7 @@ DDR4 relative to SRAM for the same IC-8K+DC-8K configuration.
 | DDR4-3200 overhead | +8.3% | +6.5% | +4.1% | +15.9% | +11.1% | +6.6%
 |===
 
-[vegalite, format=svg, pdfwidth=60%]
+[vegalite, format=svg, align=center, pdfwidth=60%]
 ----
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
@@ -1741,6 +1741,161 @@ DRAM infrequently enough that the bandwidth difference between 1600 and 3200
 mt/s creates no measurable benefit.  System designers can choose DDR4-1600
 without a performance penalty for these workloads when caches are sized at
 IC-8K+DC-8K or larger.
+
+== Branch Prediction and RAS Sizing (IC-8K+DC-8K Baseline)
+
+The cache sweep above recommends IC-8K+DC-8K (2-way) as the default cache
+configuration.  To size the control-flow predictor structures on top of this
+cache point, a dedicated predictor sweep was added in
+`scripts/cache_benchmark_v2.sh` (`MODE=predictor`).
+
+=== Methodology
+
+* Cache fixed at IC-8K+DC-8K, 2-way, 32-byte lines
+* Memory back-ends: SRAM, DDR4-1600, DDR4-3200
+* Synthetic microbenchmarks:
+** `btbbench`: many static branch sites to stress BTB capacity/conflicts
+** `bhtbench`: mixed branch-direction patterns to stress BHT aliasing
+** `rasbench`: deep nested call/return chains to stress RAS depth
+* Quick sizing matrix used for this report update:
+** BTB: 16, 32, 64 entries
+** BHT: 32, 64, 128 entries
+** RAS: 4, 8, 16 entries
+** Baseline comparison against predictor-off (`BP_EN=0`, `RAS_EN=0`)
+* RTL branch-predictor performance counters (added to simulation output)
+  captured per run: conditional branches retired, unconditional jumps,
+  taken predictions issued, misprediction redirects, and RAS push/pop counts.
+
+Dataset source: `build/cache_bench_v2/predictor_results.csv` (99 runs + header).
+
+=== Predictor-On Benefit
+
+Average CPI and misprediction rate across all predictor microbenchmarks and
+all three memory models (memory has negligible effect on predictor sensitivity
+at this cache configuration):
+
+[cols="3,1,1,1",options="header",stripes=even]
+|===
+| Configuration | Avg CPI | Mispreds / run (avg) | Accuracy
+| Predictor OFF (`BP_EN=0`) | 1.5967 | — | —
+| Predictor ON (`BTB=32,BHT=64,RAS=8`) | 1.5111 | 118,926 | 48.82%
+|===
+
+Net CPI reduction from predictor: *(1.5967 − 1.5111) / 1.5967 = **5.36%**.*
+
+Per-benchmark detail (averaged across all three memory types, BTB=32/BHT=64/RAS=8):
+
+[cols="2,1,1,1,1",options="header",stripes=even]
+|===
+| Benchmark | BP-off CPI | BP-on CPI | Mispreds / run | Accuracy
+| `btbbench` | 1.6600 | 1.5867 | 128,722 | 37.88%
+| `bhtbench` | 1.6300 | 1.5700 | 195,553 | 31.30%
+| `rasbench` | 1.5000 | 1.3767 | 32,502 | 77.27%
+|===
+
+`rasbench` shows both the largest absolute CPI gain (−8.2%) and the highest
+prediction accuracy (77%), because its call/return pattern is highly regular.
+`bhtbench` has the lowest accuracy (31%) due to its periodic aliasing patterns
+deliberately designed to stress the 2-bit counter table.
+
+=== BTB Size Impact
+
+[cols="2,1,1,1",options="header",stripes=even]
+|===
+| BTB size (entries) | Avg CPI | Mispreds / run | Accuracy
+| 16 | 1.5233 | 128,042 | 44.28%
+| 32 | 1.5111 | 118,926 | 48.82%
+| 64 | 1.5056 | 111,391 | 51.59%
+|===
+
+Observations:
+
+* BTB 16 → 32: main step gain in both CPI (−0.80%) and accuracy (+4.5 pp)
+* BTB 32 → 64: further improvement (−0.36% CPI, +2.8 pp accuracy) with
+  diminishing returns
+
+Per-benchmark at BTB=64 (the highest measured point):
+
+[cols="2,1,1",options="header",stripes=even]
+|===
+| Benchmark | Mispreds / run | Accuracy
+| `btbbench` | 126,075 | 39.16%
+| `bhtbench` | 175,625 | 38.31%
+| `rasbench` | 32,472 | 77.29%
+|===
+
+BTB improvement is most visible in `bhtbench` (−10% fewer mispredictions at
+BTB=64 vs BTB=16) and `btbbench` (−3% fewer), while `rasbench` is nearly
+BTB-insensitive because its mispredictions are dominated by RAS depth, not
+BTB capacity.
+
+=== BHT Size Impact
+
+[cols="2,1,1,1",options="header",stripes=even]
+|===
+| BHT size (entries) | Avg CPI | Mispreds / run | Accuracy
+| 32 | 1.5111 | 118,926 | 48.82%
+| 64 | 1.5111 | 118,926 | 48.82%
+| 128 | 1.5111 | 118,925 | 48.82%
+|===
+
+BHT size has zero measurable impact across this workload set.  The synthetic
+branch patterns in `bhtbench` are designed to alias regardless of table size
+(all patterns repeat on periods of 2–8), so increasing entries does not help.
+The BHT default of 64 entries remains a reasonable choice for non-synthetic
+workloads with more diverse branch history.
+
+=== RAS Depth Impact
+
+[cols="2,1,1,1",options="header",stripes=even]
+|===
+| RAS depth | Avg CPI | Mispreds / run | Accuracy
+| 4 | 1.5022 | 114,128 | 52.17%
+| 8 | 1.5111 | 118,926 | 48.82%
+| 16 | 1.4922 | 109,334 | 55.52%
+|===
+
+The RAS effect is almost entirely concentrated in `rasbench`:
+
+[cols="2,1,1,1",options="header",stripes=even]
+|===
+| RAS depth | `rasbench` CPI | `rasbench` mispreds | `rasbench` accuracy
+| 4 | 1.3500 | 18,110 | 87.34%
+| 8 | 1.3767 | 32,502 | 77.27%
+| 16 | 1.3200 | 3,727 | 97.39%
+|===
+
+At RAS depth 4 the stack is barely deep enough to cover short call chains,
+giving good accuracy but not covering longer chains.  Depth 8 has _more_
+mispredictions than depth 4 because the stack fills and overflows on the
+24-deep recursion, producing incorrect predictions that were not even attempted
+at depth 4.  Depth 16 covers the full recursion and achieves 97.4% accuracy
+with only 3,727 mispredictions — an 88.5% reduction versus depth 8 — and a
+4.1% improvement in `rasbench` CPI (1.3200 vs 1.3767).  `btbbench` and
+`bhtbench` are RAS-insensitive as expected.
+
+=== Recommendation: BTB/BHT/RAS Sizes
+
+For the IC-8K+DC-8K default cache point:
+
+* `BP_EN=1`
+* `BTB_SIZE=64`
+* `BHT_SIZE=64`
+* `RAS_DEPTH=16`
+
+Rationale:
+
+* BTB 64 captures the full accuracy gain over BTB 32 (+2.8 pp, 51.6% vs
+  48.8%) with a −0.36% CPI benefit and low area cost
+  (64 × ~37 bits ≈ 296 bytes).
+* BHT 64 is area-proportionate and matches larger options on every measured
+  workload.
+* RAS 16 cuts return mispredictions by 88.5% vs depth 8 on `rasbench`
+  (97.4% accuracy vs 77.3%), yielding a 4.1% improvement in `rasbench` CPI.
+
+If area is tightly constrained, `BTB_SIZE=32` and `RAS_DEPTH=8` remains a
+reasonable fallback (48.8% accuracy overall, 5.4% CPI improvement over no
+predictor) with limited loss on non-deeply-recursive workloads.
 
 == Conclusions
 

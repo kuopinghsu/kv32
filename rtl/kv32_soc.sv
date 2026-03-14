@@ -192,7 +192,14 @@ module kv32_soc #(
     output logic [31:0] dcache_perf_bypass_cnt,
     output logic [31:0] dcache_perf_fill_cnt,
     output logic [31:0] dcache_perf_evict_cnt,
-    output logic [31:0] dcache_perf_cmo_cnt
+    output logic [31:0] dcache_perf_cmo_cnt,
+    // Branch predictor performance counters (zero when BP_EN=0)
+    output logic [31:0] bp_perf_branch_cnt,
+    output logic [31:0] bp_perf_jump_cnt,
+    output logic [31:0] bp_perf_pred_cnt,
+    output logic [31:0] bp_perf_mispred_cnt,
+    output logic [31:0] bp_perf_ras_push_cnt,
+    output logic [31:0] bp_perf_ras_pop_cnt
 `endif
 );
 
@@ -783,6 +790,12 @@ module kv32_soc #(
         ,.wb_store_data_out(core_wb_store_data)
         ,.wb_store_strb_out(core_wb_store_strb)
         ,.trace_mode(trace_mode)
+        ,.bp_perf_branch_cnt(bp_perf_branch_cnt)
+        ,.bp_perf_jump_cnt(bp_perf_jump_cnt)
+        ,.bp_perf_pred_cnt(bp_perf_pred_cnt)
+        ,.bp_perf_mispred_cnt(bp_perf_mispred_cnt)
+        ,.bp_perf_ras_push_cnt(bp_perf_ras_push_cnt)
+        ,.bp_perf_ras_pop_cnt(bp_perf_ras_pop_cnt)
 `endif
     );
 

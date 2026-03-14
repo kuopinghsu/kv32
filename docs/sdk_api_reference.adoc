@@ -1,26 +1,26 @@
 = KV32 SoC SDK API Reference
 :doctype: book
 :toc: left
-:toclevels: 3
+:toclevels: 4
 :sectnums:
 :sectnumlevels: 4
 :icons: font
 :source-highlighter: rouge
 :imagesdir: .
 :version: 1.0
-:revdate: 2026-02-28
+:revdate: 2026-03-14
 :author: KV32 SoC Project
 :email: kuoping.hsu@gmail.com
 
 [abstract]
-== Abstract
-
+--
 This document provides a comprehensive reference for the KV32 SoC Software Development Kit (SDK).
 It describes the API functions, register definitions, and programming model for all peripherals
 and system components in the KV32 RISC-V System-on-Chip.
 
 The SDK provides a header-only C library optimized for bare-metal embedded applications,
 with zero overhead when functions are not used.
+--
 
 '''
 
@@ -535,7 +535,80 @@ PLIC Source ID:: 2 (KV_PLIC_SRC_SPI)
 | `0x18`
 | IS
 | R/W1C
-| Interrupt Status (`IS[2]` sticky W1C; `IS[1:0]` level)
+| Interrupt Status (same bit map as IE; level-driven)
+|===
+
+=== Register Bit Fields
+
+==== CTRL Register (`0x00`)
+
+[cols="1,2,5"]
+|===
+| Bit(s) | Name | Description
+
+| 0
+| ENABLE
+| Enable SPI controller
+
+| 1
+| CPOL
+| Clock idle polarity
+
+| 2
+| CPHA
+| Clock phase
+
+| 3
+| LOOPBACK
+| Internal MOSI->MISO loopback enable
+
+| 7:4
+| CS[3:0]
+| Chip-select outputs (active-low in hardware; 1 = deasserted, 0 = asserted)
+
+| 31:8
+| Reserved
+| Read as 0, ignore on write
+|===
+
+==== STATUS Register (`0x10`)
+
+[cols="1,2,5"]
+|===
+| Bit | Name | Description
+
+| 0 | BUSY     | Transfer in progress
+| 1 | TX_READY | TX FIFO can accept data (not full)
+| 2 | RX_VALID | RX FIFO has data
+| 3 | TX_EMPTY | TX FIFO empty
+| 4 | RX_FULL  | RX FIFO full
+| 31:5 | Reserved | Read as 0
+|===
+
+==== IE / IS Registers (`0x14` / `0x18`)
+
+[cols="1,2,5"]
+|===
+| Bit | Name | Description
+
+| 0 | RX_READY | RX FIFO not empty interrupt/status
+| 1 | TX_EMPTY | TX FIFO empty interrupt/status
+| 31:2 | Reserved | Read as 0
+|===
+
+==== TX / RX Data Registers (`0x08` / `0x0C`)
+
+[cols="1,2,5"]
+|===
+| Bit(s) | Name | Description
+
+| 7:0
+| DATA
+| Transmit byte (TX) / received byte (RX)
+
+| 31:8
+| Reserved
+| Read as 0, ignore on write
 |===
 
 === SPI Modes
@@ -744,6 +817,62 @@ PLIC Source ID:: 3 (KV_PLIC_SRC_I2C)
 | IS
 | R/W1C
 | Interrupt Status
+|===
+
+=== Register Bit Fields
+
+==== CTRL Register (`0x00`)
+
+[cols="1,2,5"]
+|===
+| Bit(s) | Name | Description
+
+| 0 | ENABLE | Enable I2C controller
+| 1 | START  | Issue START condition
+| 2 | STOP   | Issue STOP condition
+| 3 | READ   | Read byte operation (vs write)
+| 4 | NACK   | Send NACK after received byte
+| 31:5 | Reserved | Read as 0, ignore on write
+|===
+
+==== STATUS Register (`0x10`)
+
+[cols="1,2,5"]
+|===
+| Bit | Name | Description
+
+| 0 | BUSY     | Transfer in progress
+| 1 | TX_READY | TX path can accept new byte
+| 2 | RX_VALID | RX data available
+| 3 | ACK_RECV | Last transmitted byte was ACKed by slave
+| 31:4 | Reserved | Read as 0
+|===
+
+==== IE / IS Registers (`0x14` / `0x18`)
+
+[cols="1,2,5"]
+|===
+| Bit | Name | Description
+
+| 0 | RX_READY  | RX FIFO not empty interrupt/status
+| 1 | TX_EMPTY  | TX FIFO empty interrupt/status
+| 2 | STOP_DONE | STOP condition completed (`IS` bit is sticky and cleared by W1C)
+| 31:3 | Reserved | Read as 0
+|===
+
+==== TX / RX Data Registers (`0x08` / `0x0C`)
+
+[cols="1,2,5"]
+|===
+| Bit(s) | Name | Description
+
+| 7:0
+| DATA
+| Transmit byte (TX) / received byte (RX)
+
+| 31:8
+| Reserved
+| Read as 0, ignore on write
 |===
 
 === API Functions
@@ -1477,6 +1606,66 @@ Register banks are organized per pin-bank (banks 0–3, 32 pins each).
 | CAPABILITY | 0xA0    | RO  | `{VERSION[31:16], NUM_BANKS[15:8], NUM_PINS[7:0]}`
 |===
 
+=== Register Bit-Field Conventions
+
+GPIO uses bit-per-pin registers. For a given bank, bit `n` maps to pin `n`.
+
+[cols="2,1,5"]
+|===
+| Register group | Bit(s) | Meaning
+
+| DATA_OUT
+| 31:0
+| Output value driven on pins configured as outputs
+
+| SET
+| 31:0
+| Write-1-to-set output bits atomically
+
+| CLEAR
+| 31:0
+| Write-1-to-clear output bits atomically
+
+| DATA_IN
+| 31:0
+| Live sampled input pin state
+
+| DIR
+| 31:0
+| Direction control (`1` = output, `0` = input)
+
+| IE
+| 31:0
+| Interrupt enable mask (`1` enables interrupt on corresponding pin)
+
+| TRIGGER
+| 31:0
+| Trigger type (`1` = edge-sensitive, `0` = level-sensitive)
+
+| POLARITY
+| 31:0
+| Edge mode: `1` rising / `0` falling; Level mode: `1` high / `0` low
+
+| IS
+| 31:0
+| Interrupt status (write-1-to-clear)
+
+| LOOPBACK
+| 31:0
+| Internal loopback enable per pin (`1` routes DATA_OUT bit to DATA_IN path)
+|===
+
+==== CAPABILITY Register (`0xA0`)
+
+[cols="1,2,5"]
+|===
+| Bit(s) | Name | Description
+
+| 31:16 | VERSION   | Hardware version
+| 15:8  | NUM_BANKS | Number of GPIO banks
+| 7:0   | NUM_PINS  | Number of implemented pins per bank
+|===
+
 === API Functions
 
 ==== Initialization
@@ -1565,6 +1754,82 @@ The WDT (`axi_wdt.sv`) counts down from a software-configured LOAD value and, on
 Base Address:: `0x2006_0000` (KV_WDT_BASE)
 PLIC Source:: 10 (`KV_PLIC_SRC_WDT`) — IRQ mode only
 Header:: `kv_wdt.h`
+
+=== Register Map
+
+[cols="2,2,2,6"]
+|===
+| Offset | Name | Access | Description
+
+| `0x00`
+| CTRL
+| R/W
+| Control (`EN`, `INTR_EN`)
+
+| `0x04`
+| LOAD
+| R/W
+| Reload value written by software
+
+| `0x08`
+| COUNT
+| RO
+| Current countdown value
+
+| `0x0C`
+| KICK
+| WO
+| Reload COUNT from LOAD (written value ignored)
+
+| `0x10`
+| STATUS
+| R/W1C
+| Status (`WDT_INT`)
+
+| `0x14`
+| CAP
+| RO
+| Capability constant `0x0001_0020` (version 0.1, 32-bit counter)
+|===
+
+=== Register Bit Fields
+
+==== CTRL Register (`0x00`)
+
+[cols="1,2,5"]
+|===
+| Bit(s) | Name | Description
+
+| 0 | EN      | Watchdog enable
+| 1 | INTR_EN | Expiry action: `1` = interrupt, `0` = hardware reset request
+| 31:2 | Reserved | Read as 0, ignore on write
+|===
+
+==== STATUS Register (`0x10`)
+
+[cols="1,2,5"]
+|===
+| Bit(s) | Name | Description
+
+| 0
+| WDT_INT
+| Watchdog expiry interrupt/status (write-1-to-clear)
+
+| 31:1
+| Reserved
+| Read as 0
+|===
+
+==== LOAD / COUNT Registers (`0x04` / `0x08`)
+
+[cols="1,2,5"]
+|===
+| Bit(s) | Name | Description
+
+| 31:0
+| VALUE
+| Countdown reload (LOAD) / live counter value (COUNT)
+|===
 
 === Quick Reference
 
@@ -1682,6 +1947,61 @@ Base Address:: `0x0C00_0000` (KV_PLIC_BASE)
 | Timer channel 3 compare match (`KV_PLIC_SRC_TIMER3`)
 |===
 
+=== Register Map and Bit Fields
+
+[cols="2,2,2,6"]
+|===
+| Offset | Name | Access | Description
+
+| `PRIORITY_OFF + 4*src`
+| PRIORITY[src]
+| R/W
+| Source priority for source `src` (`src` = 1..31)
+
+| `0x001000`
+| PENDING
+| RO
+| Pending bitmap, one bit per source
+
+| `0x002000`
+| ENABLE
+| R/W
+| Enable bitmap for context 0, one bit per source
+
+| `0x200000`
+| THRESHOLD
+| R/W
+| Priority threshold for context 0
+
+| `0x200004`
+| CLAIM/COMPLETE
+| R/W
+| Claim highest-priority pending source (read) / completion source ID (write)
+|===
+
+Key field conventions:
+
+[cols="2,1,5"]
+|===
+| Register | Bit(s) | Meaning
+
+| PRIORITY[src]
+| 3:0
+| Priority value (0 disables source routing)
+
+| PENDING / ENABLE
+| src
+| Source `src` pending/enabled bit (bit 0 is reserved)
+
+| THRESHOLD
+| 3:0
+| Only interrupts with `priority > threshold` are delivered
+
+| CLAIM/COMPLETE
+| 4:0
+| Source ID (0 means no pending interrupt)
+|===
+
 === API Functions
 
 ==== Source Control
@@ -1767,6 +2087,61 @@ Base Address:: `0x0200_0000` (KV_CLINT_BASE)
 * 64-bit free-running timer (`mtime`)
 * 64-bit timer compare register (`mtimecmp`)
 * Machine software interrupt (MSIP)
+
+=== Register Map and Bit Fields
+
+[cols="2,2,2,6"]
+|===
+| Offset | Name | Access | Description
+
+| `0x0000`
+| MSIP
+| R/W
+| Machine software interrupt pending for hart 0
+
+| `0x4000`
+| MTIMECMP_LO
+| R/W
+| Lower 32 bits of 64-bit timer compare value
+
+| `0x4004`
+| MTIMECMP_HI
+| R/W
+| Upper 32 bits of 64-bit timer compare value
+
+| `0xBFF8`
+| MTIME_LO
+| RO
+| Lower 32 bits of free-running 64-bit timer
+
+| `0xBFFC`
+| MTIME_HI
+| RO
+| Upper 32 bits of free-running 64-bit timer
+|===
+
+Field definitions:
+
+[cols="2,1,5"]
+|===
+| Register | Bit(s) | Meaning
+
+| MSIP
+| 0
+| Software interrupt pending (`1` = pending, `0` = clear)
+
+| MSIP
+| 31:1
+| Reserved
+
+| MTIMECMP_LO / MTIME_LO
+| 31:0
+| Lower 32 bits of corresponding 64-bit value
+
+| MTIMECMP_HI / MTIME_HI
+| 31:0
+| Upper 32 bits of corresponding 64-bit value
+|===
 
 === API Functions
 

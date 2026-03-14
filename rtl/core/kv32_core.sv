@@ -154,7 +154,14 @@ module kv32_core #(
     // Trace-compare mode: when asserted, cycle/time CSR reads return minstret
     // instead of mcycle, making them pipeline-stall-independent and identical
     // to what the software simulator returns (see kv32_csr.sv for details).
-    input  logic        trace_mode
+    input  logic        trace_mode,
+    // Branch predictor performance counters (zero when BP_EN=0)
+    output logic [31:0] bp_perf_branch_cnt,    // Conditional branches retired
+    output logic [31:0] bp_perf_jump_cnt,       // Unconditional jumps retired (JAL+JALR)
+    output logic [31:0] bp_perf_pred_cnt,       // Taken predictions issued (bp_if_flush)
+    output logic [31:0] bp_perf_mispred_cnt,    // Misprediction redirects (need_redirect)
+    output logic [31:0] bp_perf_ras_push_cnt,   // RAS pushes (calls)
+    output logic [31:0] bp_perf_ras_pop_cnt     // RAS pops (predicted returns)
 `endif
 );
 `ifndef SYNTHESIS
@@ -3852,6 +3859,44 @@ module kv32_core #(
             end
         end
     end
+
+    // ========================================================================
+    // Branch Predictor Performance Counters (simulation only)
+    // ========================================================================
+    generate
+        if (BP_EN) begin : gen_bp_perf
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    bp_perf_branch_cnt   <= '0;
+                    bp_perf_jump_cnt     <= '0;
+                    bp_perf_pred_cnt     <= '0;
+                    bp_perf_mispred_cnt  <= '0;
+                    bp_perf_ras_push_cnt <= '0;
+                    bp_perf_ras_pop_cnt  <= '0;
+                end else begin
+                    if (bht_update_en)
+                        bp_perf_branch_cnt <= bp_perf_branch_cnt + 1;
+                    if ((jal_ex || jalr_ex) && ex_valid && !ex_flush)
+                        bp_perf_jump_cnt <= bp_perf_jump_cnt + 1;
+                    if (bp_if_flush)
+                        bp_perf_pred_cnt <= bp_perf_pred_cnt + 1;
+                    if (need_redirect)
+                        bp_perf_mispred_cnt <= bp_perf_mispred_cnt + 1;
+                    if (ras_push_en)
+                        bp_perf_ras_push_cnt <= bp_perf_ras_push_cnt + 1;
+                    if (ras_pop_en)
+                        bp_perf_ras_pop_cnt <= bp_perf_ras_pop_cnt + 1;
+                end
+            end
+        end else begin : gen_bp_perf_zero
+            assign bp_perf_branch_cnt   = '0;
+            assign bp_perf_jump_cnt     = '0;
+            assign bp_perf_pred_cnt     = '0;
+            assign bp_perf_mispred_cnt  = '0;
+            assign bp_perf_ras_push_cnt = '0;
+            assign bp_perf_ras_pop_cnt  = '0;
+        end
+    endgenerate
 `endif
 
 endmodule

@@ -18,7 +18,9 @@ ADOC_FLAGS := -a toc \
               -a sectnums \
               -a icons=font \
               -a source-highlighter=rouge \
-              -a pdf-fontsdir=GEM_FONTS_DIR
+              -a pdf-fontsdir=GEM_FONTS_DIR \
+              -a pdf-themesdir=themes \
+              -a pdf-theme=kv32-tech-report
 
 SRCS := $(wildcard *.adoc)
 PDFS := $(SRCS:.adoc=.pdf)

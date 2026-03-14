@@ -97,6 +97,13 @@ module tb_kv32_soc #(
     ,output logic [31:0] dcache_perf_fill_cnt
     ,output logic [31:0] dcache_perf_evict_cnt
     ,output logic [31:0] dcache_perf_cmo_cnt
+    // Branch predictor performance counters (always present but zero when BP_EN=0)
+    ,output logic [31:0] bp_perf_branch_cnt
+    ,output logic [31:0] bp_perf_jump_cnt
+    ,output logic [31:0] bp_perf_pred_cnt
+    ,output logic [31:0] bp_perf_mispred_cnt
+    ,output logic [31:0] bp_perf_ras_push_cnt
+    ,output logic [31:0] bp_perf_ras_pop_cnt
 `endif
 );
 
@@ -263,6 +270,12 @@ module tb_kv32_soc #(
         ,.dcache_perf_fill_cnt  (dcache_perf_fill_cnt)
         ,.dcache_perf_evict_cnt (dcache_perf_evict_cnt)
         ,.dcache_perf_cmo_cnt   (dcache_perf_cmo_cnt)
+        ,.bp_perf_branch_cnt    (bp_perf_branch_cnt)
+        ,.bp_perf_jump_cnt      (bp_perf_jump_cnt)
+        ,.bp_perf_pred_cnt      (bp_perf_pred_cnt)
+        ,.bp_perf_mispred_cnt   (bp_perf_mispred_cnt)
+        ,.bp_perf_ras_push_cnt  (bp_perf_ras_push_cnt)
+        ,.bp_perf_ras_pop_cnt   (bp_perf_ras_pop_cnt)
 `endif
     );
 

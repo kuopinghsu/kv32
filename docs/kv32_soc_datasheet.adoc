@@ -2,10 +2,11 @@
 :doctype: book
 :author: KV32 Development Team
 :revnumber: 1.0
-:revdate: 2026-02-28
+:revdate: 2026-03-14
 :toc: left
 :toclevels: 4
 :sectnums:
+:sectnumlevels: 4
 :icons: font
 :source-highlighter: rouge
 :table-caption: Table
@@ -13,9 +14,10 @@
 :appendix-caption: Appendix
 
 [abstract]
-== Abstract
+--
 
 This document provides comprehensive technical specifications for the RV32IMAC System-on-Chip (SoC), a high-performance 32-bit RISC-V processor platform. The SoC features a 5-stage pipelined RV32IMAC core with separate instruction and data caches, AXI4/AXI4-Lite interconnect, and a rich set of peripherals including UART, SPI, I2C, DMA, GPIO, timer/PWM, and interrupt controller. Runtime-configurable Physical Memory Attributes (PMA) control per-region cacheability for both caches. Designed for embedded applications, the SoC supports both RTL simulation and FPGA implementation.
+--
 
 <<<
 
@@ -3117,7 +3119,7 @@ For questions or support, contact: support@example.com
 <<<
 
 [appendix]
-== Appendix A: Register Quick Reference
+== Register Quick Reference
 
 === CLINT Registers
 
@@ -3478,7 +3480,7 @@ For questions or support, contact: support@example.com
 <<<
 
 [appendix]
-== Appendix B: Interrupt Vector Table
+== Interrupt Vector Table
 
 [cols="1,2,3,2"]
 .Machine-Mode Interrupt Vectors
@@ -3551,7 +3553,7 @@ NOTE: mcause[31]=1 indicates interrupt; mcause[30:0] contains interrupt code.
 <<<
 
 [appendix]
-== Appendix C: Pin Descriptions
+== Pin Descriptions
 
 === Clock and Reset
 
@@ -3815,7 +3817,7 @@ NOTE: I2C requires external pull-up resistors (4.7kΩ typical) on SCL and SDA.
 <<<
 
 [appendix]
-== Appendix D: RISC-V Architectural Extensions and KV32-Specific Features
+== RISC-V Architectural Extensions and KV32-Specific Features
 
 === Scope
 
@@ -4023,7 +4025,7 @@ For software intended to be portable across RISC-V cores, isolate the following 
 <<<
 
 [appendix]
-== Appendix E: Revision History
+== Revision History
 
 [cols="1,2,2,3"]
 |===

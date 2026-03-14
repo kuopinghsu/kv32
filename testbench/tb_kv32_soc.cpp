@@ -993,6 +993,42 @@ int main(int argc, char** argv) {
     }
 #endif
 
+#if BP_EN
+    // Print branch predictor performance statistics
+    {
+        uint64_t branches = (uint64_t)dut->bp_perf_branch_cnt;
+        uint64_t jumps    = (uint64_t)dut->bp_perf_jump_cnt;
+        uint64_t preds    = (uint64_t)dut->bp_perf_pred_cnt;
+        uint64_t mispreds = (uint64_t)dut->bp_perf_mispred_cnt;
+        uint64_t rpushes  = (uint64_t)dut->bp_perf_ras_push_cnt;
+        uint64_t rpops    = (uint64_t)dut->bp_perf_ras_pop_cnt;
+        uint64_t total_cf = branches + jumps;
+        double accuracy   = total_cf ? (100.0 * (total_cf - mispreds) / total_cf) : 0.0;
+        double pred_rate  = total_cf ? (100.0 * preds / total_cf) : 0.0;
+
+        std::cout << std::endl;
+        std::cout << "Branch Predictor Statistics :" << std::endl;
+        std::cout << "  Configuration :              "
+                  << "BP_EN=" << BP_EN
+                  << ", BTB=" << BTB_SIZE << " entries"
+                  << ", BHT=" << BHT_SIZE << " entries"
+#if RAS_EN
+                  << ", RAS=" << RAS_DEPTH << " deep"
+#else
+                  << ", RAS=off"
+#endif
+                  << std::endl;
+        std::cout << "  Conditional branches :       " << branches << std::endl;
+        std::cout << "  Unconditional jumps :        " << jumps    << std::endl;
+        std::cout << "  Taken predictions :          " << preds
+                  << " (" << std::fixed << std::setprecision(2) << pred_rate << "% of CF)" << std::endl;
+        std::cout << "  Mispredictions :             " << mispreds << std::endl;
+        std::cout << "  Prediction accuracy :        " << std::fixed << std::setprecision(2) << accuracy << "%" << std::endl;
+        std::cout << "  RAS pushes (calls) :         " << rpushes  << std::endl;
+        std::cout << "  RAS pops (returns) :         " << rpops    << std::endl;
+    }
+#endif
+
     std::cout << "==========================================" << std::endl;
 
     // Write RISCOF signature file if requested
