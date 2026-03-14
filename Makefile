@@ -100,7 +100,7 @@ COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 # Tests to run under Spike (excludes tests not supported by Spike; override with SPIKE_TESTS=<list>)
 # icache: now supported – spike plugin_magic provides NCM load/store, and the
 # icache test uses WARN (not FAIL) for timing differences that Spike cannot model.
-SPIKE_EXCLUDE = rtos stack_guard
+SPIKE_EXCLUDE = rtos stack_guard cache_diag
 SPIKE_TESTS  ?= $(filter-out $(SPIKE_EXCLUDE), $(TEST_NAMES))
 
 # Tests to run with sim-all: exclude Spike-incompatible tests when SIM=spike
