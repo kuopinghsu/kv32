@@ -40,7 +40,15 @@ write_tohost:                                                       \
 // see https://github.com/riscv-non-isa/riscv-arch-test/issues/659
 // get rid of compressed instructions
 #define RVMODEL_BOOT                                                \
-        .option norelax;
+        .option norelax;                                            \
+        .option push;                                               \
+        .option norvc;                                              \
+        nop;                                                        \
+        nop;                                                        \
+        nop;                                                        \
+        nop;                                                        \
+        nop;                                                        \
+        .option pop;
 
 #define RVMODEL_DATA_BEGIN                                          \
   .align 4; .global begin_signature; begin_signature:
