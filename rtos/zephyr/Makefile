@@ -102,7 +102,7 @@ build: setup
 		export CROSS_COMPILE="$(CROSS_COMPILE)" && \
 		export ZEPHYR_MODULES="$(ZEPHYR_DIR)" && \
 		cd "$(ZEPHYR_WORKSPACE)" && \
-		west build -p -b kcore_board -d "$(ZEPHYR_BUILD_DIR)" "$(ZEPHYR_SAMPLES)/$(TEST)" -- \
+		west build -p -b kv32 -d "$(ZEPHYR_BUILD_DIR)" "$(ZEPHYR_SAMPLES)/$(TEST)" -- \
 			-DZEPHYR_BASE="$(ZEPHYR_BASE)" \
 			-DZEPHYR_TOOLCHAIN_VARIANT="$(ZEPHYR_TOOLCHAIN_VARIANT)" \
 			-DCROSS_COMPILE="$(CROSS_COMPILE)" \

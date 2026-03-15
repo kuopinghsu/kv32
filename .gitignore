@@ -60,3 +60,5 @@ docs/doxygen/
 # Temporary files
 *.tmp
 .*.swp
+
+rtos/zephyr/build.*

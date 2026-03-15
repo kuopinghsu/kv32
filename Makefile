@@ -447,7 +447,7 @@ BUILD_TARGET = $(BUILD_DIR)/kv32soc
 .PHONY: all test-all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl lint-svlint build-spike-plugins docs clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% zephyr-% rtl-all sim-all spike-all compare-all coverage-all coverage-report rtl-rtos $(TEST_NAMES) FORCE
 
 # Default target - run all tests
-all: test-all freertos-compare-simple
+all: test-all compare-freertos-simple
 	@make -f Makefile SIM=spike sim-all
 	@make -f Makefile FAST_DIV=0 FAST_MUL=0 compare-all rtl-all
 	@make -f Makefile ICACHE_EN=0 compare-all rtl-all
