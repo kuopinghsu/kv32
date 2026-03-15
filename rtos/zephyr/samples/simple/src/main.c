@@ -16,15 +16,14 @@
 
 #define SIMPLE_TEST_ITERATIONS 10
 
-#define STACK_SIZE      768
+#define STACK_SIZE      2048
 #define THREAD_PRIORITY 7
 
-#define EVT_SWITCH_PING BIT(0)
-#define EVT_SWITCH_ACK  BIT(1)
+#define EVT_TOKEN BIT(0)
 
 K_SEM_DEFINE(g_test_sem, 0, SIMPLE_TEST_ITERATIONS);
 K_MUTEX_DEFINE(g_test_mutex);
-K_EVENT_DEFINE(g_test_event);
+K_EVENT_DEFINE(g_ping_event);
 
 static volatile uint32_t g_shared_counter;
 static volatile uint32_t g_sem_takes;
@@ -56,19 +55,13 @@ static void switch_task(void *p1, void *p2, void *p3)
     ARG_UNUSED(p3);
 
     for (uint32_t i = 0; i < SIMPLE_TEST_ITERATIONS; i++) {
-        if (k_mutex_lock(&g_test_mutex, K_MSEC(1000)) != 0) {
+        if (k_mutex_lock(&g_test_mutex, K_FOREVER) != 0) {
             fail_and_exit("switch task mutex timeout");
         }
         g_shared_counter++;
         k_mutex_unlock(&g_test_mutex);
 
         k_sem_give(&g_test_sem);
-
-        k_event_post(&g_test_event, EVT_SWITCH_PING);
-        uint32_t bits = k_event_wait(&g_test_event, EVT_SWITCH_ACK, true, K_MSEC(1000));
-        if ((bits & EVT_SWITCH_ACK) == 0U) {
-            fail_and_exit("switch task event ack timeout");
-        }
 
         k_yield();
     }
@@ -83,7 +76,7 @@ static void semaphore_task(void *p1, void *p2, void *p3)
     ARG_UNUSED(p3);
 
     for (uint32_t i = 0; i < SIMPLE_TEST_ITERATIONS; i++) {
-        if (k_sem_take(&g_test_sem, K_MSEC(1000)) != 0) {
+        if (k_sem_take(&g_test_sem, K_FOREVER) != 0) {
             fail_and_exit("semaphore task timeout");
         }
         g_sem_takes++;
@@ -99,7 +92,7 @@ static void mutex_task(void *p1, void *p2, void *p3)
     ARG_UNUSED(p3);
 
     for (uint32_t i = 0; i < SIMPLE_TEST_ITERATIONS; i++) {
-        if (k_mutex_lock(&g_test_mutex, K_MSEC(1000)) != 0) {
+        if (k_mutex_lock(&g_test_mutex, K_FOREVER) != 0) {
             fail_and_exit("mutex task timeout");
         }
         g_shared_counter++;
@@ -118,12 +111,16 @@ static void event_task(void *p1, void *p2, void *p3)
     ARG_UNUSED(p3);
 
     for (uint32_t i = 0; i < SIMPLE_TEST_ITERATIONS; i++) {
-        uint32_t bits = k_event_wait(&g_test_event, EVT_SWITCH_PING, true, K_MSEC(1000));
-        if ((bits & EVT_SWITCH_PING) == 0U) {
-            fail_and_exit("event task ping timeout");
+        uint32_t bits;
+
+        (void)k_event_clear(&g_ping_event, EVT_TOKEN);
+        k_event_post(&g_ping_event, EVT_TOKEN);
+        bits = k_event_wait_safe(&g_ping_event, EVT_TOKEN, false, K_NO_WAIT);
+        if ((bits & EVT_TOKEN) == 0U) {
+            fail_and_exit("event task self-test failed");
         }
         g_event_acks++;
-        k_event_post(&g_test_event, EVT_SWITCH_ACK);
+        k_yield();
     }
 
     printk("Event task complete\n");

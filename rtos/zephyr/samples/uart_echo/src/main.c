@@ -10,6 +10,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/sys/sys_io.h>
 #include "kv_platform.h"
 
 void uart_echo_test(const struct device *uart_dev)
@@ -67,6 +68,14 @@ void main(void)
     }
 
     printk("UART device ready: %s\n", uart_dev->name);
+
+    /* Enable internal UART loopback and provide deterministic RX input so
+     * simulation/RTL runs do not block waiting for host-side typing.
+     */
+    sys_write32(KV_UART_CTRL_LOOPBACK, KV_UART_BASE + KV_UART_CTRL_OFF);
+    uart_poll_out(uart_dev, 'O');
+    uart_poll_out(uart_dev, 'K');
+    uart_poll_out(uart_dev, '\n');
 
     /* Run echo test */
     uart_echo_test(uart_dev);

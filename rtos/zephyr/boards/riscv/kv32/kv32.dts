@@ -58,9 +58,9 @@
             interrupts-extended = <&hlic 7>;
         };
 
-        uart0: uart@10000000 {
+        uart0: uart@20010000 {
             compatible = "kv32,uart";
-            reg = <0x10000000 0x100>;
+            reg = <0x20010000 0x100>;
             clock-frequency = <50000000>;
             current-speed = <115200>;
             status = "okay";

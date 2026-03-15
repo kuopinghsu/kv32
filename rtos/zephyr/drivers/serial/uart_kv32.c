@@ -17,7 +17,7 @@
 #define UART_REG_TX_DATA    0x00
 #define UART_REG_RX_DATA    0x00  /* Same register, write=TX, read=RX */
 #define UART_REG_STATUS     0x04
-#define UART_REG_BAUD_DIV   0x08
+#define UART_REG_BAUD_DIV   0x10  /* KV_UART_LEVEL_OFF */
 
 /* Status register bits */
 #define UART_STATUS_TX_BUSY      (1 << 0)

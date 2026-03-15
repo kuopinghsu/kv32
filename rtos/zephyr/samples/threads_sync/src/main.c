@@ -8,9 +8,10 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
+#include "kv_platform.h"
 
 /* Thread stack sizes */
-#define STACK_SIZE 512
+#define STACK_SIZE 1024
 #define THREAD_PRIORITY 7
 
 /* Shared resource */
@@ -42,12 +43,6 @@ static k_tid_t worker1_tid;
 static k_tid_t worker2_tid;
 static k_tid_t worker3_tid;
 
-void sim_exit(int exit_code)
-{
-    /* Write to exit magic address */
-    *((volatile uint32_t *)0x40000004) = exit_code;
-}
-
 /* Producer thread - signals consumer via semaphore */
 void producer_entry(void *p1, void *p2, void *p3)
 {
@@ -58,7 +53,7 @@ void producer_entry(void *p1, void *p2, void *p3)
     printk("Producer thread started\n");
 
     for (int i = 0; i < 5; i++) {
-        k_msleep(100);
+        k_yield();
 
         /* Produce data */
         k_mutex_lock(&counter_mutex, K_FOREVER);
@@ -71,6 +66,7 @@ void producer_entry(void *p1, void *p2, void *p3)
 
         /* Wait for consumer to finish processing */
         k_sem_take(&sem_producer, K_FOREVER);
+        k_yield();
     }
 
     printk("Producer thread completed\n");
@@ -94,10 +90,9 @@ void consumer_entry(void *p1, void *p2, void *p3)
         printk("Consumer: consumed item, counter = %d\n", shared_counter);
         k_mutex_unlock(&counter_mutex);
 
-        k_msleep(50);
-
         /* Signal producer to continue */
         k_sem_give(&sem_producer);
+        k_yield();
     }
 
     printk("Consumer thread completed\n");
@@ -113,21 +108,22 @@ void worker_entry(void *p1, void *p2, void *p3)
     printk("Worker %d thread started\n", worker_id);
 
     for (int i = 0; i < 3; i++) {
-        k_msleep(50 + (worker_id * 20));
+        for (int spin = 0; spin < worker_id; spin++) {
+            k_yield();
+        }
 
         /* Critical section protected by mutex */
         k_mutex_lock(&counter_mutex, K_FOREVER);
 
         int old_value = shared_counter;
-        k_busy_wait(10000);  /* Simulate work - 10ms */
+        k_yield();
         shared_counter = old_value + 1;
 
         printk("Worker %d: incremented counter from %d to %d (iteration %d)\n",
                worker_id, old_value, shared_counter, i + 1);
 
         k_mutex_unlock(&counter_mutex);
-
-        k_msleep(30);
+        k_yield();
     }
 
     printk("Worker %d thread completed\n", worker_id);
@@ -159,8 +155,8 @@ int main(void)
 
     printk("Producer-Consumer test completed. Final counter: %d\n\n", shared_counter);
 
-    /* Small delay between tests */
-    k_msleep(200);
+    /* Yield between tests so threads fully retire before next phase. */
+    k_yield();
 
     /* Test 2: Multiple Workers with Mutex */
     printk("=== Test 2: Multiple Workers with Mutex ===\n");

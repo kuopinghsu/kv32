@@ -99,15 +99,15 @@ TEST_NAMES = $(notdir $(TEST_DIRS))
 
 # Framework selector registry for shared targets (rtl-/sim-/spike-/compare-).
 # Supported token forms:
-#   all, <sw-test>, freertos-all, freertos-<subtest>, zephyr-all, zephyr-<subtest>
+#   all, <sw-test>, freertos-all, freertos-<subtest>, zephyr-all, zephyr-<subtest>, threadx-all, threadx-<subtest>
 # To add future frameworks (e.g. threadx), add new routing branches in the
 # shared pattern targets and create a framework-local Makefile under rtos/threadx.
-FRAMEWORKS = sw freertos zephyr
+FRAMEWORKS = sw freertos zephyr threadx
 
 # Tests to compare (exclude I/O-dependent tests that require external peripherals).
 # This list can include both bare sw test names (e.g. uart) and fully-qualified
 # framework selectors (e.g. freertos-perf).
-COMPARE_EXCLUDE = full i2c uart spi dma dcache gpio timer wdt wfi nested_irq freertos-perf
+COMPARE_EXCLUDE = full i2c uart spi dma dcache gpio timer wdt wfi nested_irq freertos-perf zephyr-uart_echo
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
 # Tests to run under Spike (excludes tests not supported by Spike; override with SPIKE_TESTS=<list>)
@@ -444,10 +444,10 @@ TB_SOURCES = $(TB_DIR)/tb_kv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-
 # Output executable
 BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
-.PHONY: all test-all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl lint-svlint build-spike-plugins docs clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% zephyr-% rtl-all sim-all spike-all compare-all coverage-all coverage-report rtl-rtos $(TEST_NAMES) FORCE
+.PHONY: all test-all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl lint-svlint build-spike-plugins docs clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% zephyr-% threadx-% rtl-all sim-all spike-all compare-all coverage-all coverage-report rtl-rtos $(TEST_NAMES) FORCE
 
 # Default target - run all tests
-all: test-all compare-freertos-simple
+all: test-all compare-freertos-all compare-zephyr-all compare-threadx-all
 	@make -f Makefile SIM=spike sim-all
 	@make -f Makefile FAST_DIV=0 FAST_MUL=0 compare-all rtl-all
 	@make -f Makefile ICACHE_EN=0 compare-all rtl-all
@@ -619,12 +619,13 @@ sim-build: build-sim
 # Software test program build rules are framework-owned in sw/Makefile.
 .SECONDEXPANSION:
 
+$(BUILD_DIR)/%-spike.elf:
+	@$(MAKE) -C $(SW_DIR) --no-print-directory __build-test TEST=$* OUT=$(abspath $@) \
+		DIS_OUT=$(abspath $(BUILD_DIR)/$*-spike.dis) READELF_OUT=$(abspath $(BUILD_DIR)/$*-spike.readelf) \
+		ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS) -DUSE_HTIF"
+
 $(BUILD_DIR)/%.elf:
 	@$(MAKE) -C $(SW_DIR) --no-print-directory build TEST=$* \
-		ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"
-
-$(BUILD_DIR)/%-spike.elf:
-	@$(MAKE) -C $(SW_DIR) --no-print-directory build-spike TEST=$* \
 		ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"
 
 # Target to build a specific test (e.g., make hello)
@@ -677,6 +678,7 @@ endif
 	case "$$sel" in \
 		freertos-*) fw=freertos; t=$${sel#freertos-};; \
 		zephyr-*)   fw=zephyr;   t=$${sel#zephyr-};; \
+		threadx-*)  fw=threadx;  t=$${sel#threadx-};; \
 		sw-*)       fw=sw;       t=$${sel#sw-};; \
 	esac; \
 	if [ "$$t" = "all" ] && [ "$$fw" != "sw" ]; then \
@@ -690,6 +692,8 @@ endif
 		$(RECURSIVE_MAKE) -C rtos/freertos --no-print-directory build TEST=$$t; elf="freertos-$$t.elf"; \
 	elif [ "$$fw" = "zephyr" ]; then \
 		$(RECURSIVE_MAKE) -C rtos/zephyr --no-print-directory build TEST=$$t; elf="zephyr-$$t.elf"; \
+	elif [ "$$fw" = "threadx" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/threadx --no-print-directory build TEST=$$t; elf="threadx-$$t.elf"; \
 	else \
 		$(RECURSIVE_MAKE) -C $(SW_DIR) --no-print-directory build TEST=$$t ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"; elf="$$t.elf"; \
 	fi; \
@@ -739,6 +743,7 @@ sim-%: build-sim $(_SIM_PREREQ)
 	case "$$sel" in \
 		freertos-*) fw=freertos; t=$${sel#freertos-};; \
 		zephyr-*)   fw=zephyr;   t=$${sel#zephyr-};; \
+		threadx-*)  fw=threadx;  t=$${sel#threadx-};; \
 		sw-*)       fw=sw;       t=$${sel#sw-};; \
 	esac; \
 	if [ "$$t" = "all" ] && [ "$$fw" != "sw" ]; then \
@@ -752,6 +757,8 @@ sim-%: build-sim $(_SIM_PREREQ)
 		$(RECURSIVE_MAKE) -C rtos/freertos --no-print-directory build TEST=$$t; elf="freertos-$$t.elf"; \
 	elif [ "$$fw" = "zephyr" ]; then \
 		$(RECURSIVE_MAKE) -C rtos/zephyr --no-print-directory build TEST=$$t; elf="zephyr-$$t.elf"; \
+	elif [ "$$fw" = "threadx" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/threadx --no-print-directory build TEST=$$t; elf="threadx-$$t.elf"; \
 	else \
 		$(RECURSIVE_MAKE) -C $(SW_DIR) --no-print-directory build TEST=$$t ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"; elf="$$t.elf"; \
 	fi; \
@@ -794,6 +801,7 @@ spike-%: build-spike-plugins
 	case "$$sel" in \
 		freertos-*) fw=freertos; t=$${sel#freertos-};; \
 		zephyr-*)   fw=zephyr;   t=$${sel#zephyr-};; \
+		threadx-*)  fw=threadx;  t=$${sel#threadx-};; \
 		sw-*)       fw=sw;       t=$${sel#sw-};; \
 	esac; \
 	if [ "$$t" = "all" ] && [ "$$fw" != "sw" ]; then \
@@ -807,6 +815,8 @@ spike-%: build-spike-plugins
 		$(RECURSIVE_MAKE) -C rtos/freertos --no-print-directory build TEST=$$t; elf="freertos-$$t.elf"; \
 	elif [ "$$fw" = "zephyr" ]; then \
 		$(RECURSIVE_MAKE) -C rtos/zephyr --no-print-directory build TEST=$$t; elf="zephyr-$$t.elf"; \
+	elif [ "$$fw" = "threadx" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/threadx --no-print-directory build TEST=$$t; elf="threadx-$$t.elf"; \
 	else \
 		$(RECURSIVE_MAKE) -C $(SW_DIR) --no-print-directory build TEST=$$t ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"; elf="$$t.elf"; \
 	fi; \
@@ -838,6 +848,7 @@ compare-%:
 	case "$$sel" in \
 		freertos-*) fw=freertos; t=$${sel#freertos-};; \
 		zephyr-*)   fw=zephyr;   t=$${sel#zephyr-};; \
+		threadx-*)  fw=threadx;  t=$${sel#threadx-};; \
 		sw-*)       fw=sw;       t=$${sel#sw-};; \
 	esac; \
 	if [ "$$t" = "all" ] && [ "$$fw" != "sw" ]; then \
@@ -859,13 +870,37 @@ compare-%:
 		echo "         Proceeding anyway — mismatch is expected."; \
 		echo "=========================================="; \
 	fi; \
-	echo "Step 1: Running RTL simulator with trace-compare..."; \
-	if [ "$$fw" = "sw" ]; then $(RECURSIVE_MAKE) rtl-$$t TRACE_COMPARE=1 || true; else $(RECURSIVE_MAKE) rtl-$$fw-$$t TRACE_COMPARE=1 || true; fi; \
+	echo "Step 1: Building shared firmware image once..."; \
+	if [ "$$fw" = "freertos" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/freertos --no-print-directory build TEST=$$t; elf="freertos-$$t.elf"; \
+	elif [ "$$fw" = "zephyr" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/zephyr --no-print-directory build TEST=$$t; elf="zephyr-$$t.elf"; \
+	elif [ "$$fw" = "threadx" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/threadx --no-print-directory build TEST=$$t; elf="threadx-$$t.elf"; \
+	else \
+		$(RECURSIVE_MAKE) -C $(SW_DIR) --no-print-directory build TEST=$$t ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"; elf="$$t.elf"; \
+	fi; \
 	echo ""; \
-	echo "Step 2: Running software simulator with trace-compare..."; \
-	if [ "$$fw" = "sw" ]; then $(RECURSIVE_MAKE) sim-$$t TRACE_COMPARE=1 || true; else $(RECURSIVE_MAKE) sim-$$fw-$$t TRACE_COMPARE=1 || true; fi; \
+	echo "Step 2: Running RTL simulator with trace-compare..."; \
+	if [ -n "$(DEBUG)" ]; then \
+		echo "DEBUG=$(DEBUG) specified - rebuilding RTL"; \
+		$(RECURSIVE_MAKE) clean; \
+		$(RECURSIVE_MAKE) build-rtl DEBUG=$(DEBUG); \
+	else \
+		$(RECURSIVE_MAKE) build-rtl; \
+	fi; \
+	(cd $(BUILD_DIR) && ./kv32soc --trace-compare $(if $(filter 1 fst,$(WAVE)),--wave=fst) $(if $(filter vcd,$(WAVE)),--wave=vcd) $(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) $$elf) || true; \
 	echo ""; \
-	echo "Step 3: Comparing traces..."; \
+	echo "Step 3: Running software simulator with trace-compare..."; \
+	if [ "$(SIM)" = "spike" ]; then \
+		$(RECURSIVE_MAKE) build-spike-plugins; \
+		(cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) --log-commits --log=sim_trace.txt $$elf 2>&1) || true; \
+	else \
+		$(RECURSIVE_MAKE) build-sim; \
+		(cd $(BUILD_DIR) && ./$(SIM) --trace-compare --log=sim_trace.txt $(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) $$elf) || true; \
+	fi; \
+	echo ""; \
+	echo "Step 4: Comparing traces..."; \
 	echo "=========================================="; \
 	if [ ! -f scripts/trace_compare.py ]; then echo "Error: scripts/trace_compare.py not found"; exit 1; fi; \
 	if [ ! -f $(BUILD_DIR)/rtl_trace.txt ]; then echo "Error: $(BUILD_DIR)/rtl_trace.txt not found"; exit 1; fi; \
@@ -1208,6 +1243,13 @@ zephyr-%:
 		*) $(MAKE) -C rtos/zephyr build TEST="$*";; \
 	esac
 
+threadx-%:
+	@case "$*" in \
+		help|list-tests|clean|build) $(MAKE) -C rtos/threadx "$*";; \
+		all) $(MAKE) -C rtos/threadx build TEST=all;; \
+		*) $(MAKE) -C rtos/threadx build TEST="$*";; \
+	esac
+
 # Run simulation
 run: $(BUILD_TARGET)
 	@echo "Running RISC-V SoC simulation..."
@@ -1241,6 +1283,7 @@ clean:
 	@rm -f $(SIM_DIR)/*.vcd
 	@make -C rtos/freertos clean
 	@make -C rtos/zephyr clean
+	@make -C rtos/threadx clean
 	@make -C verif arch-test-clean
 	@echo "Clean complete!"
 
@@ -1330,6 +1373,8 @@ help:
 	@echo "  freertos-<subtest>- Run FreeRTOS sample"
 	@echo "  zephyr-all        - Run all Zephyr samples"
 	@echo "  zephyr-<subtest>  - Run Zephyr sample"
+	@echo "  threadx-all       - Run all ThreadX samples"
+	@echo "  threadx-<subtest> - Run ThreadX sample"
 	@echo ""
 	@echo "  rtl-<test>    - Build and run test with RTL simulator"
 	@echo "  rtl-rtos      - Run mini-RTOS (profile is controlled in sw/rtos/rtos_test.c)"
@@ -1366,6 +1411,7 @@ help:
 	@echo "  make sim-freertos-all      # Run all FreeRTOS samples with software sim"
 	@echo "  make rtl-freertos-simple   # Run one FreeRTOS sample with RTL"
 	@echo "  make sim-zephyr-hello      # Run one Zephyr sample with software sim"
+	@echo "  make sim-threadx-simple    # Run one ThreadX sample with software sim"
 	@echo "  make spike-hello           # Run hello test with Spike (shorthand)"
 	@echo "  make SIM=spike sim-hello   # Run hello test with Spike + MMIO plugins"
 	@echo "  make spike-all             # Run all Spike-compatible tests"
@@ -1396,6 +1442,7 @@ help:
 	@echo "  build/<test>.elf            - Bare-metal SW executable"
 	@echo "  build/freertos-<test>.elf   - FreeRTOS executable"
 	@echo "  build/zephyr-<test>.elf     - Zephyr executable"
+	@echo "  build/threadx-<test>.elf    - ThreadX executable"
 	@echo "  build/kv32soc.fst           - Waveform (RTL, FST format)"
 	@echo "  build/coverage_html/        - Coverage report (HTML)"
 	@echo "  build/coverage.info         - Coverage data (lcov format)"
@@ -1403,3 +1450,4 @@ help:
 	@make -C verif help
 	@make -C rtos/freertos help
 	@make -C rtos/zephyr help
+	@make -C rtos/threadx help

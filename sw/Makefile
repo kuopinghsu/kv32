@@ -52,12 +52,11 @@ TEST_NAMES = $(notdir $(TEST_DIRS))
 SW_BUILD_PARAMS = ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN)
 SW_PARAMS_STAMP = $(BUILD_DIR)/.sw_build_params
 
-.PHONY: help list-tests build build-spike build-all build-spike-all FORCE
+.PHONY: help list-tests build build-all FORCE __build-test
 
 help:
 	@echo "KV32 SW Framework Makefile"
 	@echo "  make -C sw build TEST=<name>          # build build/<name>.elf"
-	@echo "  make -C sw build-spike TEST=<name>    # build build/<name>-spike.elf"
 	@echo "  make -C sw build-all                  # build all sw tests"
 	@echo "  make -C sw list-tests                 # print available tests"
 
@@ -75,23 +74,12 @@ $(BUILD_DIR)/%.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld $(SW_PARAMS_STAMP) \
                     $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h $(SW_DIR)/$$*/*.S)
 	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@ DIS_OUT=$(BUILD_DIR)/$*.dis READELF_OUT=$(BUILD_DIR)/$*.readelf
 
-$(BUILD_DIR)/%-spike.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld $(SW_PARAMS_STAMP) \
-                          $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h $(SW_DIR)/$$*/*.S)
-	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@ HTIF=1 DIS_OUT=$(BUILD_DIR)/$*-spike.dis READELF_OUT=$(BUILD_DIR)/$*-spike.readelf
-
 build:
 	@if [ -z "$(TEST)" ]; then \
 		echo "Error: TEST is required (example: make -C sw build TEST=hello)"; \
 		exit 1; \
 	fi
 	@$(MAKE) --no-print-directory $(BUILD_DIR)/$(TEST).elf
-
-build-spike:
-	@if [ -z "$(TEST)" ]; then \
-		echo "Error: TEST is required (example: make -C sw build-spike TEST=hello)"; \
-		exit 1; \
-	fi
-	@$(MAKE) --no-print-directory $(BUILD_DIR)/$(TEST)-spike.elf
 
 build-all:
 	@failed=0; \
@@ -102,23 +90,9 @@ build-all:
 	done; \
 	if [ $$failed -ne 0 ]; then exit 1; fi
 
-build-spike-all:
-	@failed=0; \
-	for test in $(TEST_NAMES); do \
-		if ! $(MAKE) --no-print-directory build-spike TEST=$$test; then \
-			failed=1; \
-		fi; \
-	done; \
-	if [ $$failed -ne 0 ]; then exit 1; fi
-
-.PHONY: __build-test
 __build-test:
 	@echo "=========================================="
-	@if [ "$(HTIF)" = "1" ]; then \
-		echo "Building test for Spike: $(TEST)"; \
-	else \
-		echo "Building test: $(TEST)"; \
-	fi
+	@echo "Building test: $(TEST)"
 	@echo "=========================================="
 	@mkdir -p $(BUILD_DIR)
 	@if [ ! -d "$(SW_DIR)/$(TEST)" ]; then \
@@ -130,14 +104,14 @@ __build-test:
 	fi
 	@if [ -n "$$(find $(SW_DIR)/$(TEST) -maxdepth 1 -name '*.cpp' 2>/dev/null)" ]; then \
 		echo "Detected C++ source files, using g++"; \
-		$(CXX) $(CXXFLAGS) $(EXTRA_CFLAGS) $(if $(filter 1,$(HTIF)),-DUSE_HTIF) \
+		$(CXX) $(CXXFLAGS) $(EXTRA_CFLAGS) \
 			$(COMMON_SRCS) \
 			$$(find $(SW_DIR)/$(TEST) -maxdepth 1 -name '*.cpp') \
 			$(LDFLAGS) \
 			-o $(OUT); \
 	elif [ -n "$$(find $(SW_DIR)/$(TEST) -maxdepth 1 -name '*.c' 2>/dev/null)" ]; then \
 		echo "Detected C source files, using gcc"; \
-		$(CC) $(CFLAGS) $(EXTRA_CFLAGS) $(if $(filter 1,$(HTIF)),-DUSE_HTIF) \
+		$(CC) $(CFLAGS) $(EXTRA_CFLAGS) \
 			$(COMMON_SRCS) \
 			$$(find $(SW_DIR)/$(TEST) -maxdepth 1 -name '*.c') \
 			$(LDFLAGS) \
