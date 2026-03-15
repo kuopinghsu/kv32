@@ -6,6 +6,7 @@ export RISCV_PREFIX
 
 PROJECT_ROOT = $(realpath ../..)
 BUILD_DIR    = $(PROJECT_ROOT)/build
+THREADX_OBJ_DIR   = $(BUILD_DIR)/threadx
 ARCH ?= rv32imac_zicsr
 ABI  ?= ilp32
 
@@ -81,14 +82,36 @@ build:
 		echo "Error: ThreadX sample '$(TEST)' not found"; \
 		exit 1; \
 	fi
-	@mkdir -p $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR) $(THREADX_OBJ_DIR)
+	@set -e; \
+	srcs="$(COMMON_SRCS) $(THREADX_SAMPLES)/$(TEST)/*.c $(THREADX_COMMON_SRCS) $(THREADX_PORT_SRCS)"; \
+	total=0; \
+	for src in $$srcs; do \
+		total=$$((total + 1)); \
+	done; \
+	printf '[build] CC %d objects -> %s\n' $$total '$(THREADX_OBJ_DIR)'; \
+	next_pct=10; \
+	count=0; \
+	objs=""; \
+	for src in $$srcs; do \
+		count=$$((count + 1)); \
+		base=$$(basename "$$src"); \
+		stem=$${base%.*}; \
+		obj=$(THREADX_OBJ_DIR)/$(TEST)_$${stem}.o; \
+		$(CC) $(THREADX_CFLAGS) -c "$$src" -o "$$obj"; \
+		objs="$$objs $$obj"; \
+		pct=$$((count * 100 / total)); \
+		if [ $$pct -ge $$next_pct ]; then \
+			printf '[build] %d%% (%d/%d)\n' $$next_pct $$count $$total; \
+			next_pct=$$((next_pct + 10)); \
+		fi; \
+	done; \
+	printf '[link] LD %s\n' '$(BUILD_DIR)/threadx-$(TEST).elf'; \
 	$(CC) $(THREADX_CFLAGS) $(THREADX_LDFLAGS) \
 		-Wl,-Map=$(BUILD_DIR)/threadx-$(TEST).map \
-		$(COMMON_SRCS) \
-		$(THREADX_SAMPLES)/$(TEST)/*.c \
-		$(THREADX_COMMON_SRCS) \
-		$(THREADX_PORT_SRCS) \
+		$$objs \
 		-o $(BUILD_DIR)/threadx-$(TEST).elf
+	@printf '[post] generate dis/readelf in %s\n' '$(BUILD_DIR)'
 	@$(OBJDUMP) -D $(BUILD_DIR)/threadx-$(TEST).elf > $(BUILD_DIR)/threadx-$(TEST).dis
 	@$(READELF) -a $(BUILD_DIR)/threadx-$(TEST).elf > $(BUILD_DIR)/threadx-$(TEST).readelf
 
@@ -97,3 +120,4 @@ clean:
 	@rm -f $(BUILD_DIR)/threadx-*.map
 	@rm -f $(BUILD_DIR)/threadx-*.dis
 	@rm -f $(BUILD_DIR)/threadx-*.readelf
+	@rm -rf $(THREADX_OBJ_DIR)

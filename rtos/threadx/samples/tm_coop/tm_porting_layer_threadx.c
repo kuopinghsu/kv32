@@ -62,7 +62,7 @@
 
 /* Define the default ThreadX stack size.  */
 
-#define TM_THREADX_THREAD_STACK_SIZE    1024
+#define TM_THREADX_THREAD_STACK_SIZE    2048
 //#define TM_THREADX_THREAD_STACK_SIZE    4096
 
 

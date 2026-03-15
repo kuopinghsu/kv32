@@ -136,14 +136,10 @@ _tx_thread_context_restore:
 .global _tx_thread_system_return
 .type _tx_thread_system_return, @function
 _tx_thread_system_return:
-    la t0, _tx_thread_current_ptr
-    lw t1, 0(t0)
-    beqz t1, 2f
+    csrci mstatus, 0x8
 
     addi sp, sp, -CTX_SIZE
     sw ra, CTX_RA(sp)
-    addi t0, sp, CTX_SIZE
-    sw t0, CTX_SP(sp)
     sw gp, CTX_GP(sp)
     sw tp, CTX_TP(sp)
     sw t0, CTX_T0(sp)
@@ -174,7 +170,17 @@ _tx_thread_system_return:
     sw t5, CTX_T5(sp)
     sw t6, CTX_T6(sp)
 
+    addi t0, sp, CTX_SIZE
+    sw t0, CTX_SP(sp)
+
+    la t0, _tx_thread_current_ptr
+    lw t1, 0(t0)
+    beqz t1, 1f
     sw sp, 8(t1)
+    j 2f
+
+1:
+    addi sp, sp, CTX_SIZE
 
 2:
 3:
@@ -221,4 +227,5 @@ _tx_thread_system_return:
     lw t5, CTX_T5(sp)
     lw t6, CTX_T6(sp)
     lw sp, CTX_SP(sp)
+    csrsi mstatus, 0x8
     ret

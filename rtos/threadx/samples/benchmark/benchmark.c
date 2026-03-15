@@ -4,7 +4,7 @@
 #include "tx_api.h"
 #include "kv_platform.h"
 
-#define STACK_WORDS              320u
+#define STACK_WORDS              512u
 #define CTRL_PRIORITY            3u
 #define WORKER_PRIORITY          8u
 #define SIMPLE_SLICE             1u

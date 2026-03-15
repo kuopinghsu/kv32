@@ -149,7 +149,7 @@ static VOID _tx_kv32_stack_guard_init(TX_THREAD *thread_ptr)
     ULONG *high_guard;
 
     low_guard = (ULONG *)thread_ptr->tx_thread_stack_start;
-    high_guard = (ULONG *)(((UCHAR *)thread_ptr->tx_thread_stack_end) + 1u);
+    high_guard = (ULONG *)((((UCHAR *)thread_ptr->tx_thread_stack_end) + 1u) - sizeof(ULONG));
 
     *low_guard = (ULONG)TX_STACK_FILL;
     *high_guard = (ULONG)TX_STACK_FILL;
