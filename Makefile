@@ -4,6 +4,7 @@
 # On macOS the system make is 3.81 which has jobserver deadlock bugs with nested
 # recursive makes.  Prefer gmake (4.x) if available for all $(MAKE) invocations.
 MAKE := $(shell command -v gmake 2>/dev/null || command -v make)
+RECURSIVE_MAKE := $(MAKE)
 
 # Load environment configuration
 -include env.config
@@ -93,8 +94,17 @@ endif
 TEST_DIRS = $(shell find $(SW_DIR) -mindepth 1 -maxdepth 1 -type d ! -name common ! -name include)
 TEST_NAMES = $(notdir $(TEST_DIRS))
 
-# Tests to compare (exclude I/O-dependent tests that require external peripherals)
-COMPARE_EXCLUDE = full i2c uart spi dma dcache gpio timer wdt wfi nested_irq
+# Framework selector registry for shared targets (rtl-/sim-/spike-/compare-).
+# Supported token forms:
+#   all, <sw-test>, freertos-all, freertos-<subtest>, zephyr-all, zephyr-<subtest>
+# To add future frameworks (e.g. threadx), add new routing branches in the
+# shared pattern targets and create a framework-local Makefile under rtos/threadx.
+FRAMEWORKS = sw freertos zephyr
+
+# Tests to compare (exclude I/O-dependent tests that require external peripherals).
+# This list can include both bare sw test names (e.g. uart) and fully-qualified
+# framework selectors (e.g. freertos-perf).
+COMPARE_EXCLUDE = full i2c uart spi dma dcache gpio timer wdt wfi nested_irq freertos-perf
 COMPARE_TESTS   = $(filter-out $(COMPARE_EXCLUDE), $(TEST_NAMES))
 
 # Tests to run under Spike (excludes tests not supported by Spike; override with SPIKE_TESTS=<list>)
@@ -430,7 +440,7 @@ TB_SOURCES = $(TB_DIR)/tb_kv32_soc.cpp $(TB_DIR)/elfloader.cpp $(SIM_DIR)/riscv-
 # Output executable
 BUILD_TARGET = $(BUILD_DIR)/kv32soc
 
-.PHONY: all test-all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl lint-svlint build-spike-plugins docs clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% rtl-all sim-all spike-all compare-all coverage-all coverage-report rtl-rtos __build-test $(TEST_NAMES) FORCE
+.PHONY: all test-all build-rtl build-sim rtl-build sim-build lint lint-full lint-modules lint-decl lint-svlint build-spike-plugins docs clean clean-tests clean-spike-plugins cleanup cleanup-all run waves help info rtl-% sim-% spike-% compare-% coverage-% arch-test-% freertos-% zephyr-% rtl-all sim-all spike-all compare-all coverage-all coverage-report rtl-rtos $(TEST_NAMES) FORCE
 
 # Default target - run all tests
 all: test-all freertos-compare-simple
@@ -602,69 +612,21 @@ build-sim:
 # Alias for build-sim (so both 'make build-sim' and 'make sim-build' work)
 sim-build: build-sim
 
-# Software test program build rules
-#
-# Use secondary expansion so the stem $* (test name) can be referenced inside
-# the prerequisite list.  This lets each %.elf track its own per-test sources
-# (sw/<test>/*.c, *.cpp, *.h) so that touching those files triggers a rebuild.
+# Software test program build rules are framework-owned in sw/Makefile.
 .SECONDEXPANSION:
 
-# Pattern rule to build a test program (handles both C and C++ automatically)
-$(BUILD_DIR)/%.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld $(SW_PARAMS_STAMP) \
-                    $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h $(SW_DIR)/$$*/*.S)
-	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@ DIS_OUT=$(BUILD_DIR)/$*.dis READELF_OUT=$(BUILD_DIR)/$*.readelf
+$(BUILD_DIR)/%.elf:
+	@$(MAKE) -C $(SW_DIR) --no-print-directory build TEST=$* \
+		ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"
 
-# Pattern rule to build a test program for Spike (with HTIF support)
-$(BUILD_DIR)/%-spike.elf: $(COMMON_SRCS) $(SW_DIR)/common/link.ld $(SW_PARAMS_STAMP) \
-                          $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h $(SW_DIR)/$$*/*.S)
-	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@ HTIF=1 DIS_OUT=$(BUILD_DIR)/$*-spike.dis READELF_OUT=$(BUILD_DIR)/$*-spike.readelf
-
-# Internal helper target used by software build pattern rules.
-__build-test:
-	@echo "=========================================="
-	@if [ "$(HTIF)" = "1" ]; then \
-		echo "Building test for Spike: $(TEST)"; \
-	else \
-		echo "Building test: $(TEST)"; \
-	fi
-	@echo "=========================================="
-	@mkdir -p $(BUILD_DIR)
-	@if [ ! -d "$(SW_DIR)/$(TEST)" ]; then \
-		echo "Error: Test directory $(SW_DIR)/$(TEST) not found"; \
-		exit 1; \
-	fi
-	@if [ -f "$(SW_DIR)/$(TEST)/makefile.mak" ]; then \
-		echo "Including per-test makefile: $(SW_DIR)/$(TEST)/makefile.mak"; \
-	fi
-	@# Check for C++ files first (if present, use C++ compiler)
-	@if [ -n "$$(find $(SW_DIR)/$(TEST) -maxdepth 1 -name '*.cpp' 2>/dev/null)" ]; then \
-		echo "Detected C++ source files, using g++"; \
-		$(CXX) $(CXXFLAGS) $(EXTRA_CFLAGS) $(if $(filter 1,$(HTIF)),-DUSE_HTIF) \
-			$(COMMON_SRCS) \
-			$$(find $(SW_DIR)/$(TEST) -maxdepth 1 -name '*.cpp') \
-			$(LDFLAGS) \
-			-o $(OUT); \
-	elif [ -n "$$(find $(SW_DIR)/$(TEST) -maxdepth 1 -name '*.c' 2>/dev/null)" ]; then \
-		echo "Detected C source files, using gcc"; \
-		$(CC) $(CFLAGS) $(EXTRA_CFLAGS) $(if $(filter 1,$(HTIF)),-DUSE_HTIF) \
-			$(COMMON_SRCS) \
-			$$(find $(SW_DIR)/$(TEST) -maxdepth 1 -name '*.c') \
-			$(LDFLAGS) \
-			-o $(OUT); \
-	else \
-		echo "Error: No source files (.c or .cpp) found in $(SW_DIR)/$(TEST)"; \
-		exit 1; \
-	fi
-	@echo "Generating disassembly..."
-	@$(OBJDUMP) -d $(OUT) > $(DIS_OUT)
-	@echo "Generating readelf info..."
-	@$(READELF) -a $(OUT) > $(READELF_OUT)
-	@echo "Build complete: $(OUT)"
-	@echo ""
+$(BUILD_DIR)/%-spike.elf:
+	@$(MAKE) -C $(SW_DIR) --no-print-directory build-spike TEST=$* \
+		ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"
 
 # Target to build a specific test (e.g., make hello)
 $(TEST_NAMES): %:
-	@$(MAKE) $(BUILD_DIR)/$*.elf
+	@$(MAKE) -C $(SW_DIR) --no-print-directory build TEST=$* \
+		ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"
 
 # Target to run test with RTL simulator (e.g., make rtl-hello)
 # Use TRACE=1 to enable instruction trace, WAVE=[1|fst|vcd] for waveform, DEBUG=1 or DEBUG=2 for debug messages
@@ -706,19 +668,35 @@ ifdef DEBUG
 else
 	@$(MAKE) build-rtl
 endif
-	@$(MAKE) $(BUILD_DIR)/$*.elf
+	@set -e; \
+	sel="$*"; fw=sw; t="$$sel"; \
+	case "$$sel" in \
+		freertos-*) fw=freertos; t=$${sel#freertos-};; \
+		zephyr-*)   fw=zephyr;   t=$${sel#zephyr-};; \
+		sw-*)       fw=sw;       t=$${sel#sw-};; \
+	esac; \
+	if [ "$$t" = "all" ] && [ "$$fw" != "sw" ]; then \
+		failed=0; \
+		for test in $$( $(RECURSIVE_MAKE) -s -C rtos/$$fw list-tests ); do \
+			if ! $(RECURSIVE_MAKE) -s rtl-$$fw-$$test TRACE=$(TRACE) TRACE_COMPARE=$(TRACE_COMPARE) WAVE=$(WAVE) DEBUG=$(DEBUG) MAX_CYCLES=$(MAX_CYCLES) SIM=$(SIM); then failed=1; fi; \
+		done; \
+		exit $$failed; \
+	fi; \
+	if [ "$$fw" = "freertos" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/freertos --no-print-directory build TEST=$$t; elf="freertos-$$t.elf"; \
+	elif [ "$$fw" = "zephyr" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/zephyr --no-print-directory build TEST=$$t; elf="zephyr-$$t.elf"; \
+	else \
+		$(RECURSIVE_MAKE) -C $(SW_DIR) --no-print-directory build TEST=$$t ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"; elf="$$t.elf"; \
+	fi; \
+	echo "=========================================="; \
+	echo "Running test '$*' with RTL simulator"; \
+	echo "=========================================="; \
+	cd $(BUILD_DIR) && ./kv32soc $(if $(TRACE_COMPARE),--trace-compare,$(if $(TRACE),--trace)) $(if $(filter 1 fst,$(WAVE)),--wave=fst) $(if $(filter vcd,$(WAVE)),--wave=vcd) $(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) $$elf
 	@echo "=========================================="
-	@echo "Running test '$*' with RTL simulator"
 ifdef DEBUG
 	@echo "Debug level: $(DEBUG)"
 endif
-	@echo "=========================================="
-	@cd $(BUILD_DIR) && ./kv32soc \
-		$(if $(TRACE_COMPARE),--trace-compare,$(if $(TRACE),--trace)) \
-		$(if $(filter 1 fst,$(WAVE)),--wave=fst) \
-		$(if $(filter vcd,$(WAVE)),--wave=vcd) \
-		$(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) \
-		$*.elf
 	@echo ""
 	@if [ "$(TRACE_COMPARE)" = "1" ] || [ "$(TRACE)" = "1" ]; then \
 		echo "Trace saved to: $(BUILD_DIR)/rtl_trace.txt"; \
@@ -742,21 +720,45 @@ SPIKE_EXTLIBS_LOCAL = $(patsubst $(BUILD_DIR)/%,--extlib=./%,$(SPIKE_PLUGINS))
 ifeq ($(SIM),spike)
 _SIM_PREREQ = build-spike-plugins
 define _SIM_RUN
-cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)$(TRACE_COMPARE)),--log-commits --log=sim_trace.txt) $(1).elf 2>&1 || true
+cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)$(TRACE_COMPARE)),--log-commits --log=sim_trace.txt) $(1) 2>&1 || true
 endef
 else
 _SIM_PREREQ =
 define _SIM_RUN
-cd $(BUILD_DIR) && ./$(SIM) $(if $(filter 1,$(TRACE_COMPARE)),--trace-compare --log=sim_trace.txt,$(if $(filter 1,$(TRACE)),--rtl-trace --log=sim_trace.txt)) $(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) $(1).elf
+cd $(BUILD_DIR) && ./$(SIM) $(if $(filter 1,$(TRACE_COMPARE)),--trace-compare --log=sim_trace.txt,$(if $(filter 1,$(TRACE)),--rtl-trace --log=sim_trace.txt)) $(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) $(1)
 endef
 endif
 
 sim-%: build-sim $(_SIM_PREREQ)
-	@$(MAKE) $(BUILD_DIR)/$*.elf
-	@echo "=========================================="
-	@echo "Running test '$*' with software simulator ($(SIM))"
-	@echo "=========================================="
-	$(call _SIM_RUN,$*)
+	@set -e; \
+	sel="$*"; fw=sw; t="$$sel"; \
+	case "$$sel" in \
+		freertos-*) fw=freertos; t=$${sel#freertos-};; \
+		zephyr-*)   fw=zephyr;   t=$${sel#zephyr-};; \
+		sw-*)       fw=sw;       t=$${sel#sw-};; \
+	esac; \
+	if [ "$$t" = "all" ] && [ "$$fw" != "sw" ]; then \
+		failed=0; \
+		for test in $$( $(RECURSIVE_MAKE) -s -C rtos/$$fw list-tests ); do \
+			if ! $(RECURSIVE_MAKE) -s sim-$$fw-$$test TRACE=$(TRACE) TRACE_COMPARE=$(TRACE_COMPARE) WAVE=$(WAVE) DEBUG=$(DEBUG) MAX_CYCLES=$(MAX_CYCLES) SIM=$(SIM); then failed=1; fi; \
+		done; \
+		exit $$failed; \
+	fi; \
+	if [ "$$fw" = "freertos" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/freertos --no-print-directory build TEST=$$t; elf="freertos-$$t.elf"; \
+	elif [ "$$fw" = "zephyr" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/zephyr --no-print-directory build TEST=$$t; elf="zephyr-$$t.elf"; \
+	else \
+		$(RECURSIVE_MAKE) -C $(SW_DIR) --no-print-directory build TEST=$$t ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"; elf="$$t.elf"; \
+	fi; \
+	echo "=========================================="; \
+	echo "Running test '$*' with software simulator ($(SIM))"; \
+	echo "=========================================="; \
+	if [ "$(SIM)" = "spike" ]; then \
+		cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)$(TRACE_COMPARE)),--log-commits --log=sim_trace.txt) $$elf 2>&1 || true; \
+	else \
+		cd $(BUILD_DIR) && ./$(SIM) $(if $(filter 1,$(TRACE_COMPARE)),--trace-compare --log=sim_trace.txt,$(if $(filter 1,$(TRACE)),--rtl-trace --log=sim_trace.txt)) $(if $(filter-out 0,$(MAX_CYCLES)),--instructions=$(MAX_CYCLES)) $$elf; \
+	fi
 	@echo ""
 ifeq ($(TRACE),1)
 	@echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"
@@ -783,11 +785,31 @@ endif
 	@echo "=========================================="
 
 spike-%: build-spike-plugins
-	@$(MAKE) $(BUILD_DIR)/$*.elf
-	@echo "=========================================="
-	@echo "Running test '$*' with Spike"
-	@echo "=========================================="
-	cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $*.elf 2>&1
+	@set -e; \
+	sel="$*"; fw=sw; t="$$sel"; \
+	case "$$sel" in \
+		freertos-*) fw=freertos; t=$${sel#freertos-};; \
+		zephyr-*)   fw=zephyr;   t=$${sel#zephyr-};; \
+		sw-*)       fw=sw;       t=$${sel#sw-};; \
+	esac; \
+	if [ "$$t" = "all" ] && [ "$$fw" != "sw" ]; then \
+		failed=0; \
+		for test in $$( $(RECURSIVE_MAKE) -s -C rtos/$$fw list-tests ); do \
+			if ! $(RECURSIVE_MAKE) -s spike-$$fw-$$test TRACE=$(TRACE) TRACE_COMPARE=$(TRACE_COMPARE) WAVE=$(WAVE) DEBUG=$(DEBUG) MAX_CYCLES=$(MAX_CYCLES) SIM=$(SIM); then failed=1; fi; \
+		done; \
+		exit $$failed; \
+	fi; \
+	if [ "$$fw" = "freertos" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/freertos --no-print-directory build TEST=$$t; elf="freertos-$$t.elf"; \
+	elif [ "$$fw" = "zephyr" ]; then \
+		$(RECURSIVE_MAKE) -C rtos/zephyr --no-print-directory build TEST=$$t; elf="zephyr-$$t.elf"; \
+	else \
+		$(RECURSIVE_MAKE) -C $(SW_DIR) --no-print-directory build TEST=$$t ICACHE_EN=$(ICACHE_EN) DCACHE_EN=$(DCACHE_EN) EXTRA_CFLAGS="$(EXTRA_CFLAGS)"; elf="$$t.elf"; \
+	fi; \
+	echo "=========================================="; \
+	echo "Running test '$*' with Spike"; \
+	echo "=========================================="; \
+	cd $(BUILD_DIR) && $(SPIKE) --isa=rv32imac_zicsr_zicntr_zicbom $(SPIKE_EXTLIBS_LOCAL) $(SPIKE_DEVICES) $(if $(filter 1,$(TRACE)),--log-commits --log=sim_trace.txt) $$elf 2>&1
 	@echo ""
 ifeq ($(TRACE),1)
 	@echo "Trace saved to: $(BUILD_DIR)/sim_trace.txt"
@@ -807,10 +829,24 @@ build-spike-plugins:
 # Target to compare RTL and software simulator traces (e.g., make compare-hello)
 # Runs both RTL and sim with TRACE=1 and compares the traces
 compare-%:
-	@echo "=========================================="
-	@echo "Comparing test '$*': RTL vs Software Simulator"
-	@echo "=========================================="
-	@if echo " $(COMPARE_EXCLUDE) " | grep -q " $* "; then \
+	@set -e; \
+	sel="$*"; fw=sw; t="$$sel"; \
+	case "$$sel" in \
+		freertos-*) fw=freertos; t=$${sel#freertos-};; \
+		zephyr-*)   fw=zephyr;   t=$${sel#zephyr-};; \
+		sw-*)       fw=sw;       t=$${sel#sw-};; \
+	esac; \
+	if [ "$$t" = "all" ] && [ "$$fw" != "sw" ]; then \
+		failed=0; \
+		for test in $$( $(RECURSIVE_MAKE) -s -C rtos/$$fw list-tests ); do \
+			if ! $(RECURSIVE_MAKE) -s compare-$$fw-$$test TRACE=$(TRACE) TRACE_COMPARE=$(TRACE_COMPARE) WAVE=$(WAVE) DEBUG=$(DEBUG) MAX_CYCLES=$(MAX_CYCLES) SIM=$(SIM); then failed=1; fi; \
+		done; \
+		exit $$failed; \
+	fi; \
+	echo "=========================================="; \
+	echo "Comparing test '$*': RTL vs Software Simulator"; \
+	echo "=========================================="; \
+	if [ "$$fw" = "sw" ] && echo " $(COMPARE_EXCLUDE) " | grep -q " $$t "; then \
 		echo "WARNING: '$*' is in COMPARE_EXCLUDE and is not expected to produce"; \
 		echo "         a matching trace. Possible reasons:"; \
 		echo "          - I/O-dependent test (uart, i2c, spi, dma, gpio, timer)"; \
@@ -818,63 +854,54 @@ compare-%:
 		echo ""; \
 		echo "         Proceeding anyway — mismatch is expected."; \
 		echo "=========================================="; \
-	fi
-	@echo "Step 1: Running RTL simulator with trace-compare..."
-	@-$(MAKE) rtl-$* TRACE_COMPARE=1
-	@echo ""
-	@echo "Step 2: Running software simulator with trace-compare..."
-	@-$(MAKE) sim-$* TRACE_COMPARE=1
-	@echo ""
-	@echo "Step 3: Comparing traces..."
-	@echo "=========================================="
-	@if [ ! -f scripts/trace_compare.py ]; then \
-		echo "Error: scripts/trace_compare.py not found"; \
-		exit 1; \
-	fi
-	@if [ ! -f $(BUILD_DIR)/rtl_trace.txt ]; then \
-		echo "Error: $(BUILD_DIR)/rtl_trace.txt not found"; \
-		exit 1; \
-	fi
-	@if [ ! -f $(BUILD_DIR)/sim_trace.txt ]; then \
-		echo "Error: $(BUILD_DIR)/sim_trace.txt not found"; \
-		exit 1; \
-	fi
-	@if [ "$*" = "wdt" ]; then \
+	fi; \
+	echo "Step 1: Running RTL simulator with trace-compare..."; \
+	if [ "$$fw" = "sw" ]; then $(RECURSIVE_MAKE) rtl-$$t TRACE_COMPARE=1 || true; else $(RECURSIVE_MAKE) rtl-$$fw-$$t TRACE_COMPARE=1 || true; fi; \
+	echo ""; \
+	echo "Step 2: Running software simulator with trace-compare..."; \
+	if [ "$$fw" = "sw" ]; then $(RECURSIVE_MAKE) sim-$$t TRACE_COMPARE=1 || true; else $(RECURSIVE_MAKE) sim-$$fw-$$t TRACE_COMPARE=1 || true; fi; \
+	echo ""; \
+	echo "Step 3: Comparing traces..."; \
+	echo "=========================================="; \
+	if [ ! -f scripts/trace_compare.py ]; then echo "Error: scripts/trace_compare.py not found"; exit 1; fi; \
+	if [ ! -f $(BUILD_DIR)/rtl_trace.txt ]; then echo "Error: $(BUILD_DIR)/rtl_trace.txt not found"; exit 1; fi; \
+	if [ ! -f $(BUILD_DIR)/sim_trace.txt ]; then echo "Error: $(BUILD_DIR)/sim_trace.txt not found"; exit 1; fi; \
+	if [ "$$fw" = "sw" ] && [ "$$t" = "wdt" ]; then \
 		echo "WARNING: strict trace compare for wdt may diverge on timer-read timing"; \
 		echo "         while remaining functionally correct."; \
 		echo "         Running compare for visibility (non-fatal in this mode)..."; \
 		python3 scripts/trace_compare.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt || true; \
-		if [ -f scripts/trace_resync.py ]; then \
-			echo ""; \
-			echo "Resync summary:"; \
-			python3 scripts/trace_resync.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt || true; \
-		fi; \
+		if [ -f scripts/trace_resync.py ]; then echo ""; echo "Resync summary:"; python3 scripts/trace_resync.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt || true; fi; \
 		echo "=========================================="; \
 		echo "Trace comparison complete (warning-only mode)"; \
 		echo "=========================================="; \
 		exit 0; \
-	fi
-	@if [ "$*" = "rtos" ] && [ "$(ICACHE_EN)" = "0" ] && echo "$(MEM_TYPE)" | grep -q '^ddr4-'; then \
+	fi; \
+	if [ "$$fw" = "sw" ] && [ "$$t" = "rtos" ] && [ "$(ICACHE_EN)" = "0" ] && echo "$(MEM_TYPE)" | grep -q '^ddr4-'; then \
 		echo "WARNING: strict trace compare for rtos with ICACHE_EN=0 + $(MEM_TYPE)"; \
 		echo "         may show small trap-entry timing mismatches (e.g. mepc +/- 2)."; \
 		echo "         Running compare for visibility (non-fatal in this mode)..."; \
 		python3 scripts/trace_compare.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt || true; \
-		if [ -f scripts/trace_resync.py ]; then \
-			echo ""; \
-			echo "Resync summary:"; \
-			python3 scripts/trace_resync.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt || true; \
-		fi; \
+		if [ -f scripts/trace_resync.py ]; then echo ""; echo "Resync summary:"; python3 scripts/trace_resync.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt || true; fi; \
 		echo "=========================================="; \
 		echo "Trace comparison complete (warning-only mode)"; \
 		echo "=========================================="; \
 		exit 0; \
-	fi
-	@if ! { [ "$*" = "wdt" ] || ( [ "$*" = "rtos" ] && [ "$(ICACHE_EN)" = "0" ] && echo "$(MEM_TYPE)" | grep -q '^ddr4-' ); }; then \
-		python3 scripts/trace_compare.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt; \
-	fi
-	@echo "=========================================="
-	@echo "Trace comparison complete!"
-	@echo "=========================================="
+	fi; \
+	if echo " $(COMPARE_EXCLUDE) " | grep -q " $$sel "; then \
+		echo "WARNING: '$*' is in COMPARE_EXCLUDE and may diverge in timing-sensitive traces."; \
+		echo "         Running compare for visibility (non-fatal in this mode)..."; \
+		python3 scripts/trace_compare.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt || true; \
+		if [ -f scripts/trace_resync.py ]; then echo ""; echo "Resync summary:"; python3 scripts/trace_resync.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt || true; fi; \
+		echo "=========================================="; \
+		echo "Trace comparison complete (warning-only mode)"; \
+		echo "=========================================="; \
+		exit 0; \
+	fi; \
+	python3 scripts/trace_compare.py $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt; \
+	echo "=========================================="; \
+	echo "Trace comparison complete!"; \
+	echo "=========================================="
 
 # Target to run test with coverage collection (e.g., make coverage-hello)
 # Builds RTL with coverage enabled and runs test
@@ -1162,10 +1189,20 @@ coverage-report:
 arch-test-%:
 	@$(MAKE) -C verif arch-test-$*
 
-# Target to run FreeRTOS tests (e.g., make freerots-rtl-perf)
-# Forwards to rtos/freertos/Makefile
+# Build-only passthroughs for framework-local makefiles.
 freertos-%:
-	@$(MAKE) -C rtos freertos-$*
+	@case "$*" in \
+		help|list-tests|clean|build) $(MAKE) -C rtos/freertos "$*";; \
+		all) $(MAKE) -C rtos/freertos build TEST=all;; \
+		*) $(MAKE) -C rtos/freertos build TEST="$*";; \
+	esac
+
+zephyr-%:
+	@case "$*" in \
+		help|list-tests|setup|clean|clean-all|build) $(MAKE) -C rtos/zephyr "$*";; \
+		all) $(MAKE) -C rtos/zephyr build TEST=all;; \
+		*) $(MAKE) -C rtos/zephyr build TEST="$*";; \
+	esac
 
 # Run simulation
 run: $(BUILD_TARGET)
@@ -1198,7 +1235,8 @@ clean:
 	@rm -rf $(BUILD_DIR)
 	@rm -f $(SIM_DIR)/kv32soc.vcd
 	@rm -f $(SIM_DIR)/*.vcd
-	@make -C rtos freertos-clean
+	@make -C rtos/freertos clean
+	@make -C rtos/zephyr clean
 	@make -C verif arch-test-clean
 	@echo "Clean complete!"
 
@@ -1280,6 +1318,15 @@ help:
 	@echo ""
 	@echo "Test Program Targets:"
 	@echo "  <test>        - Build test program (e.g., make hello)"
+	@echo ""
+	@echo "Shared Target Selector Grammar (<test>):"
+	@echo "  all               - Run all sw tests"
+	@echo "  <subtest>         - Run sw subtest"
+	@echo "  freertos-all      - Run all FreeRTOS samples"
+	@echo "  freertos-<subtest>- Run FreeRTOS sample"
+	@echo "  zephyr-all        - Run all Zephyr samples"
+	@echo "  zephyr-<subtest>  - Run Zephyr sample"
+	@echo ""
 	@echo "  rtl-<test>    - Build and run test with RTL simulator"
 	@echo "  rtl-rtos      - Run mini-RTOS (profile is controlled in sw/rtos/rtos_test.c)"
 	@echo "  rtl-all       - Build and run ALL tests with RTL simulator"
@@ -1312,6 +1359,9 @@ help:
 	@echo "  make rtl-all         # Run all tests with RTL"
 	@echo "  make sim-uart        # Run uart test with software sim (kv32sim)"
 	@echo "  make sim-all         # Run all tests with software sim"
+	@echo "  make sim-freertos-all      # Run all FreeRTOS samples with software sim"
+	@echo "  make rtl-freertos-simple   # Run one FreeRTOS sample with RTL"
+	@echo "  make sim-zephyr-hello      # Run one Zephyr sample with software sim"
 	@echo "  make spike-hello           # Run hello test with Spike (shorthand)"
 	@echo "  make SIM=spike sim-hello   # Run hello test with Spike + MMIO plugins"
 	@echo "  make spike-all             # Run all Spike-compatible tests"
@@ -1339,12 +1389,13 @@ help:
 	@echo "  make SIM=spike sim-hello # Use Spike with MMIO plugins (RTL-compatible binary)"
 	@echo ""
 	@echo "Output Structure:"
-	@echo "  build/firmware.elf          - Executable"
-	@echo "  build/firmware.dis          - Disassembly"
-	@echo "  build/firmware.readelf      - ELF info"
+	@echo "  build/<test>.elf            - Bare-metal SW executable"
+	@echo "  build/freertos-<test>.elf   - FreeRTOS executable"
+	@echo "  build/zephyr-<test>.elf     - Zephyr executable"
 	@echo "  build/kv32soc.fst           - Waveform (RTL, FST format)"
 	@echo "  build/coverage_html/        - Coverage report (HTML)"
 	@echo "  build/coverage.info         - Coverage data (lcov format)"
 	@echo ""
 	@make -C verif help
-	@make -C rtos freertos-help
+	@make -C rtos/freertos help
+	@make -C rtos/zephyr help

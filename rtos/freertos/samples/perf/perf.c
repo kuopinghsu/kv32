@@ -36,7 +36,7 @@
 
 extern void exit(int);
 
-#define TEST_ITER           10
+#define TEST_ITER           3
 #define PERF_TEST_PRIORITY  5  // Priorities will vary between 2 and 7
 
 int get_timer(void) {
@@ -207,7 +207,7 @@ void sem_test(void * arg)
 
     while (!uiTaskResponse[0])
     {
-        vTaskDelay(10);
+        vTaskDelay(1);
     }
 
     if (printStats)
@@ -229,9 +229,8 @@ void sem_test(void * arg)
 
     while (!uiTaskResponse[0])
     {
-        vTaskDelay(10);
+        vTaskDelay(1);
     }
-
     if (printStats)
         printf("Semaphore put with context switch    : avg %lu max %lu cycles\n", test_total/TEST_ITER, test_max);
     *pResponse = 1;
@@ -355,7 +354,7 @@ void mutex_test(void * arg)
 
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(10);
+        vTaskDelay(1);
     }
 
     if (printStats)
@@ -383,7 +382,7 @@ void mutex_test(void * arg)
 
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(10);
+        vTaskDelay(1);
     }
 
     if (printStats)
@@ -516,7 +515,7 @@ void event_test(void * arg)
 
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(100);
+        vTaskDelay(3);
     }
 
     if (printStats)
@@ -545,7 +544,7 @@ void event_test(void * arg)
 
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(100);
+        vTaskDelay(3);
     }
 
     if (printStats)
@@ -687,7 +686,7 @@ void msgq_test(void* arg)
 
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(100);
+        vTaskDelay(3);
     }
 
     if (printStats)
@@ -715,7 +714,7 @@ void msgq_test(void* arg)
 
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(100);
+        vTaskDelay(3);
     }
 
     if (printStats)
@@ -733,7 +732,7 @@ void msgq_test(void* arg)
 //-----------------------------------------------------------------------------
 void yieldTest(void)
 {
-#define OVERHEAD_MEASUREMENT_RPT    10
+#define OVERHEAD_MEASUREMENT_RPT    TEST_ITER
     uint32_t oh_cycles;
     int32_t  i;
 
@@ -767,7 +766,7 @@ void yieldTest(void)
     // Wait for them all to finish
     while (3 > (uiTaskResponse[0] + uiTaskResponse[1] + uiTaskResponse[2]))
     {
-        vTaskDelay(50);
+        vTaskDelay(2);
     }
 
     // Compute average values for solicited context switch
@@ -812,7 +811,7 @@ void unsolicited_hipriority(void *arg)
     int i;
     (void)(arg);
     for (i = 0; i < 16; i++) {
-        vTaskDelay(10); // Give time to background task
+        vTaskDelay(1); // Give time to background task
         unsigned cycles = get_timer() - unsolicited_cycles;
         stats_update(&unsolicited_stats, cycles);
     }
@@ -841,7 +840,7 @@ void unsolicitedTest(void)
 
     // Wait for them all to finish
     while (!unsolicited_done)
-        vTaskDelay(50);
+        vTaskDelay(2);
 
     // Calibrate read counter function (approximate calibration)
     unsigned calib = get_timer();
@@ -867,7 +866,7 @@ void semaphoreTest(void)
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY - 3);
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(10);
+        vTaskDelay(1);
     }
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY);
 }
@@ -880,7 +879,7 @@ void mutexTest(void)
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY - 2);
     while (!uiTaskResponse[0])
     {
-        vTaskDelay(10);
+        vTaskDelay(1);
     }
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY);
 }
@@ -893,7 +892,7 @@ void eventTest(void)
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY - 2);
     while (!uiTaskResponse[0])
     {
-        vTaskDelay(10);
+        vTaskDelay(1);
     }
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY);
 }
@@ -906,7 +905,7 @@ void queueTest(void)
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY - 2);
     while (!uiTaskResponse[0])
     {
-        vTaskDelay(10);
+        vTaskDelay(1);
     }
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY);
 }
