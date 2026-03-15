@@ -29,37 +29,43 @@ set OUTPUT_PORTS_EXCLUDE [list]
 # RTL
 set RTL_ROOT [file normalize [file join $SYN_DIR .. rtl]]
 set RTL_FILES [list \
-    "$RTL_ROOT/core/kv32_pkg.sv" \
-    "$RTL_ROOT/core/kv32_ib.sv" \
-    "$RTL_ROOT/core/kv32_regfile.sv" \
-    "$RTL_ROOT/core/kv32_csr.sv" \
-    "$RTL_ROOT/core/kv32_alu.sv" \
-    "$RTL_ROOT/core/kv32_decoder.sv" \
-    "$RTL_ROOT/core/kv32_rvc.sv" \
-    "$RTL_ROOT/core/kv32_sb.sv" \
-    "$RTL_ROOT/core/kv32_core.sv" \
+    "$RTL_ROOT/kv32/core/kv32_pkg.sv" \
+    "$RTL_ROOT/kv32/core/kv32_ib.sv" \
+    "$RTL_ROOT/kv32/core/kv32_regfile.sv" \
+    "$RTL_ROOT/kv32/core/kv32_csr.sv" \
+    "$RTL_ROOT/kv32/core/kv32_alu.sv" \
+    "$RTL_ROOT/kv32/core/kv32_bht.sv" \
+    "$RTL_ROOT/kv32/core/kv32_btb.sv" \
+    "$RTL_ROOT/kv32/core/kv32_decoder.sv" \
+    "$RTL_ROOT/kv32/core/kv32_rvc.sv" \
+    "$RTL_ROOT/kv32/core/kv32_sb.sv" \
+    "$RTL_ROOT/kv32/core/kv32_ras.sv" \
+    "$RTL_ROOT/kv32/core/kv32_core.sv" \
     "$SYN_LIB_ROOT/sram_1rw.sv" \
-    "$RTL_ROOT/axi_pkg.sv" \
-    "$RTL_ROOT/axi_arbiter.sv" \
-    "$RTL_ROOT/axi_dma.sv" \
-    "$RTL_ROOT/axi_xbar.sv" \
-    "$RTL_ROOT/axi_clint.sv" \
-    "$RTL_ROOT/axi_i2c.sv" \
-    "$RTL_ROOT/axi_spi.sv" \
-    "$RTL_ROOT/axi_plic.sv" \
-    "$RTL_ROOT/axi_uart.sv" \
-    "$RTL_ROOT/axi_gpio.sv" \
-    "$RTL_ROOT/axi_timer.sv" \
-    "$RTL_ROOT/axi_magic.sv" \
-    "$RTL_ROOT/mem_axi.sv" \
-    "$RTL_ROOT/mem_axi_ro.sv" \
-    "$RTL_ROOT/kv32_icache.sv" \
-    "$RTL_ROOT/kv32_dcache.sv" \
-    "$RTL_ROOT/kv32_pm.sv" \
-    "$RTL_ROOT/kv32_dtm.sv" \
-    "$RTL_ROOT/jtag/jtag_tap.sv" \
-    "$RTL_ROOT/jtag/cjtag_bridge.sv" \
-    "$RTL_ROOT/jtag/jtag_top.sv" \
+    "$RTL_ROOT/axi/axi_pkg.sv" \
+    "$RTL_ROOT/axi/axi_arbiter.sv" \
+    "$RTL_ROOT/axi/axi_dma.sv" \
+    "$RTL_ROOT/axi/axi_xbar.sv" \
+    "$RTL_ROOT/axi/axi_clint.sv" \
+    "$RTL_ROOT/axi/axi_i2c.sv" \
+    "$RTL_ROOT/axi/axi_spi.sv" \
+    "$RTL_ROOT/axi/axi_plic.sv" \
+    "$RTL_ROOT/axi/axi_uart.sv" \
+    "$RTL_ROOT/axi/axi_gpio.sv" \
+    "$RTL_ROOT/axi/axi_timer.sv" \
+    "$RTL_ROOT/axi/axi_wdt.sv" \
+    "$RTL_ROOT/axi/axi_magic.sv" \
+    "$RTL_ROOT/axi/axi_top.sv" \
+    "$RTL_ROOT/kv32/mem_axi.sv" \
+    "$RTL_ROOT/kv32/mem_axi_ro.sv" \
+    "$RTL_ROOT/kv32/kv32_icache.sv" \
+    "$RTL_ROOT/kv32/kv32_dcache.sv" \
+    "$RTL_ROOT/kv32/kv32_pm.sv" \
+    "$RTL_ROOT/kv32/jtag/kv32_dtm.sv" \
+    "$RTL_ROOT/kv32/kv32_top.sv" \
+    "$RTL_ROOT/kv32/jtag/jtag_tap.sv" \
+    "$RTL_ROOT/kv32/jtag/cjtag_bridge.sv" \
+    "$RTL_ROOT/kv32/jtag/jtag_top.sv" \
     "$RTL_ROOT/kv32_soc.sv" \
 ]
 
@@ -271,6 +277,18 @@ foreach mem_name [list $OPENRAM_ICACHE_TAG_NAME $OPENRAM_ICACHE_DATA_NAME \
     }
     if {[file exists $vlog_f]} { lappend OPENRAM_RTL_FILES $vlog_f }
 }
+
+# I$ and D$ can share the same generated OpenRAM macro file.
+# Deduplicate while preserving first-seen order to avoid Yosys redefinition errors.
+set openram_rtl_unique {}
+array unset openram_rtl_seen
+foreach rtl_f $OPENRAM_RTL_FILES {
+    if {![info exists openram_rtl_seen($rtl_f)]} {
+        set openram_rtl_seen($rtl_f) 1
+        lappend openram_rtl_unique $rtl_f
+    }
+}
+set OPENRAM_RTL_FILES $openram_rtl_unique
 
 # TECH_LIB_FILES: complete lib set for the active corner (OpenRAM + PDK).
 # Used directly by Genus/DC main library loading so neither tool has to

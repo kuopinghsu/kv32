@@ -24,7 +24,10 @@ endif
 
 # Project directories
 RTL_DIR = rtl
-CORE_DIR = $(RTL_DIR)/core
+KV32_DIR = $(RTL_DIR)/kv32
+CORE_DIR = $(KV32_DIR)/core
+AXI_DIR = $(RTL_DIR)/axi
+JTAG_DIR = $(KV32_DIR)/jtag
 MEM_DIR  = $(RTL_DIR)/memories
 TB_DIR = testbench
 SIM_DIR = sim
@@ -169,7 +172,7 @@ VERILATOR_FLAGS = -Wall -Wno-UNSIGNED --trace --trace-fst --cc --exe --build -j 
 VERILATOR_FLAGS += -sv --timing
 VERILATOR_FLAGS += --timescale 1ns/1ps
 VERILATOR_FLAGS += --top-module tb_kv32_soc
-VERILATOR_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM
+VERILATOR_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM -Wno-SYNCASYNCNET
 VERILATOR_FLAGS += -CFLAGS "-Wall -Werror -Wno-bool-operation -Wno-parentheses-equality -Wno-unused-variable"
 VERILATOR_FLAGS += -I$(MEM_DIR)
 
@@ -413,7 +416,7 @@ LINT_MODULE_LIST = $(filter-out %_pkg.sv, $(RTL_ONLY_SRCS))
 # NOTE: no -pvalue+ here; parameters use module defaults when linting individually
 LINT_MOD_FLAGS  = --lint-only -Wall -Wno-UNSIGNED -sv --timing
 LINT_MOD_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM -Wno-SYNCASYNCNET -Werror-IMPLICIT
-LINT_MOD_FLAGS += -I$(MEM_DIR) -I$(CORE_DIR) -I$(RTL_DIR)
+LINT_MOD_FLAGS += -I$(MEM_DIR) -I$(CORE_DIR) -I$(KV32_DIR) -I$(AXI_DIR) -I$(JTAG_DIR) -I$(RTL_DIR)
 ifneq ($(filter ddr4-%,$(MEM_TYPE)),)
   LINT_MOD_FLAGS += +define+MEM_TYPE_DDR4
 endif
@@ -422,10 +425,11 @@ endif
 # Package files must be compiled first
 RTL_SOURCES = \
 	$(CORE_DIR)/kv32_pkg.sv \
-	$(RTL_DIR)/axi_pkg.sv \
+	$(AXI_DIR)/axi_pkg.sv \
 	$(filter-out $(CORE_DIR)/kv32_pkg.sv, $(wildcard $(CORE_DIR)/*.sv)) \
-	$(filter-out $(RTL_DIR)/axi_pkg.sv, $(wildcard $(RTL_DIR)/*.sv)) \
-	$(filter-out $(RTL_DIR)/jtag/PINMUX_EXAMPLES.sv, $(wildcard $(RTL_DIR)/jtag/*.sv)) \
+	$(filter-out $(AXI_DIR)/axi_pkg.sv, $(wildcard $(AXI_DIR)/*.sv)) \
+	$(wildcard $(KV32_DIR)/*.sv) \
+	$(filter-out $(JTAG_DIR)/PINMUX_EXAMPLES.sv, $(wildcard $(JTAG_DIR)/*.sv)) \
 	$(wildcard $(MEM_DIR)/*.sv) \
 	$(MEM_TB_SV) \
 	$(TB_DIR)/axi_monitor.sv \

@@ -87,6 +87,7 @@ kv32/
 │   ├── jtag/               # JTAG/cJTAG debug interface
 │   │   ├── jtag_top.sv     # Top-level wrapper (JTAG / cJTAG mode select)
 │   │   ├── jtag_tap.sv     # IEEE 1149.1 TAP state machine
+│   │   ├── kv32_dtm.sv     # RISC-V Debug Spec 0.13 DTM + Debug Module
 │   │   └── cjtag_bridge.sv # IEEE 1149.7 cJTAG→JTAG bridge (OScan1)
 │   ├── memories/           # SRAM macro wrappers
 │   │   └── sram_1rw.sv     # Single-port SRAM wrapper (used by caches)
@@ -96,7 +97,6 @@ kv32/
 │   ├── axi_arbiter.sv      # AXI arbiter (instruction/data read channels)
 │   ├── kv32_icache.sv      # Instruction cache (configurable set-associative)
 │   ├── kv32_dcache.sv      # Data cache (write-back/write-through, CMO, PMA)
-│   ├── kv32_dtm.sv         # RISC-V Debug Spec 0.13 DTM + Debug Module
 │   ├── kv32_pm.sv          # Power manager (WFI clock gating, BUFGCE/ICG)
 │   ├── axi_clint.sv        # CLINT (mtime/mtimecmp/msip)
 │   ├── axi_plic.sv         # PLIC (platform-level interrupt controller)

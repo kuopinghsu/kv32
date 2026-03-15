@@ -453,7 +453,7 @@ module tb_kv32_soc #(
         .rst_n(rst_n),
         .rx(uart_tx_internal),   // Connect to SoC TX output
         .tx(uart_rx),            // Connect directly to SoC RX input
-        .clks_per_bit(16'(dut.uart.baud_div_r) + 16'd1)
+        .clks_per_bit(16'(dut.u_axi_top.uart.baud_div_r) + 16'd1)
     );
 
     // Drive testbench output port from SoC internal signal
@@ -546,7 +546,7 @@ module tb_kv32_soc #(
     export "DPI-C" function get_store_resp;
 
     function bit get_ex_valid();
-        return dut.core.ex_valid;
+        return dut.u_kv32_top.core.ex_valid;
     endfunction
 
     function void get_ex_signals(
@@ -559,14 +559,14 @@ module tb_kv32_soc #(
         output bit [31:0] alu_result,
         output bit [31:0] rs2_data_ex
     );
-        pc_ex = dut.core.pc_ex;
-        instr_ex = dut.core.instr_ex;
-        rd_addr_ex = dut.core.rd_addr_ex;
-        reg_we_ex = dut.core.reg_we_ex;
-        mem_read_ex = dut.core.mem_read_ex;
-        mem_write_ex = dut.core.mem_write_ex;
-        alu_result = dut.core.alu_result_final;
-        rs2_data_ex = dut.core.rs2_forwarded;
+        pc_ex = dut.u_kv32_top.core.pc_ex;
+        instr_ex = dut.u_kv32_top.core.instr_ex;
+        rd_addr_ex = dut.u_kv32_top.core.rd_addr_ex;
+        reg_we_ex = dut.u_kv32_top.core.reg_we_ex;
+        mem_read_ex = dut.u_kv32_top.core.mem_read_ex;
+        mem_write_ex = dut.u_kv32_top.core.mem_write_ex;
+        alu_result = dut.u_kv32_top.core.alu_result_final;
+        rs2_data_ex = dut.u_kv32_top.core.rs2_forwarded;
     endfunction
 
     function void get_wb_signals(
@@ -589,24 +589,24 @@ module tb_kv32_soc #(
         output bit [31:0] csr_rdata_wb,
         output bit [31:0] mstatus_wb
     );
-        wb_valid = dut.core.wb_valid;
-        retire_instr = dut.core.retire_instr;
-        pc_wb = dut.core.pc_wb;
-        instr_wb = dut.core.instr_wb;
-        orig_instr_wb = dut.core.orig_instr_wb;
-        rd_addr_wb = dut.core.rd_addr_wb;
-        reg_we_wb = dut.core.reg_we_wb;
-        mem_read_wb = dut.core.mem_read_wb;
-        mem_write_wb = dut.core.mem_write_wb;
-        alu_result_wb = dut.core.alu_result_wb;
-        mem_data_wb = dut.core.mem_data_wb;
-        store_data_wb = dut.core.store_data_wb;
-        csr_wdata_wb = dut.core.csr_wdata_wb;
-        csr_zimm_wb = dut.core.csr_zimm_wb;
-        csr_op_wb = dut.core.csr_op_wb;
-        csr_addr_wb = dut.core.csr_addr_wb;
-        csr_rdata_wb = dut.core.csr_rdata_wb;
-        mstatus_wb = dut.core.csr.mstatus;
+        wb_valid = dut.u_kv32_top.core.wb_valid;
+        retire_instr = dut.u_kv32_top.core.retire_instr;
+        pc_wb = dut.u_kv32_top.core.pc_wb;
+        instr_wb = dut.u_kv32_top.core.instr_wb;
+        orig_instr_wb = dut.u_kv32_top.core.orig_instr_wb;
+        rd_addr_wb = dut.u_kv32_top.core.rd_addr_wb;
+        reg_we_wb = dut.u_kv32_top.core.reg_we_wb;
+        mem_read_wb = dut.u_kv32_top.core.mem_read_wb;
+        mem_write_wb = dut.u_kv32_top.core.mem_write_wb;
+        alu_result_wb = dut.u_kv32_top.core.alu_result_wb;
+        mem_data_wb = dut.u_kv32_top.core.mem_data_wb;
+        store_data_wb = dut.u_kv32_top.core.store_data_wb;
+        csr_wdata_wb = dut.u_kv32_top.core.csr_wdata_wb;
+        csr_zimm_wb = dut.u_kv32_top.core.csr_zimm_wb;
+        csr_op_wb = dut.u_kv32_top.core.csr_op_wb;
+        csr_addr_wb = dut.u_kv32_top.core.csr_addr_wb;
+        csr_rdata_wb = dut.u_kv32_top.core.csr_rdata_wb;
+        mstatus_wb = dut.u_kv32_top.core.csr.mstatus;
     endfunction
 
     function int unsigned get_reg_value(input int unsigned reg_idx);
@@ -614,7 +614,7 @@ module tb_kv32_soc #(
             return 32'd0;
         end
         if (reg_idx >= 1 && reg_idx <= 31) begin
-            return dut.core.regfile.regs[reg_idx];
+            return dut.u_kv32_top.core.regfile.regs[reg_idx];
         end
         return 32'd0;
     endfunction
@@ -634,16 +634,16 @@ module tb_kv32_soc #(
         output bit resp_error,     // B-channel SLVERR
         output bit fence_in_pipe   // FENCE is somewhere in IF/ID/EX/MEM
     );
-        resp_valid  = dut.dmem_resp_valid && dut.dmem_resp_is_write;
-        resp_error  = dut.dmem_resp_error;
+        resp_valid  = dut.u_kv32_top.dmem_resp_valid && dut.u_kv32_top.dmem_resp_is_write;
+        resp_error  = dut.u_kv32_top.dmem_resp_error;
         // IF stage: instruction word presented at IF→ID boundary is FENCE
         // (opcode 0001111, funct3 000 for plain FENCE)
-        fence_in_pipe = (dut.core.if_valid
-                             && dut.core.instr_if[6:0]  == 7'b0001111
-                             && dut.core.instr_if[14:12] == 3'b000)
-                      | (dut.core.is_fence_id  && dut.core.id_valid)
-                      | (dut.core.is_fence_ex  && dut.core.ex_valid)
-                      | (dut.core.is_fence_mem && dut.core.mem_valid);
+        fence_in_pipe = (dut.u_kv32_top.core.if_valid
+                             && dut.u_kv32_top.core.instr_if[6:0]  == 7'b0001111
+                             && dut.u_kv32_top.core.instr_if[14:12] == 3'b000)
+                      | (dut.u_kv32_top.core.is_fence_id  && dut.u_kv32_top.core.id_valid)
+                      | (dut.u_kv32_top.core.is_fence_ex  && dut.u_kv32_top.core.ex_valid)
+                      | (dut.u_kv32_top.core.is_fence_mem && dut.u_kv32_top.core.mem_valid);
     endfunction
 
     function void get_mem_signals(
@@ -653,11 +653,11 @@ module tb_kv32_soc #(
         output bit [31:0] dmem_req_wdata,
         output bit [3:0]  dmem_req_we
     );
-        mem_write_mem = dut.core.mem_write_mem;
-        mem_valid = dut.core.mem_valid;
-        alu_result_mem = dut.core.alu_result_mem;
-        dmem_req_wdata = dut.core.dmem_req_wdata;
-        dmem_req_we = dut.core.dmem_req_we;
+        mem_write_mem = dut.u_kv32_top.core.mem_write_mem;
+        mem_valid = dut.u_kv32_top.core.mem_valid;
+        alu_result_mem = dut.u_kv32_top.core.alu_result_mem;
+        dmem_req_wdata = dut.u_kv32_top.core.dmem_req_wdata;
+        dmem_req_we = dut.u_kv32_top.core.dmem_req_we;
     endfunction
 
     function void get_csr_signals(
@@ -666,10 +666,10 @@ module tb_kv32_soc #(
         output bit [31:0] csr_wdata,
         output bit [31:0] csr_rdata
     );
-        csr_op_ex = dut.core.csr_op_ex;
-        csr_addr_ex = dut.core.csr_addr_ex;
-        csr_wdata = dut.core.rs1_forwarded;  // CSR write data comes from rs1
-        csr_rdata = dut.core.csr_rdata;
+        csr_op_ex = dut.u_kv32_top.core.csr_op_ex;
+        csr_addr_ex = dut.u_kv32_top.core.csr_addr_ex;
+        csr_wdata = dut.u_kv32_top.core.rs1_forwarded;  // CSR write data comes from rs1
+        csr_rdata = dut.u_kv32_top.core.csr_rdata;
     endfunction
 
 endmodule

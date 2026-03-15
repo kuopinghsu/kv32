@@ -46,41 +46,30 @@ set_property target_language SystemVerilog [current_project]
 # ============================================================================
 puts "Adding RTL source files..."
 
-# Core package (must be compiled first)
-add_files -norecurse $proj_root/rtl/axi_pkg.sv
-add_files -norecurse $proj_root/rtl/core/kv32_pkg.sv
+# Packages (must be compiled first)
+add_files -norecurse $proj_root/rtl/axi/axi_pkg.sv
+add_files -norecurse $proj_root/rtl/kv32/core/kv32_pkg.sv
 
 # Processor core
-add_files -norecurse [glob $proj_root/rtl/core/*.sv]
+set core_files [glob $proj_root/rtl/kv32/core/*.sv]
+set core_files [lsearch -all -inline -not -exact $core_files $proj_root/rtl/kv32/core/kv32_pkg.sv]
+add_files -norecurse $core_files
 
 # AXI peripherals and interconnect
-add_files -norecurse $proj_root/rtl/axi_arbiter.sv
-add_files -norecurse $proj_root/rtl/axi_clint.sv
-add_files -norecurse $proj_root/rtl/axi_i2c.sv
-add_files -norecurse $proj_root/rtl/axi_magic.sv
-add_files -norecurse $proj_root/rtl/axi_spi.sv
-add_files -norecurse $proj_root/rtl/axi_uart.sv
-add_files -norecurse $proj_root/rtl/axi_gpio.sv
-add_files -norecurse $proj_root/rtl/axi_timer.sv
-add_files -norecurse $proj_root/rtl/axi_xbar.sv
+set axi_files [glob $proj_root/rtl/axi/*.sv]
+set axi_files [lsearch -all -inline -not -exact $axi_files $proj_root/rtl/axi/axi_pkg.sv]
+add_files -norecurse $axi_files
 
-# Memory interfaces
-add_files -norecurse $proj_root/rtl/mem_axi.sv
-add_files -norecurse $proj_root/rtl/mem_axi_ro.sv
-
-# I-cache
-add_files -norecurse $proj_root/rtl/kv32_icache.sv
-add_files -norecurse $proj_root/rtl/kv32_dcache.sv
-
-# Power manager
-add_files -norecurse $proj_root/rtl/kv32_pm.sv
+# KV32 wrappers and bridges
+add_files -norecurse $proj_root/rtl/kv32/mem_axi.sv
+add_files -norecurse $proj_root/rtl/kv32/mem_axi_ro.sv
+add_files -norecurse $proj_root/rtl/kv32/kv32_icache.sv
+add_files -norecurse $proj_root/rtl/kv32/kv32_dcache.sv
+add_files -norecurse $proj_root/rtl/kv32/kv32_pm.sv
+add_files -norecurse $proj_root/rtl/kv32/kv32_top.sv
 
 # JTAG / Debug
-add_files -norecurse [glob $proj_root/rtl/jtag/*.sv]
-add_files -norecurse $proj_root/rtl/kv32_dtm.sv
-
-# Interrupt controller
-add_files -norecurse $proj_root/rtl/kv32_plic.sv
+add_files -norecurse [glob $proj_root/rtl/kv32/jtag/*.sv]
 
 # SoC top level
 add_files -norecurse $proj_root/rtl/kv32_soc.sv

@@ -308,7 +308,7 @@ Final AXI slave assignment:
 - Updated `-march=rv32imac_zicsr` / `-mabi=ilp32` in `sw/common/Makefile` and Spike `--isa=rv32imac_zicsr_...` flags.
 - Added `sw/rvc/rvc.c` test: exercises all major RVC instruction groups (CI, CR, CL, CS, CB, CJ).
 - Updated `docs/pipeline_architecture.md` and `docs/kv32_soc_datasheet.adoc` with RVC/`kv32_rvc` expander description and C-extension ISA table entry.
-- Updated `misa = 32'h4014_1105` (C bit set) in `rtl/core/kv32_csr.sv` and IDCODE in `rtl/kv32_dtm.sv`.
+- Updated `misa = 32'h4014_1105` (C bit set) in `rtl/core/kv32_csr.sv` and IDCODE in `rtl/kv32/jtag/kv32_dtm.sv`.
 - All tests pass: `make test-all` 18/18, `make TRACE=1 arch-test-rv32c` 29/29.
 
 ### ~~C19. Physical Memory Attributes (PMA) — D-Cache Extension~~

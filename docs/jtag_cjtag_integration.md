@@ -274,10 +274,10 @@ riscv32-unknown-elf-gdb program.elf
 
 ## File Locations
 
-- Top-level wrapper: `rtl/jtag/jtag_top.sv`
-- cJTAG bridge: `rtl/jtag/cjtag_bridge.sv`
-- TAP controller: `rtl/jtag/jtag_tap.sv`
-- Debug Transport Module: `rtl/kv32_dtm.sv`
+- Top-level wrapper: `rtl/kv32/jtag/jtag_top.sv`
+- cJTAG bridge: `rtl/kv32/jtag/cjtag_bridge.sv`
+- TAP controller: `rtl/kv32/jtag/jtag_tap.sv`
+- Debug Transport Module: `rtl/kv32/jtag/kv32_dtm.sv`
 
 ## References
 
