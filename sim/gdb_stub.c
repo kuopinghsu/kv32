@@ -12,6 +12,8 @@
 #include <errno.h>
 #include <ctype.h>
 
+#define MAX_GDB_THREADS 128
+
 // Forward declarations for static functions
 static void handle_query(gdb_context_t *ctx, void *simulator, const gdb_callbacks_t *callbacks);
 static void handle_read_registers(gdb_context_t *ctx, void *simulator, const gdb_callbacks_t *callbacks);
@@ -29,6 +31,159 @@ static void handle_halt_reason(gdb_context_t *ctx, void *simulator, const gdb_ca
 static void handle_search_memory(gdb_context_t *ctx, void *simulator, const gdb_callbacks_t *callbacks);
 static int send_packet(gdb_stub_t *stub, const char *data);
 static int receive_packet(gdb_stub_t *stub);
+static uint32_t parse_hex(const char *str, int len);
+static char int_to_hex(uint8_t val);
+
+static int collect_threads(void *simulator, const gdb_callbacks_t *callbacks,
+                           uint32_t *thread_ids, int max_threads,
+                           uint32_t *current_thread_id) {
+    int count = 0;
+    uint32_t current = 1;
+
+    if (callbacks && callbacks->get_thread_list) {
+        count = callbacks->get_thread_list(simulator, thread_ids, max_threads,
+                                           &current);
+    }
+
+    if (count <= 0 || count > max_threads) {
+        if (max_threads > 0) {
+            thread_ids[0] = 1;
+            count = 1;
+            current = 1;
+        } else {
+            count = 0;
+        }
+    }
+
+    if (current == 0 && count > 0) {
+        current = thread_ids[0];
+    }
+    if (current_thread_id) {
+        *current_thread_id = current;
+    }
+    return count;
+}
+
+static bool thread_exists(void *simulator, const gdb_callbacks_t *callbacks,
+                          uint32_t thread_id) {
+    if (thread_id == 0) {
+        return true;
+    }
+
+    uint32_t tids[MAX_GDB_THREADS];
+    uint32_t current = 0;
+    int count = collect_threads(simulator, callbacks, tids, MAX_GDB_THREADS,
+                                &current);
+    for (int i = 0; i < count; i++) {
+        if (tids[i] == thread_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint32_t parse_thread_id(const char *str) {
+    if (!str || str[0] == '\0') {
+        return 0;
+    }
+    if (strcmp(str, "-1") == 0) {
+        return 0;
+    }
+    return parse_hex(str, (int)strlen(str));
+}
+
+static void encode_ascii_hex(const char *text, char *out, int out_size) {
+    int p = 0;
+    for (int i = 0; text[i] != '\0' && p + 2 < out_size; i++) {
+        uint8_t ch = (uint8_t)text[i];
+        out[p++] = int_to_hex(ch >> 4);
+        out[p++] = int_to_hex(ch & 0xF);
+    }
+    out[p] = '\0';
+}
+
+static int build_threads_xml(void *simulator, const gdb_callbacks_t *callbacks,
+                             char *xml, int xml_size) {
+    uint32_t tids[MAX_GDB_THREADS];
+    uint32_t current = 0;
+    int count = collect_threads(simulator, callbacks, tids, MAX_GDB_THREADS,
+                                &current);
+
+    int used = snprintf(xml, xml_size,
+                        "<?xml version=\"1.0\"?><threads>");
+    if (used < 0 || used >= xml_size) {
+        return -1;
+    }
+
+    for (int i = 0; i < count; i++) {
+        int remain = xml_size - used;
+        int wrote = snprintf(xml + used, remain,
+                             "<thread id=\"%x\" core=\"0\"%s/>",
+                             tids[i], (tids[i] == current) ? " current=\"yes\"" : "");
+        if (wrote < 0 || wrote >= remain) {
+            return -1;
+        }
+        used += wrote;
+    }
+
+    int remain = xml_size - used;
+    int wrote = snprintf(xml + used, remain, "</threads>");
+    if (wrote < 0 || wrote >= remain) {
+        return -1;
+    }
+    used += wrote;
+    return used;
+}
+
+static void send_threads_xfer(gdb_context_t *ctx, void *simulator,
+                              const gdb_callbacks_t *callbacks,
+                              const char *packet) {
+    const char *prefix = "qXfer:threads:read:";
+    const char *rest = packet + strlen(prefix);
+    const char *annex_sep = strchr(rest, ':');
+    if (!annex_sep) {
+        send_packet(&ctx->stub, "E01");
+        return;
+    }
+
+    const char *offset_str = annex_sep + 1;
+    const char *comma = strchr(offset_str, ',');
+    if (!comma) {
+        send_packet(&ctx->stub, "E01");
+        return;
+    }
+
+    uint32_t offset = parse_hex(offset_str, (int)(comma - offset_str));
+    uint32_t req_len = parse_hex(comma + 1, (int)strlen(comma + 1));
+    if (req_len == 0) {
+        send_packet(&ctx->stub, "l");
+        return;
+    }
+
+    char xml[8192];
+    int xml_len = build_threads_xml(simulator, callbacks, xml, (int)sizeof(xml));
+    if (xml_len < 0) {
+        send_packet(&ctx->stub, "E01");
+        return;
+    }
+
+    if (offset >= (uint32_t)xml_len) {
+        send_packet(&ctx->stub, "l");
+        return;
+    }
+
+    uint32_t available = (uint32_t)xml_len - offset;
+    uint32_t max_payload = GDB_BUFFER_SIZE - 2;
+    uint32_t chunk = req_len;
+    if (chunk > available) chunk = available;
+    if (chunk > max_payload) chunk = max_payload;
+
+    char response[GDB_BUFFER_SIZE];
+    response[0] = (offset + chunk < (uint32_t)xml_len) ? 'm' : 'l';
+    memcpy(response + 1, xml + offset, chunk);
+    response[chunk + 1] = '\0';
+    send_packet(&ctx->stub, response);
+}
 
 // Protocol helpers
 static uint8_t hex_to_int(char c) {
@@ -125,7 +280,9 @@ static int receive_packet(gdb_stub_t *stub) {
             if (++index == 2) {
                 // Send ACK/NACK
                 c = (checksum_received == checksum_expected) ? '+' : '-';
-                write(stub->client_fd, &c, 1);
+                if (write(stub->client_fd, &c, 1) != 1) {
+                    return -1;
+                }
 
                 if (checksum_received == checksum_expected) {
                     return 0;
@@ -142,6 +299,8 @@ static int receive_packet(gdb_stub_t *stub) {
 int gdb_stub_init(gdb_context_t *ctx, uint16_t port) {
     memset(ctx, 0, sizeof(*ctx));
     ctx->stub.port = port;
+    ctx->current_thread_id = 1;
+    ctx->resume_thread_id = 1;
 
     // Create socket
     ctx->stub.socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -209,15 +368,64 @@ static void handle_query(gdb_context_t *ctx, void *simulator,
     char *packet = ctx->stub.packet_buffer;
 
     if (strncmp(packet, "qSupported", 10) == 0) {
-        send_packet(&ctx->stub, "PacketSize=4096;qXfer:features:read+");
+        send_packet(&ctx->stub,
+                    "PacketSize=4096;qXfer:features:read+;qXfer:threads:read+");
     } else if (strncmp(packet, "qAttached", 9) == 0) {
         send_packet(&ctx->stub, "1");
     } else if (strncmp(packet, "qC", 2) == 0) {
-        send_packet(&ctx->stub, "QC1");
+        uint32_t tids[MAX_GDB_THREADS];
+        uint32_t current = 1;
+        int count = collect_threads(simulator, callbacks, tids, MAX_GDB_THREADS,
+                                    &current);
+        if (count > 0) {
+            ctx->current_thread_id = current;
+            char response[32];
+            snprintf(response, sizeof(response), "QC%x", current);
+            send_packet(&ctx->stub, response);
+        } else {
+            send_packet(&ctx->stub, "QC1");
+        }
     } else if (strncmp(packet, "qfThreadInfo", 12) == 0) {
-        send_packet(&ctx->stub, "m1");
+        uint32_t tids[MAX_GDB_THREADS];
+        uint32_t current = 1;
+        int count = collect_threads(simulator, callbacks, tids, MAX_GDB_THREADS,
+                                    &current);
+        if (count <= 0) {
+            send_packet(&ctx->stub, "l");
+        } else {
+            char response[GDB_BUFFER_SIZE];
+            int used = snprintf(response, sizeof(response), "m");
+            for (int i = 0; i < count; i++) {
+                int remain = (int)sizeof(response) - used;
+                int wrote = snprintf(response + used, remain, "%s%x",
+                                     (i == 0) ? "" : ",", tids[i]);
+                if (wrote < 0 || wrote >= remain) {
+                    break;
+                }
+                used += wrote;
+            }
+            send_packet(&ctx->stub, response);
+        }
     } else if (strncmp(packet, "qsThreadInfo", 12) == 0) {
         send_packet(&ctx->stub, "l");
+    } else if (strncmp(packet, "qThreadExtraInfo,", 17) == 0) {
+        uint32_t thread_id = parse_thread_id(packet + 17);
+        char info[128];
+        if (callbacks && callbacks->get_thread_extra_info) {
+            int rc = callbacks->get_thread_extra_info(simulator, thread_id,
+                                                      info, (int)sizeof(info));
+            if (rc <= 0) {
+                snprintf(info, sizeof(info), "thread 0x%x", thread_id);
+            }
+        } else {
+            snprintf(info, sizeof(info), "thread 0x%x", thread_id);
+        }
+
+        char encoded[256];
+        encode_ascii_hex(info, encoded, (int)sizeof(encoded));
+        send_packet(&ctx->stub, encoded);
+    } else if (strncmp(packet, "qXfer:threads:read:", 19) == 0) {
+        send_threads_xfer(ctx, simulator, callbacks, packet);
     } else if (strncmp(packet, "qXfer:features:read:target.xml", 30) == 0) {
         const char *xml = "l<?xml version=\"1.0\"?>"
                           "<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
@@ -499,30 +707,35 @@ static void handle_reset(gdb_context_t *ctx, void *simulator,
 // Set thread for subsequent operations (H command)
 static void handle_set_thread(gdb_context_t *ctx, void *simulator,
                              const gdb_callbacks_t *callbacks) {
-    (void)simulator;  // Unused in single-threaded implementation
-    (void)callbacks;  // Unused in single-threaded implementation
     char *packet = ctx->stub.packet_buffer + 1;
 
-    // Simple single-threaded implementation
-    // Format: Hg<thread-id> or Hc<thread-id>
-    if (packet[0] == 'g' || packet[0] == 'c') {
-        // For single-threaded system, accept thread ID 0, 1, or -1
-        send_packet(&ctx->stub, "OK");
-    } else {
+    if (packet[0] != 'g' && packet[0] != 'c') {
         send_packet(&ctx->stub, "E01");
+        return;
     }
+
+    uint32_t thread_id = parse_thread_id(packet + 1);
+    if (thread_id != 0 && !thread_exists(simulator, callbacks, thread_id)) {
+        send_packet(&ctx->stub, "E01");
+        return;
+    }
+
+    if (packet[0] == 'g') {
+        ctx->current_thread_id = thread_id;
+    } else {
+        ctx->resume_thread_id = thread_id;
+    }
+
+    send_packet(&ctx->stub, "OK");
 }
 
 // Check if thread is alive (T command)
 static void handle_thread_alive(gdb_context_t *ctx, void *simulator,
                                const gdb_callbacks_t *callbacks) {
-    (void)simulator;  // Unused in single-threaded implementation
-    (void)callbacks;  // Unused in single-threaded implementation
     char *packet = ctx->stub.packet_buffer + 1;
-    int thread_id = (int)parse_hex(packet, strlen(packet));
+    uint32_t thread_id = parse_thread_id(packet);
 
-    // For single-threaded system, only thread 1 is alive
-    if (thread_id == 1 || thread_id == 0) {
+    if (thread_exists(simulator, callbacks, thread_id)) {
         send_packet(&ctx->stub, "OK");
     } else {
         send_packet(&ctx->stub, "E01");

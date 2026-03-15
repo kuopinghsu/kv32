@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <algorithm>
 #include <stdint.h>
 #include <string>
 #include <unordered_set>
@@ -122,9 +123,24 @@ static bool gdb_is_running(void* user_data) {
     return sim->running;
 }
 
+static int gdb_get_thread_list(void* user_data, uint32_t *thread_ids,
+                               int max_threads,
+                               uint32_t *current_thread_id) {
+    KV32Simulator* sim = (KV32Simulator*)user_data;
+    return sim->get_thread_list_for_gdb(thread_ids, max_threads,
+                                        current_thread_id);
+}
+
+static int gdb_get_thread_extra_info(void* user_data, uint32_t thread_id,
+                                     char *buf, int buf_size) {
+    KV32Simulator* sim = (KV32Simulator*)user_data;
+    return sim->get_thread_extra_info_for_gdb(thread_id, buf, buf_size);
+}
+
 // RV32IMAC CPU simulator implementation
 KV32Simulator::KV32Simulator(uint32_t base, uint32_t size)
     : pc(0), running(true), exit_code(0), inst_count(0), tohost_addr(0),
+    detected_rtos(RTOS_NONE),
       trace_enabled(false), mem_base(base), mem_size(size), gdb_ctx(nullptr),
       gdb_enabled(false), gdb_stepping(false), max_instructions(0),
       signature_start(0), signature_end(0), signature_granularity(4),
@@ -1996,6 +2012,11 @@ bool KV32Simulator::load_elf(const char *filename) {
 
     // Set entry point
     pc = ehdr.e_entry;
+    elf_symbols.clear();
+    tohost_addr = 0;
+    signature_start = 0;
+    signature_end = 0;
+    detected_rtos = RTOS_NONE;
 
     // Load program headers
     file.seekg(ehdr.e_phoff);
@@ -2051,6 +2072,9 @@ bool KV32Simulator::load_elf(const char *filename) {
 
                 if (sym.st_name < strtab.size()) {
                     std::string name = &strtab[sym.st_name];
+                    if (!name.empty()) {
+                        elf_symbols[name] = sym.st_value;
+                    }
                     if (name == "tohost") {
                         tohost_addr = sym.st_value;
                     } else if (name == "begin_signature") {
@@ -2063,8 +2087,176 @@ bool KV32Simulator::load_elf(const char *filename) {
         }
     }
 
+    if (elf_symbols.count("pxCurrentTCB") || elf_symbols.count("pxReadyTasksLists")) {
+        detected_rtos = RTOS_FREERTOS;
+    } else if (elf_symbols.count("_kernel") || elf_symbols.count("_current") ||
+               elf_symbols.count("_kernel_thread_monitor_list")) {
+        detected_rtos = RTOS_ZEPHYR;
+    }
+
+    if (detected_rtos == RTOS_FREERTOS) {
+        std::cout << "Detected RTOS: FreeRTOS" << std::endl;
+    } else if (detected_rtos == RTOS_ZEPHYR) {
+        std::cout << "Detected RTOS: Zephyr" << std::endl;
+    }
+
     file.close();
     return true;
+}
+
+int KV32Simulator::get_thread_list_for_gdb(uint32_t *thread_ids, int max_threads,
+                                           uint32_t *current_thread_id) {
+    if (!thread_ids || max_threads <= 0) {
+        return 0;
+    }
+
+    std::vector<uint32_t> threads;
+    auto add_thread = [&](uint32_t tid) {
+        if (tid == 0) return;
+        if (std::find(threads.begin(), threads.end(), tid) == threads.end()) {
+            threads.push_back(tid);
+        }
+    };
+
+    uint32_t current_tid = 1;
+
+    auto read_u32_phys = [&](uint32_t addr, uint32_t *value) -> bool {
+        bool handled = false;
+        uint32_t v = bus_read(addr, 4, &handled);
+        if (!handled) return false;
+        *value = v;
+        return true;
+    };
+
+    if (detected_rtos == RTOS_FREERTOS) {
+        auto it_current = elf_symbols.find("pxCurrentTCB");
+        if (it_current != elf_symbols.end()) {
+            uint32_t ptr = 0;
+            if (read_u32_phys(it_current->second, &ptr) && ptr != 0) {
+                current_tid = ptr;
+                add_thread(ptr);
+            }
+        }
+
+        auto walk_freertos_list = [&](uint32_t list_addr, uint32_t max_items) {
+            uint32_t node = 0;
+            uint32_t list_end = list_addr + 8;
+            if (!read_u32_phys(list_addr + 12, &node) || node == 0) {
+                return;
+            }
+
+            uint32_t iter = 0;
+            while (node != list_end && node != 0 && iter < max_items) {
+                uint32_t owner = 0;
+                uint32_t next = 0;
+                if (!read_u32_phys(node + 12, &owner)) break;
+                if (!read_u32_phys(node + 4, &next)) break;
+                add_thread(owner);
+                if (next == node) break;
+                node = next;
+                iter++;
+            }
+        };
+
+        uint32_t max_tasks = 64;
+        auto it_task_count = elf_symbols.find("uxCurrentNumberOfTasks");
+        if (it_task_count != elf_symbols.end()) {
+            uint32_t value = 0;
+            if (read_u32_phys(it_task_count->second, &value) && value > 0 && value < 1024) {
+                max_tasks = value;
+            }
+        }
+
+        auto it_ready = elf_symbols.find("pxReadyTasksLists");
+        if (it_ready != elf_symbols.end()) {
+            uint32_t priorities = 8;
+            auto it_top = elf_symbols.find("uxTopReadyPriority");
+            if (it_top != elf_symbols.end()) {
+                uint32_t top = 0;
+                if (read_u32_phys(it_top->second, &top) && top < 64) {
+                    priorities = top + 1;
+                }
+            }
+
+            const uint32_t list_stride = 20;
+            for (uint32_t p = 0; p < priorities && (int)threads.size() < max_threads; p++) {
+                walk_freertos_list(it_ready->second + p * list_stride, max_tasks + 8);
+            }
+        }
+
+        const char *extra_lists[] = {
+            "xDelayedTaskList1",
+            "xDelayedTaskList2",
+            "xPendingReadyList",
+            "xSuspendedTaskList",
+            "xTasksWaitingTermination"
+        };
+        for (const char *name : extra_lists) {
+            auto it = elf_symbols.find(name);
+            if (it != elf_symbols.end()) {
+                walk_freertos_list(it->second, max_tasks + 8);
+            }
+        }
+    } else if (detected_rtos == RTOS_ZEPHYR) {
+        auto it_current = elf_symbols.find("_current");
+        if (it_current != elf_symbols.end()) {
+            uint32_t ptr = 0;
+            if (read_u32_phys(it_current->second, &ptr) && ptr != 0) {
+                current_tid = ptr;
+                add_thread(ptr);
+            }
+        }
+
+        auto it_monitor = elf_symbols.find("_kernel_thread_monitor_list");
+        if (it_monitor != elf_symbols.end()) {
+            uint32_t node = 0;
+            if (read_u32_phys(it_monitor->second, &node)) {
+                uint32_t iter = 0;
+                while (node != 0 && iter < 256 && (int)threads.size() < max_threads) {
+                    add_thread(node);
+                    uint32_t next = 0;
+                    if (!read_u32_phys(node, &next)) break;
+                    if (next == node) break;
+                    node = next;
+                    iter++;
+                }
+            }
+        }
+    }
+
+    if (threads.empty()) {
+        threads.push_back(1);
+        current_tid = 1;
+    }
+
+    int count = std::min(max_threads, (int)threads.size());
+    for (int i = 0; i < count; i++) {
+        thread_ids[i] = threads[i];
+    }
+
+    if (std::find(threads.begin(), threads.end(), current_tid) == threads.end()) {
+        current_tid = threads[0];
+    }
+    if (current_thread_id) {
+        *current_thread_id = current_tid;
+    }
+
+    return count;
+}
+
+int KV32Simulator::get_thread_extra_info_for_gdb(uint32_t thread_id, char *buf,
+                                                  int buf_size) {
+    if (!buf || buf_size <= 0) {
+        return 0;
+    }
+
+    if (detected_rtos == RTOS_FREERTOS) {
+        return std::snprintf(buf, buf_size, "FreeRTOS task 0x%08x", thread_id);
+    }
+    if (detected_rtos == RTOS_ZEPHYR) {
+        return std::snprintf(buf, buf_size, "Zephyr thread 0x%08x", thread_id);
+    }
+    return std::snprintf(buf, buf_size, "Main thread");
 }
 
 void KV32Simulator::run() {
@@ -2081,7 +2273,11 @@ void KV32Simulator::run() {
             .get_pc = gdb_get_pc,
             .set_pc = gdb_set_pc,
             .single_step = gdb_single_step,
-            .is_running = gdb_is_running
+            .is_running = gdb_is_running,
+            .reset = nullptr,
+            .resume = nullptr,
+            .get_thread_list = gdb_get_thread_list,
+            .get_thread_extra_info = gdb_get_thread_extra_info
         };
 
         // Wait for GDB to connect

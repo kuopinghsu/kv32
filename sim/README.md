@@ -106,18 +106,18 @@ riscv32-unknown-elf-gdb build/test.elf
 
 ```bash
 # Breakpoint management
-break main                  # Break at function
+break main                 # Break at function
 break *0x80000000          # Break at address
 info breakpoints           # List breakpoints
 delete 1                   # Delete breakpoint #1
 
 # Watchpoint management
-watch myvar                 # Break when myvar is written
-rwatch myvar                # Break when myvar is read
-awatch myvar                # Break when myvar is accessed (read or write)
-watch *0x80001000           # Watch memory address (write)
-info watchpoints            # List watchpoints
-delete 2                    # Delete watchpoint #2
+watch myvar                # Break when myvar is written
+rwatch myvar               # Break when myvar is read
+awatch myvar               # Break when myvar is accessed (read or write)
+watch *0x80001000          # Watch memory address (write)
+info watchpoints           # List watchpoints
+delete 2                   # Delete watchpoint #2
 
 # Execution control
 continue                   # Continue execution
@@ -140,6 +140,76 @@ set *0x80000100 = 0x12345  # Write to memory
 ### Configuration
 
 Default GDB port: **3333** (configurable with `--gdb-port=<port>`)
+
+### Quick Smoke Test: RTOS Thread Listing
+
+This verifies that GDB thread enumeration works for one FreeRTOS ELF and one Zephyr ELF.
+
+#### 0) Build simulator + RTOS samples
+
+```bash
+cd /home/kuoping/Projects/kv32
+make build-sim
+make -C rtos/freertos build TEST=simple
+make -C rtos/zephyr setup
+make -C rtos/zephyr build TEST=threads_sync
+```
+
+#### 1) FreeRTOS (`build/freertos-simple.elf`)
+
+**Terminal 1**:
+```bash
+cd /home/kuoping/Projects/kv32
+./build/kv32sim --gdb --gdb-port=3333 build/freertos-simple.elf
+```
+
+**Terminal 2**:
+```bash
+cd /home/kuoping/Projects/kv32
+riscv32-unknown-elf-gdb -q build/freertos-simple.elf
+```
+
+**In GDB**:
+```gdb
+set pagination off
+target remote :3333
+info threads
+maintenance packet qfThreadInfo
+maintenance packet qXfer:threads:read::0,400
+thread apply all bt
+detach
+quit
+```
+
+Expected: more than one thread/task should be reported once the scheduler is active.
+
+#### 2) Zephyr (`build/zephyr-threads_sync.elf`)
+
+**Terminal 1**:
+```bash
+cd /home/kuoping/Projects/kv32
+./build/kv32sim --gdb --gdb-port=3334 build/zephyr-threads_sync.elf
+```
+
+**Terminal 2**:
+```bash
+cd /home/kuoping/Projects/kv32
+riscv32-unknown-elf-gdb -q build/zephyr-threads_sync.elf
+```
+
+**In GDB**:
+```gdb
+set pagination off
+target remote :3334
+info threads
+maintenance packet qfThreadInfo
+maintenance packet qXfer:threads:read::0,400
+thread apply all bt
+detach
+quit
+```
+
+Expected: Zephyr thread IDs should appear (current thread plus monitor-list entries when available).
 
 ## Requirements
 

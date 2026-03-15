@@ -66,6 +66,8 @@ typedef struct {
     uint32_t last_watchpoint_addr; /**< Address of the last triggered watchpoint. */
     int last_stop_signal;          /**< Last stop signal sent to GDB. */
     bool breakpoint_hit;           /**< Set when a breakpoint match is detected. */
+    uint32_t current_thread_id;    /**< Selected thread for register operations. */
+    uint32_t resume_thread_id;     /**< Selected thread for resume operations. */
 } gdb_context_t;
 
 /** @brief Simulator callback table for GDB stub memory/register access. */
@@ -80,6 +82,10 @@ typedef struct {
     bool     (*is_running)(void *sim);     /**< True if CPU is running. */
     void     (*reset)(void *sim);          /**< Optional: reset simulator state. */
     void     (*resume)(void *sim);         /**< Optional: clear halted flag. */
+    int      (*get_thread_list)(void *sim, uint32_t *thread_ids, int max_threads,
+                                uint32_t *current_thread_id); /**< Optional: enumerate threads. */
+    int      (*get_thread_extra_info)(void *sim, uint32_t thread_id, char *buf,
+                                      int buf_size); /**< Optional: per-thread description. */
 } gdb_callbacks_t;
 
 #ifdef __cplusplus

@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <vector>
 #include <fstream>
+#include <map>
 #include <cstring>
 #include <string>
 #include "device.h"
@@ -166,6 +167,12 @@ struct Elf32_Sym {
  */
 class KV32Simulator {
 public:
+    enum RtosType {
+        RTOS_NONE = 0,
+        RTOS_FREERTOS,
+        RTOS_ZEPHYR
+    };
+
     struct SlaveRegion {
         uint32_t base;
         uint32_t size;
@@ -209,6 +216,8 @@ public:
     WatchdogDevice* wdt;
 
     uint32_t tohost_addr;
+    std::map<std::string, uint32_t> elf_symbols;
+    RtosType detected_rtos;
     std::ofstream trace_file;
     bool trace_enabled;
     bool rtl_trace_format;  // If true, use RTL trace format instead of Spike format
@@ -327,6 +336,12 @@ public:
     void take_trap(uint32_t cause, uint32_t tval);
     /** @brief Check and deliver any pending interrupts. */
     void check_interrupts();
+
+    // GDB RTOS thread support
+    int get_thread_list_for_gdb(uint32_t *thread_ids, int max_threads,
+                                uint32_t *current_thread_id);
+    int get_thread_extra_info_for_gdb(uint32_t thread_id, char *buf,
+                                      int buf_size);
 
     /** @brief Execute a single instruction (advance PC by one step). */
     void step();
